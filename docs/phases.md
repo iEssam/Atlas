@@ -47,21 +47,22 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 - [x] Image-load events (same provider, id 5, keyword 0x40) — opt-in via `WatcherOptions` / `events --images`
 - [x] Process lifecycle wired into `record`: event-driven wake (recv_timeout), `proc_event` table + `process_instance.exit_status` (schema v3), exact exit stamping by pid against live instances; clean degraded mode when not elevated. Command lines still unavailable from this provider — revisit with rundown/NT kernel logger later
 - [ ] Application identity & grouping heuristics: main/renderer/helper/service roles (PRD §9.2.1) — deferred to pair with the M5 UI, which is its first consumer
-- [ ] ETW cost harness — measure collector overhead against the 0.2% idle budget (tech-stack §13 spike 2)
+- [x] Overhead harness (`overhead --duration N`): runs the real record pipeline against a temp db, grades own CPU/WS against PRD budgets, reports tick timings + disk extrapolation + ETW live/degraded. Baseline 2026-07-13: 0.03% CPU avg, ~13 MB WS (PASS); disk ~520 MB/day (see M-TSDB). Becomes a CI gate at M9
 
-### M4 — IPC contract `[~]`
+### M4 — IPC contract `[x]` ✅ (completed 2026-07-13)
 
 - [x] Compile [proto/atlas.proto](../proto/atlas.proto): `atlas-ipc` crate, tonic 0.13 + prost 0.13, hermetic protoc via `protoc-bin-vendored`; named-pipe accept loop (always one listener pending) + client connector with pipe-busy retry; `serve` / `client-snapshot [--watch]` subcommands; unprivileged end-to-end round-trip test
 - [x] Pipe security: full SDDL DACL — SYSTEM + Administrators full control, current user RW, nobody else (`atlas-ipc/src/security.rs`); per-connection client PID/signature auth noted as future hardening
-- [ ] Shared-memory live ring (seqlock) for 1 Hz top-N rows (tech-stack §5.1)
+- [x] Shared-memory live ring (seqlock, `Local\SystemAtlas.metrics.<disc>`, 64 top rows): `serve` publishes at 1 Hz; `ring-read [--watch]` dev reader; lock-free bounded-retry reads — the future emergency-UI path
 - [x] Capability flags in `GetCapabilities` (currently: `process_snapshots`)
 
-### M5 — UI shell (WinUI 3) `[ ]`
+### M5 — UI shell (WinUI 3) `[~]`
 
-- [ ] .NET 10 + Windows App SDK solution (`src-ui/`), NativeAOT publish profile
-- [ ] Live Activity: virtualized process table bound to shared-mem ring + gRPC detail
+- [x] .NET 10.0.301 SDK installed; `src-ui/Atlas.sln` — Atlas.IpcClient (gRPC-over-pipe via ConnectCallback, proto codegen, 15 tests), Atlas.DevCli (console interop proof), Atlas.App (WinUI 3, Windows App SDK 1.6, unpackaged; builds with PackageReferences only — no VS workloads needed)
+- [x] Live Activity page: NavigationView + Mica shell, virtualized process table updated in place at ~1 Hz from StreamSnapshots; verified running against `serve` at ~181 MB WS (budget < 200 MB)
+- [ ] NativeAOT publish profile — blocked on MVVMTK0045 (see decision note)
 - [ ] Overview page v0 (gauges, top consumers)
-- [ ] Requires: .NET SDK + Windows App SDK workload install
+- [ ] Bind Live Activity to the shared-mem ring for the hot path (currently gRPC stream only)
 
 ### M6 — Timeline v0, search, safe actions `[ ]`
 
@@ -112,4 +113,7 @@ Dynamic responsiveness protection · extended retention tiers + optional Parquet
 - **2026-07-13 — Writer backpressure semantics**: a stalled writer drops whole flush windows (counted, then recorded as `gap_event` rows by the next landed batch) rather than blocking the sampling loop — degradation is observable, never silent (PRD §11.3).
 - **2026-07-13 — tonic pinned to 0.13** (not 0.14): 0.14 reworked the transport/`serve_with_incoming` surface; 0.13 has the stable `Connected` API the named-pipe transport builds on. protoc is vendored (`protoc-bin-vendored`) so builds are hermetic — no system protoc install.
 - **2026-07-13 — Exit-stamping matches by pid, not (pid, create_time)**: ETW Stop events carry the stop time, never the snapshot's CreateTime, so the identity key cannot be reconstructed; stamping targets the unique live (`exit_seen_ms IS NULL`) instance per pid. Documented on `stamp_exit_by_pid`.
+- **2026-07-13 — WinUI 3 builds under plain `dotnet` CLI**: no VS install or `dotnet workload` needed — Microsoft.WindowsAppSDK 1.6.250205002 + Microsoft.Windows.SDK.BuildTools PackageReferences with `<WindowsPackageType>None</WindowsPackageType>` (unpackaged). Do NOT add a custom `Program.cs` (the generated Main handles unpackaged bootstrap; `DisableXamlGeneratedMain` misbehaves under this SDK).
+- **2026-07-13 — NativeAOT for the UI is blocked** on CommunityToolkit.Mvvm 8.4.0: field-based `[ObservableProperty]` trips MVVMTK0045 (WinRT AOT marshalling), and the partial-property form fails codegen under this SDK (CS9248/CS8050). Suppressed via NoWarn for now; revisit with a newer toolkit before the M9 AOT/perf gates.
+- **2026-07-13 — Overhead baseline**: record pipeline 0.03% CPU avg / ~13 MB WS (both PASS); interim SQLite samples extrapolate to ~520 MB/day of disk writes vs the ~150 MB/day target — the M-TSDB Gorilla store is the planned fix and the harness now measures the before/after.
 - **2026-07-13 — Machine policy blocks fresh build-script binaries**: an Application Control policy (error 4551) blocks executing freshly compiled build scripts (seen with `zmij`, a `serde_json` transitive build-dep) in fresh target dirs. Cached artifacts in the main `target/` are approved. Implications: full `cargo clean` or CI on this machine may need policy approval; and **never share a target dir between a worktree and the main repo** — doing so overwrote main's crate artifacts with worktree-era ones and broke the post-merge build until `cargo clean -p <workspace crates>`.
