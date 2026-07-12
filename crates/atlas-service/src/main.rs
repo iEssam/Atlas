@@ -8,14 +8,15 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{sync_channel, TrySendError};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use atlas_collectors::{ProcKey, ProcSample, SampleSet, Sampler};
-use atlas_store::{ProcAggregate, ProcIdentity, Store, SysSampleRow};
+use atlas_collectors::{CadenceController, ProcKey, ProcSample, SampleSet, Sampler, Tick};
+use atlas_store::{ProcAggregate, ProcIdentity, SelfSampleRow, Store, SysSampleRow};
 
 #[derive(Parser)]
 #[command(
@@ -193,15 +194,20 @@ fn render_top(set: &SampleSet, limit: usize) {
     }
 }
 
+/// Per-process window accumulator. With a variable sampling cadence the ticks
+/// in a window no longer cover equal time, so averages are weighted by each
+/// tick's wall-clock duration: avg = Σ(value × dt) / Σ(dt). Maxima are still
+/// plain maxima; "last" fields keep the most recent value.
 struct AggAcc {
     identity: ProcIdentity,
-    n: u64,
-    cpu_sum: u64,
+    /// Σ(dt) in seconds across the ticks folded in — the weighting basis.
+    weight_s: f64,
+    cpu_weighted: f64,
     cpu_max: u32,
     ws_max: u64,
     priv_max: u64,
-    read_bps_sum: u64,
-    write_bps_sum: u64,
+    read_bps_weighted: f64,
+    write_bps_weighted: f64,
     handles_last: u32,
     threads_last: u32,
 }
@@ -216,44 +222,121 @@ impl AggAcc {
                 session_id: p.session_id,
                 image_name: p.image_name.clone(),
             },
-            n: 0,
-            cpu_sum: 0,
+            weight_s: 0.0,
+            cpu_weighted: 0.0,
             cpu_max: 0,
             ws_max: 0,
             priv_max: 0,
-            read_bps_sum: 0,
-            write_bps_sum: 0,
+            read_bps_weighted: 0.0,
+            write_bps_weighted: 0.0,
             handles_last: 0,
             threads_last: 0,
         }
     }
 
-    fn update(&mut self, p: &ProcSample) {
-        self.n += 1;
-        self.cpu_sum += p.cpu_permille as u64;
+    fn update(&mut self, p: &ProcSample, dt_s: f64) {
+        self.weight_s += dt_s;
+        self.cpu_weighted += p.cpu_permille as f64 * dt_s;
         self.cpu_max = self.cpu_max.max(p.cpu_permille);
         self.ws_max = self.ws_max.max(p.working_set);
         self.priv_max = self.priv_max.max(p.private_bytes);
-        self.read_bps_sum += p.read_bps;
-        self.write_bps_sum += p.write_bps;
+        self.read_bps_weighted += p.read_bps as f64 * dt_s;
+        self.write_bps_weighted += p.write_bps as f64 * dt_s;
         self.handles_last = p.handle_count;
         self.threads_last = p.thread_count;
     }
 
     fn finish(&self, proc_row_id: i64) -> ProcAggregate {
-        let n = self.n.max(1);
+        // Guard against a zero-weight window (all dt collapsed to ~0).
+        let w = if self.weight_s > 0.0 {
+            self.weight_s
+        } else {
+            1.0
+        };
         ProcAggregate {
             proc_row_id,
-            cpu_avg_permille: (self.cpu_sum / n) as u32,
+            cpu_avg_permille: (self.cpu_weighted / w).round() as u32,
             cpu_max_permille: self.cpu_max,
             working_set_max: self.ws_max,
             private_bytes_max: self.priv_max,
-            read_bps_avg: self.read_bps_sum / n,
-            write_bps_avg: self.write_bps_sum / n,
+            read_bps_avg: (self.read_bps_weighted / w).round() as u64,
+            write_bps_avg: (self.write_bps_weighted / w).round() as u64,
             handles_last: self.handles_last,
             threads_last: self.threads_last,
         }
     }
+}
+
+/// Time-weighted accumulator for Atlas's own overhead over a flush window
+/// (PRD §12.2). CPU is weighted by tick duration like [`AggAcc`]; the tick
+/// duration stats time the `sampler.sample()` call itself.
+struct SelfAcc {
+    weight_s: f64,
+    cpu_weighted: f64,
+    working_set_last: u64,
+    tick_us_sum: u64,
+    tick_us_max: u64,
+    ticks: u32,
+}
+
+impl SelfAcc {
+    fn new() -> Self {
+        Self {
+            weight_s: 0.0,
+            cpu_weighted: 0.0,
+            working_set_last: 0,
+            tick_us_sum: 0,
+            tick_us_max: 0,
+            ticks: 0,
+        }
+    }
+
+    /// Fold one tick: `own` is this process's sample (may be absent for one
+    /// tick if newly seen), `dt_s` the wall-clock gap, `tick_us` the measured
+    /// `sample()` duration.
+    fn update(&mut self, own: Option<&ProcSample>, dt_s: f64, tick_us: u64) {
+        if let Some(p) = own {
+            self.weight_s += dt_s;
+            self.cpu_weighted += p.cpu_permille as f64 * dt_s;
+            self.working_set_last = p.working_set;
+        }
+        self.tick_us_sum += tick_us;
+        self.tick_us_max = self.tick_us_max.max(tick_us);
+        self.ticks += 1;
+    }
+
+    fn finish(&self, ts_ms: i64) -> SelfSampleRow {
+        let w = if self.weight_s > 0.0 {
+            self.weight_s
+        } else {
+            1.0
+        };
+        let ticks = self.ticks.max(1);
+        SelfSampleRow {
+            ts_ms,
+            cpu_permille: (self.cpu_weighted / w).round() as u32,
+            working_set: self.working_set_last,
+            tick_duration_us_avg: self.tick_us_sum / ticks as u64,
+            tick_duration_us_max: self.tick_us_max,
+            ticks: self.ticks,
+        }
+    }
+}
+
+/// A complete flush window handed to the writer thread. It carries everything
+/// the writer needs to persist a window without touching the collection loop's
+/// state: the aggregation timestamp, window length, system rows, per-process
+/// aggregates *with their identity* (the writer owns the id cache and does the
+/// upsert/mark-exited bookkeeping), exited keys, the self-metrics row, and the
+/// count of windows dropped since the last successful send (PRD §11.3).
+struct FlushBatch {
+    agg_ts_ms: i64,
+    window_secs: u32,
+    sys: Vec<SysSampleRow>,
+    procs: Vec<(ProcIdentity, ProcAggregate)>,
+    exited: Vec<ProcKey>,
+    self_row: SelfSampleRow,
+    dropped_before: u64,
 }
 
 const RETENTION_HOURS: i64 = 72;
@@ -265,19 +348,36 @@ fn cmd_record(
     duration: Option<u64>,
 ) -> Result<()> {
     let stop = install_ctrlc();
-    let mut store = Store::open(&db_path)?;
+    // The store lives entirely on the writer thread; the sampling loop never
+    // touches SQLite (M2). A small bound (4) gives the writer slack without
+    // letting a stall balloon memory: past that we drop batches and record a
+    // gap rather than block collection.
+    let (tx, rx) = sync_channel::<FlushBatch>(4);
+    let writer_db = db_path.clone();
+    let writer = std::thread::Builder::new()
+        .name("atlas-writer".into())
+        .spawn(move || writer_thread(writer_db, rx))?;
+
     let mut sampler = Sampler::new()?;
+    let own_pid = std::process::id();
+    let mut cadence = CadenceController::new();
     tracing::info!(db = %db_path.display(), interval, flush_secs, "recording started (Ctrl+C to stop)");
 
     let started = Instant::now();
     let flush_every = Duration::from_secs(flush_secs.max(2));
     let mut last_flush = Instant::now();
+    // The configured `interval` is now the active-tier floor; the cadence
+    // controller widens it toward 5 s / 15 s during sustained quiet.
+    let mut next_sleep = Duration::from_secs_f64(interval.max(0.25));
 
-    let mut id_cache: HashMap<ProcKey, i64> = HashMap::new();
     let mut accs: HashMap<ProcKey, AggAcc> = HashMap::new();
     let mut sys_buf: Vec<SysSampleRow> = Vec::new();
-    let mut flushed_windows = 0u64;
-    let mut flushed_proc_rows = 0u64;
+    let mut self_acc = SelfAcc::new();
+    let mut prev_tick = Instant::now();
+    // Windows dropped because the writer stalled, carried into the next batch
+    // that lands (PRD §11.3 — degradation is observable, never silent).
+    let mut dropped_pending = 0u64;
+    let mut sent_batches = 0u64;
 
     loop {
         if stop.load(Ordering::SeqCst) {
@@ -288,9 +388,33 @@ fn cmd_record(
                 break;
             }
         }
-        std::thread::sleep(Duration::from_secs_f64(interval.max(0.25)));
+        std::thread::sleep(next_sleep);
 
+        // Time the sample() call itself — this is the dominant cost of a tick
+        // and what the self-metrics report as tick duration.
+        let t0 = Instant::now();
         let set = sampler.sample()?;
+        let tick_us = t0.elapsed().as_micros() as u64;
+        let dt_s = prev_tick.elapsed().as_secs_f64().max(1e-3);
+        prev_tick = Instant::now();
+
+        // Feed the cadence controller and pick the next sleep. The floor keeps
+        // the active tier no faster than the user asked for.
+        let max_proc_cpu = set
+            .processes
+            .iter()
+            .map(|p| p.cpu_permille)
+            .max()
+            .unwrap_or(0);
+        let chosen = cadence.next_interval(Tick {
+            sys_cpu_permille: set.system.cpu_permille,
+            started: set.started.len() as u32,
+            exited: set.exited.len() as u32,
+            max_proc_cpu_permille: max_proc_cpu,
+            elapsed: Duration::from_secs_f64(dt_s),
+        });
+        next_sleep = chosen.max(Duration::from_secs_f64(interval.max(0.25)));
+
         sys_buf.push(SysSampleRow {
             ts_ms: set.ts_ms,
             cpu_permille: set.system.cpu_permille,
@@ -302,90 +426,171 @@ fn cmd_record(
             thread_count: set.system.thread_count,
             handle_count: set.system.handle_count,
         });
+        let own = set.processes.iter().find(|p| p.key.pid == own_pid);
+        self_acc.update(own, dt_s, tick_us);
         for p in &set.processes {
             accs.entry(p.key)
                 .or_insert_with(|| AggAcc::new(p))
-                .update(p);
-        }
-        for key in &set.exited {
-            if let Some(row_id) = id_cache.remove(key) {
-                store.mark_exited(row_id, set.ts_ms)?;
-            }
+                .update(p, dt_s);
         }
 
         if last_flush.elapsed() >= flush_every {
             let window_secs = last_flush.elapsed().as_secs().max(1) as u32;
-            let (w, r) = flush(
-                &mut store,
-                &mut id_cache,
+            if let Some(batch) = build_batch(
                 &mut accs,
                 &mut sys_buf,
+                &set.exited,
+                &self_acc,
                 window_secs,
-            )?;
-            flushed_windows += w;
-            flushed_proc_rows += r;
+                dropped_pending,
+            ) {
+                match tx.try_send(batch) {
+                    Ok(()) => {
+                        sent_batches += 1;
+                        dropped_pending = 0;
+                    }
+                    Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_)) => {
+                        // Writer is behind (or gone): drop this window, count
+                        // it, and let the next successful batch report the gap.
+                        dropped_pending += 1;
+                        tracing::warn!(dropped_pending, "writer stalled; dropped flush window");
+                    }
+                }
+            }
+            self_acc = SelfAcc::new();
             last_flush = Instant::now();
         }
     }
 
+    // Final partial window before shutdown.
     let window_secs = last_flush.elapsed().as_secs().max(1) as u32;
-    let (w, r) = flush(
-        &mut store,
-        &mut id_cache,
+    if let Some(batch) = build_batch(
         &mut accs,
         &mut sys_buf,
+        &[],
+        &self_acc,
         window_secs,
-    )?;
-    flushed_windows += w;
-    flushed_proc_rows += r;
+        dropped_pending,
+    ) {
+        if tx.try_send(batch).is_ok() {
+            sent_batches += 1;
+        } else {
+            tracing::warn!("final flush window dropped (writer stalled)");
+        }
+    }
 
-    let cutoff = now_ms() - RETENTION_HOURS * 3_600_000;
-    let (pruned_proc, pruned_sys) = store.apply_retention(cutoff)?;
+    // Clean shutdown: drop the sender so the writer drains, sweeps retention,
+    // and exits; join it before we return (M2).
+    drop(tx);
+    let pruned = writer
+        .join()
+        .map_err(|_| anyhow::anyhow!("writer thread panicked"))??;
     tracing::info!(
-        flushed_windows,
-        flushed_proc_rows,
-        pruned_proc,
-        pruned_sys,
+        sent_batches,
+        pruned_proc = pruned.0,
+        pruned_sys = pruned.1,
         "recording stopped"
     );
     Ok(())
 }
 
-fn flush(
-    store: &mut Store,
-    id_cache: &mut HashMap<ProcKey, i64>,
+/// Drains the current accumulators into a self-contained [`FlushBatch`]. The
+/// per-process aggregates carry a placeholder row id (-1); the writer thread
+/// resolves the real id via its own cache before persisting. Returns `None`
+/// when there is nothing to write.
+fn build_batch(
     accs: &mut HashMap<ProcKey, AggAcc>,
     sys_buf: &mut Vec<SysSampleRow>,
+    exited: &[ProcKey],
+    self_acc: &SelfAcc,
     window_secs: u32,
-) -> Result<(u64, u64)> {
+    dropped_before: u64,
+) -> Option<FlushBatch> {
     if accs.is_empty() && sys_buf.is_empty() {
-        return Ok((0, 0));
+        return None;
     }
     let ts = sys_buf.last().map(|s| s.ts_ms).unwrap_or_else(now_ms);
+    let procs = accs
+        .drain()
+        .map(|(_, acc)| {
+            let agg = acc.finish(-1);
+            (acc.identity, agg)
+        })
+        .collect();
+    Some(FlushBatch {
+        agg_ts_ms: ts,
+        window_secs,
+        sys: std::mem::take(sys_buf),
+        procs,
+        exited: exited.to_vec(),
+        self_row: self_acc.finish(ts),
+        dropped_before,
+    })
+}
 
-    let mut aggs = Vec::with_capacity(accs.len());
-    for (key, acc) in accs.drain() {
-        let row_id = match id_cache.get(&key) {
-            Some(id) => *id,
-            None => {
-                let id = store.upsert_process(&acc.identity, ts)?;
-                id_cache.insert(key, id);
-                id
+/// Dedicated writer thread: owns the `Store` and the process id cache, applies
+/// each batch in one transaction, records any dropped-window gaps, and sweeps
+/// 72 h retention on shutdown. Returns (pruned_proc, pruned_sys) rows.
+fn writer_thread(
+    db_path: PathBuf,
+    rx: std::sync::mpsc::Receiver<FlushBatch>,
+) -> Result<(usize, usize)> {
+    let mut store = Store::open(&db_path)?;
+    let mut id_cache: HashMap<ProcKey, i64> = HashMap::new();
+
+    for batch in rx {
+        // Any windows the sampler dropped since the last landed batch are
+        // recorded as a gap so charts can render missing data honestly.
+        if batch.dropped_before > 0 {
+            store.record_gap(batch.agg_ts_ms, batch.dropped_before, "writer backpressure")?;
+        }
+
+        // Resolve identities → row ids (this is the upsert bookkeeping moved
+        // off the sampling loop) and stamp them onto the aggregates.
+        let mut aggs = Vec::with_capacity(batch.procs.len());
+        for (identity, mut agg) in batch.procs {
+            let key = ProcKey {
+                pid: identity.pid,
+                create_time_100ns: identity.create_time_100ns,
+            };
+            let row_id = match id_cache.get(&key) {
+                Some(id) => *id,
+                None => {
+                    let id = store.upsert_process(&identity, batch.agg_ts_ms)?;
+                    id_cache.insert(key, id);
+                    id
+                }
+            };
+            agg.proc_row_id = row_id;
+            aggs.push(agg);
+        }
+        for key in &batch.exited {
+            if let Some(row_id) = id_cache.remove(key) {
+                store.mark_exited(row_id, batch.agg_ts_ms)?;
             }
-        };
-        aggs.push(acc.finish(row_id));
+        }
+
+        store.write_batch(batch.agg_ts_ms, batch.window_secs, &batch.sys, &aggs)?;
+        store.write_self_sample(&batch.self_row)?;
+        tracing::debug!(
+            cpu_permille = batch.self_row.cpu_permille,
+            working_set = batch.self_row.working_set,
+            tick_us_avg = batch.self_row.tick_duration_us_avg,
+            tick_us_max = batch.self_row.tick_duration_us_max,
+            ticks = batch.self_row.ticks,
+            "self metrics"
+        );
+        tracing::info!(
+            proc_rows = aggs.len(),
+            sys_rows = batch.sys.len(),
+            window_secs = batch.window_secs,
+            "flushed window"
+        );
     }
 
-    store.write_batch(ts, window_secs, sys_buf, &aggs)?;
-    let counts = (1u64, aggs.len() as u64);
-    tracing::info!(
-        proc_rows = aggs.len(),
-        sys_rows = sys_buf.len(),
-        window_secs,
-        "flushed window"
-    );
-    sys_buf.clear();
-    Ok(counts)
+    let cutoff = now_ms() - RETENTION_HOURS * 3_600_000;
+    let pruned = store.apply_retention(cutoff)?;
+    Ok(pruned)
 }
 
 fn cmd_db_top(db_path: PathBuf, minutes: u64, limit: u32) -> Result<()> {
@@ -398,6 +603,7 @@ fn cmd_db_top(db_path: PathBuf, minutes: u64, limit: u32) -> Result<()> {
             db_path.display()
         );
         println!("Run `atlas-service record` first.");
+        print_self_summary(&store)?;
         return Ok(());
     }
     println!(
@@ -419,6 +625,24 @@ fn cmd_db_top(db_path: PathBuf, minutes: u64, limit: u32) -> Result<()> {
             mb(r.working_set_peak),
             r.windows
         );
+    }
+    print_self_summary(&store)?;
+    Ok(())
+}
+
+/// Prints Atlas's own overhead from the latest self_sample row so it is
+/// verifiable without a SQLite client (PRD §12.2).
+fn print_self_summary(store: &Store) -> Result<()> {
+    match store.latest_self_sample()? {
+        Some(s) => println!(
+            "Atlas overhead: {:.1}% CPU avg, {:.1} MB WS, tick avg {:.1} ms (max {:.1} ms over {} ticks)",
+            s.cpu_permille as f64 / 10.0,
+            mb(s.working_set),
+            s.tick_duration_us_avg as f64 / 1000.0,
+            s.tick_duration_us_max as f64 / 1000.0,
+            s.ticks
+        ),
+        None => println!("Atlas overhead: no self-metrics recorded yet."),
     }
     Ok(())
 }

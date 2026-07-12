@@ -9,7 +9,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 
 const SCHEMA_V1: &str = r#"
 CREATE TABLE IF NOT EXISTS process_instance (
@@ -54,6 +54,28 @@ CREATE TABLE IF NOT EXISTS sys_sample (
 );
 "#;
 
+// Additive v2 migration: self-metrics (PRD §12.2 — the product must show its
+// own overhead) and gap events (PRD §11.3 — degradation is never silent).
+// Both tables are created with IF NOT EXISTS so upgrading a v1 database in
+// place is a no-op beyond bumping user_version.
+const SCHEMA_V2: &str = r#"
+CREATE TABLE IF NOT EXISTS self_sample (
+    ts_ms INTEGER PRIMARY KEY,
+    cpu_permille INTEGER NOT NULL,
+    working_set INTEGER NOT NULL,
+    tick_duration_us_avg INTEGER NOT NULL,
+    tick_duration_us_max INTEGER NOT NULL,
+    ticks INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS gap_event (
+    ts_ms INTEGER NOT NULL,
+    dropped_windows INTEGER NOT NULL,
+    reason TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_gap_event_ts ON gap_event(ts_ms);
+"#;
+
 #[derive(Debug, Clone)]
 pub struct ProcIdentity {
     pub pid: u32,
@@ -87,6 +109,22 @@ pub struct SysSampleRow {
     pub process_count: u32,
     pub thread_count: u32,
     pub handle_count: u32,
+}
+
+/// One row per flush window recording Atlas's own overhead (PRD §12.2).
+#[derive(Debug, Clone, Copy)]
+pub struct SelfSampleRow {
+    pub ts_ms: i64,
+    /// Own-process CPU over the window, in permille (0..=1000).
+    pub cpu_permille: u32,
+    /// Own-process working set at flush, in bytes.
+    pub working_set: u64,
+    /// Mean `sampler.sample()` duration over the window, microseconds.
+    pub tick_duration_us_avg: u64,
+    /// Worst `sampler.sample()` duration over the window, microseconds.
+    pub tick_duration_us_max: u64,
+    /// Ticks folded into this window.
+    pub ticks: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -135,6 +173,10 @@ impl Store {
         if version < 1 {
             self.conn.execute_batch(SCHEMA_V1)?;
             self.conn.execute_batch("PRAGMA user_version = 1;")?;
+        }
+        if version < 2 {
+            self.conn.execute_batch(SCHEMA_V2)?;
+            self.conn.execute_batch("PRAGMA user_version = 2;")?;
         }
         Ok(())
     }
@@ -245,6 +287,59 @@ impl Store {
         Ok((p, s))
     }
 
+    /// Records Atlas's own overhead for one flush window (PRD §12.2).
+    pub fn write_self_sample(&self, s: &SelfSampleRow) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO self_sample
+                 (ts_ms, cpu_permille, working_set, tick_duration_us_avg,
+                  tick_duration_us_max, ticks)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                s.ts_ms,
+                s.cpu_permille,
+                s.working_set as i64,
+                s.tick_duration_us_avg as i64,
+                s.tick_duration_us_max as i64,
+                s.ticks
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Records that `dropped_windows` flush windows were discarded because the
+    /// writer stalled. Degradation must be observable, never silent (PRD §11.3).
+    pub fn record_gap(&self, ts_ms: i64, dropped_windows: u64, reason: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO gap_event (ts_ms, dropped_windows, reason) VALUES (?1, ?2, ?3)",
+            params![ts_ms, dropped_windows as i64, reason],
+        )?;
+        Ok(())
+    }
+
+    /// Returns the most recently recorded self-metrics row, if any.
+    pub fn latest_self_sample(&self) -> Result<Option<SelfSampleRow>> {
+        let row = self
+            .conn
+            .query_row(
+                "SELECT ts_ms, cpu_permille, working_set, tick_duration_us_avg,
+                        tick_duration_us_max, ticks
+                 FROM self_sample ORDER BY ts_ms DESC LIMIT 1",
+                [],
+                |r| {
+                    Ok(SelfSampleRow {
+                        ts_ms: r.get(0)?,
+                        cpu_permille: r.get(1)?,
+                        working_set: r.get::<_, i64>(2)? as u64,
+                        tick_duration_us_avg: r.get::<_, i64>(3)? as u64,
+                        tick_duration_us_max: r.get::<_, i64>(4)? as u64,
+                        ticks: r.get(5)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(row)
+    }
+
     pub fn top_processes(&self, since_ms: i64, limit: u32) -> Result<Vec<TopProcessRow>> {
         let mut stmt = self.conn.prepare_cached(
             "SELECT pi.pid, pi.image_name,
@@ -351,6 +446,73 @@ mod tests {
         assert_eq!(top[0].pid, 10, "busiest process sorts first");
         assert_eq!(top[0].cpu_peak_permille, 450);
         assert_eq!(top[0].windows, 1);
+    }
+
+    #[test]
+    fn v2_migration_upgrades_v1_in_place_and_writes_self_and_gap() {
+        // Build a bare v1 database: schema v1 tables, user_version pinned to 1,
+        // and no v2 tables. This mimics a database written before the M1/M2
+        // self-metrics slice landed.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA_V1).unwrap();
+        conn.execute_batch("PRAGMA user_version = 1;").unwrap();
+        // The v2 tables must not exist yet.
+        let has_self: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='self_sample'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(has_self, 0, "v1 database must not have self_sample");
+
+        // Wrapping the same connection in a Store runs migrate(), which should
+        // upgrade in place to v2 without touching the existing v1 data.
+        let store = Store { conn };
+        store.migrate().unwrap();
+        let version: i64 = store
+            .conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, 2, "migration bumps user_version to 2");
+
+        store
+            .write_self_sample(&SelfSampleRow {
+                ts_ms: 5_000,
+                cpu_permille: 3,
+                working_set: 48 << 20,
+                tick_duration_us_avg: 2_100,
+                tick_duration_us_max: 4_800,
+                ticks: 5,
+            })
+            .unwrap();
+        store.record_gap(6_000, 2, "writer stalled").unwrap();
+
+        let latest = store.latest_self_sample().unwrap().unwrap();
+        assert_eq!(latest.cpu_permille, 3);
+        assert_eq!(latest.ticks, 5);
+        assert_eq!(latest.tick_duration_us_avg, 2_100);
+
+        let dropped: i64 = store
+            .conn
+            .query_row(
+                "SELECT dropped_windows FROM gap_event WHERE ts_ms = 6000",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(dropped, 2);
+    }
+
+    #[test]
+    fn fresh_database_is_v2() {
+        let store = Store::open_in_memory().unwrap();
+        let version: i64 = store
+            .conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, 2);
+        assert!(store.latest_self_sample().unwrap().is_none());
     }
 
     #[test]

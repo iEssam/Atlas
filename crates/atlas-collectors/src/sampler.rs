@@ -50,6 +50,9 @@ pub struct SampleSet {
     pub ts_ms: i64,
     pub system: SystemSample,
     pub processes: Vec<ProcSample>,
+    /// Processes seen now that were absent from the previous tick. Empty on
+    /// the first sample (there is no previous tick to diff against).
+    pub started: Vec<ProcKey>,
     /// Processes present in the previous tick but gone now.
     pub exited: Vec<ProcKey>,
 }
@@ -149,6 +152,18 @@ impl Sampler {
             });
         }
 
+        // On the very first tick `prev` is empty, so treat nothing as started
+        // (we have no baseline to diff against); otherwise a start is a key
+        // present now but absent from the previous tick.
+        let started: Vec<ProcKey> = if self.prev.is_empty() {
+            Vec::new()
+        } else {
+            next_prev
+                .keys()
+                .filter(|k| !self.prev.contains_key(*k))
+                .copied()
+                .collect()
+        };
         let exited: Vec<ProcKey> = self
             .prev
             .keys()
@@ -191,6 +206,7 @@ impl Sampler {
             ts_ms,
             system,
             processes: out,
+            started,
             exited,
         })
     }
