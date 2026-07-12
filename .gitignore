@@ -1,0 +1,24 @@
+# Rust
+/target/
+**/target/
+
+# Local dev databases and captures (runtime data lives under %LOCALAPPDATA%\SystemAtlas)
+/data/
+*.db
+*.db-wal
+*.db-shm
+*.etl
+
+# .NET / WinUI (arrives at milestone M5)
+bin/
+obj/
+*.user
+.vs/
+
+# Editors
+.idea/
+.vscode/
+
+# OS noise
+Thumbs.db
+desktop.ini
