@@ -26,12 +26,18 @@ use ferrisetw::EventRecord;
 const KERNEL_PROCESS_PROVIDER_GUID: &str = "22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716";
 
 /// `WINEVENT_KEYWORD_PROCESS` — restricts the trace to process create/exit
-/// events (and image loads), keeping the ETW volume tiny.
+/// events, keeping the ETW volume tiny.
 const PROCESS_KEYWORD: u64 = 0x10;
+
+/// `WINEVENT_KEYWORD_IMAGE` on the Kernel-Process provider — image (module)
+/// load/unload events. Opt-in only: image loads are far higher volume than
+/// process create/exit, so the `record` pipeline leaves this off.
+const IMAGE_KEYWORD: u64 = 0x40;
 
 /// Manifest event ids on the Kernel-Process provider.
 const EVENT_ID_PROCESS_START: u16 = 1;
 const EVENT_ID_PROCESS_STOP: u16 = 2;
+const EVENT_ID_IMAGE_LOAD: u16 = 5;
 
 /// Depth of the channel between the ETW consumer thread and the caller. Process
 /// churn is bursty (a build spawning hundreds of children); a few thousand slots
@@ -62,6 +68,25 @@ pub enum ProcessEventKind {
     Stopped {
         exit_status: i32,
     },
+    /// A module (image) was loaded into a process. Opt-in via
+    /// [`WatcherOptions::images`]; emitted only when image collection is on.
+    ImageLoaded {
+        /// Base address the image was mapped at.
+        image_base: u64,
+        /// Mapped size of the image, in bytes.
+        image_size: u64,
+        /// Image path as reported by the event (device path form).
+        image_name: String,
+    },
+}
+
+/// What the watcher collects. Process start/stop is always on; image loads are
+/// opt-in because they are much higher volume (every DLL mapped by every
+/// starting process).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct WatcherOptions {
+    /// Also collect image-load events (event id 5, keyword 0x40).
+    pub images: bool,
 }
 
 /// Errors starting or running the process event trace.
@@ -129,11 +154,22 @@ pub struct ProcessEventWatcher {
 }
 
 impl ProcessEventWatcher {
-    /// Start a user-mode ETW trace on Microsoft-Windows-Kernel-Process and
-    /// return the watcher plus a receiver of parsed [`ProcessEvent`]s.
+    /// Start a user-mode ETW trace on Microsoft-Windows-Kernel-Process for
+    /// process start/stop only, and return the watcher plus a receiver of
+    /// parsed [`ProcessEvent`]s.
     ///
     /// Requires elevation; a non-elevated caller gets [`EventError::ElevationRequired`].
     pub fn start() -> Result<(Self, Receiver<ProcessEvent>), EventError> {
+        Self::start_with_options(WatcherOptions::default())
+    }
+
+    /// Like [`start`], but with explicit collection options — notably
+    /// [`WatcherOptions::images`] to also stream image-load events.
+    ///
+    /// [`start`]: ProcessEventWatcher::start
+    pub fn start_with_options(
+        opts: WatcherOptions,
+    ) -> Result<(Self, Receiver<ProcessEvent>), EventError> {
         let session_name = session_name();
 
         // A previous run that crashed without tearing down leaves the named
@@ -144,13 +180,20 @@ impl ProcessEventWatcher {
         let (tx, rx) = sync_channel::<ProcessEvent>(CHANNEL_CAPACITY);
         let dropped = Arc::new(AtomicU64::new(0));
 
+        // Enable only the keywords we actually parse. Image loads roughly
+        // double provider volume, so they stay off unless asked for.
+        let mut keyword = PROCESS_KEYWORD;
+        if opts.images {
+            keyword |= IMAGE_KEYWORD;
+        }
+
         let cb_tx = tx;
         let cb_dropped = Arc::clone(&dropped);
         let provider = Provider::by_guid(KERNEL_PROCESS_PROVIDER_GUID)
-            .any(PROCESS_KEYWORD)
+            .any(keyword)
             .add_callback(
                 move |record: &EventRecord, schema_locator: &SchemaLocator| {
-                    if let Some(event) = parse_event(record, schema_locator) {
+                    if let Some(event) = parse_event(record, schema_locator, opts) {
                         forward(&cb_tx, &cb_dropped, event);
                     }
                 },
@@ -216,16 +259,26 @@ fn forward(tx: &SyncSender<ProcessEvent>, dropped: &AtomicU64, event: ProcessEve
 }
 
 /// Parse a Kernel-Process ETW record into a [`ProcessEvent`], or `None` for
-/// events we do not model (image loads, thread events, unparseable records).
+/// events we do not model (thread events, image loads when not requested,
+/// unparseable records).
 ///
-/// Property names are taken from the provider manifest: ProcessStart carries
-/// `ProcessID`, `ParentProcessID`, `SessionID`, `ImageName`; ProcessStop carries
-/// `ProcessID`, `ExitStatus`. The `ProcessID` payload field is the *subject*
-/// process (the one starting/stopping), which is what we key on — not the ETW
-/// header's `ProcessID`, which is the reporting process.
-fn parse_event(record: &EventRecord, schema_locator: &SchemaLocator) -> Option<ProcessEvent> {
+/// Property names are taken from the provider manifest (verified at runtime by
+/// the TDH-backed [`Parser`], which resolves fields by name from the event
+/// schema; a wrong name fails the parse rather than reading the wrong bytes):
+/// ProcessStart carries `ProcessID`, `ParentProcessID`, `SessionID`,
+/// `ImageName`; ProcessStop carries `ProcessID`, `ExitStatus`; ImageLoad
+/// carries `ProcessID`, `ImageBase`, `ImageSize`, `ImageName`. The `ProcessID`
+/// payload field is the *subject* process (the one the event is about), which
+/// is what we key on — not the ETW header's `ProcessID`, which is the reporting
+/// process.
+fn parse_event(
+    record: &EventRecord,
+    schema_locator: &SchemaLocator,
+    opts: WatcherOptions,
+) -> Option<ProcessEvent> {
     let event_id = record.event_id();
-    if event_id != EVENT_ID_PROCESS_START && event_id != EVENT_ID_PROCESS_STOP {
+    let want_image = opts.images && event_id == EVENT_ID_IMAGE_LOAD;
+    if event_id != EVENT_ID_PROCESS_START && event_id != EVENT_ID_PROCESS_STOP && !want_image {
         return None;
     }
 
@@ -242,6 +295,11 @@ fn parse_event(record: &EventRecord, schema_locator: &SchemaLocator) -> Option<P
         },
         EVENT_ID_PROCESS_STOP => ProcessEventKind::Stopped {
             exit_status: parser.try_parse("ExitStatus").unwrap_or(0),
+        },
+        EVENT_ID_IMAGE_LOAD if want_image => ProcessEventKind::ImageLoaded {
+            image_base: parser.try_parse("ImageBase").unwrap_or(0),
+            image_size: parser.try_parse("ImageSize").unwrap_or(0),
+            image_name: parser.try_parse("ImageName").unwrap_or_default(),
         },
         _ => return None,
     };
@@ -332,6 +390,38 @@ mod tests {
     }
 
     #[test]
+    fn image_loaded_kind_constructs_as_expected() {
+        let ev = ProcessEvent {
+            ts_ms: 1_700_000_000_000,
+            pid: 4242,
+            kind: ProcessEventKind::ImageLoaded {
+                image_base: 0x7fff_0000_0000,
+                image_size: 0x20000,
+                image_name: r"\Device\HarddiskVolume4\Windows\System32\ntdll.dll".into(),
+            },
+        };
+        match ev.kind {
+            ProcessEventKind::ImageLoaded {
+                image_base,
+                image_size,
+                ref image_name,
+            } => {
+                assert_eq!(image_base, 0x7fff_0000_0000);
+                assert_eq!(image_size, 0x20000);
+                assert!(image_name.ends_with("ntdll.dll"));
+            }
+            _ => panic!("expected ImageLoaded"),
+        }
+        assert_eq!(ev.pid, 4242);
+    }
+
+    #[test]
+    fn watcher_options_default_excludes_images() {
+        let opts = WatcherOptions::default();
+        assert!(!opts.images, "image collection is opt-in, off by default");
+    }
+
+    #[test]
     fn elevation_required_maps_from_access_denied() {
         // Both the bare Win32 code and the HRESULT form (what ferrisetw emits)
         // must be recognized as the elevation signal.
@@ -360,7 +450,12 @@ mod tests {
     fn process_event_watcher_live_start_stop() {
         use std::time::{Duration, Instant};
 
-        let (watcher, rx) = ProcessEventWatcher::start().expect("start (run elevated)");
+        // Enable image loads too: a freshly spawned process maps several DLLs
+        // (ntdll, kernel32, …) so we get real ImageLoad records to verify the
+        // property names against. Start/stop are always on.
+        let (watcher, rx) =
+            ProcessEventWatcher::start_with_options(WatcherOptions { images: true })
+                .expect("start (run elevated)");
 
         // Spawn a short-lived child; expect a Started then Stopped for its pid.
         let mut child = std::process::Command::new("cmd")
@@ -375,11 +470,23 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(15);
         let mut saw_start = false;
         let mut saw_stop = false;
-        while Instant::now() < deadline && !(saw_start && saw_stop) {
+        // Any image load for the child pid proves the ImageLoad parse path
+        // (base/size/name property names) works against real records.
+        let mut saw_image = false;
+        while Instant::now() < deadline && !(saw_start && saw_stop && saw_image) {
             match rx.recv_timeout(Duration::from_millis(500)) {
                 Ok(ev) if ev.pid == child_pid => match ev.kind {
                     ProcessEventKind::Started { .. } => saw_start = true,
                     ProcessEventKind::Stopped { .. } => saw_stop = true,
+                    ProcessEventKind::ImageLoaded {
+                        image_base,
+                        image_name,
+                        ..
+                    } => {
+                        assert!(image_base != 0, "image base should be non-zero");
+                        assert!(!image_name.is_empty(), "image name should parse");
+                        saw_image = true;
+                    }
                 },
                 Ok(_) => {}
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
@@ -390,5 +497,6 @@ mod tests {
         watcher.stop().expect("clean stop");
         assert!(saw_start, "expected a ProcessStart for pid {child_pid}");
         assert!(saw_stop, "expected a ProcessStop for pid {child_pid}");
+        assert!(saw_image, "expected an ImageLoad for pid {child_pid}");
     }
 }

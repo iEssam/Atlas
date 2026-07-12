@@ -16,7 +16,10 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 use atlas_collectors::{CadenceController, ProcKey, ProcSample, SampleSet, Sampler, Tick};
-use atlas_store::{ProcAggregate, ProcIdentity, SelfSampleRow, Store, SysSampleRow};
+use atlas_store::{
+    ProcAggregate, ProcEventRow, ProcIdentity, SelfSampleRow, Store, SysSampleRow,
+    PROC_EVENT_START, PROC_EVENT_STOP,
+};
 
 #[derive(Parser)]
 #[command(
@@ -63,7 +66,11 @@ enum Cmd {
     /// Stream live process start/stop events via ETW until Ctrl+C.
     ///
     /// Requires an elevated terminal (starting an ETW session needs admin).
-    Events,
+    Events {
+        /// Also stream image-load events (higher volume; opt-in).
+        #[arg(long)]
+        images: bool,
+    },
     /// Query recorded data: top processes by average CPU.
     DbTop {
         /// Database path (default: %LOCALAPPDATA%\SystemAtlas\dev\atlas.db).
@@ -102,7 +109,7 @@ fn main() -> Result<()> {
             flush_secs,
             duration,
         ),
-        Cmd::Events => cmd_events(),
+        Cmd::Events { images } => cmd_events(images),
         Cmd::DbTop { db, minutes, limit } => {
             cmd_db_top(db.unwrap_or_else(default_db_path), minutes, limit)
         }
@@ -342,9 +349,150 @@ struct FlushBatch {
     exited: Vec<ProcKey>,
     self_row: SelfSampleRow,
     dropped_before: u64,
+    /// Raw ETW process lifecycle events drained during this window (empty in
+    /// degraded mode). Persisted to `proc_event` in the writer's transaction.
+    proc_events: Vec<ProcEventRow>,
+    /// Exact exits from ETW Stop events. The writer stamps these onto the
+    /// matching live instance by pid, superseding the coarser snapshot-diff
+    /// `exited` marking. Empty in degraded mode.
+    exit_stamps: Vec<ExitStamp>,
 }
 
 const RETENTION_HOURS: i64 = 72;
+
+/// The live ETW process-event source for the record loop, when available.
+/// `None` fields mean the watcher is degraded (not elevated / failed to start):
+/// the loop then falls back to the plain sleep and snapshot-diff lifecycle
+/// exactly as before ETW existed.
+#[cfg(windows)]
+struct EventSource {
+    rx: std::sync::mpsc::Receiver<atlas_collectors::ProcessEvent>,
+    watcher: atlas_collectors::ProcessEventWatcher,
+}
+
+/// One exact exit from an ETW Stop event: `(pid, exit_ms, exit_status)`. The
+/// writer stamps it onto the matching live instance by pid.
+type ExitStamp = (u32, i64, Option<i32>);
+
+/// Per-window accumulation of drained ETW events: the raw rows to persist, the
+/// exact exits to stamp, and the started/exited counts to feed the cadence
+/// controller in place of snapshot diffs.
+#[derive(Default)]
+struct EventWindow {
+    rows: Vec<ProcEventRow>,
+    exit_stamps: Vec<ExitStamp>,
+    started: u32,
+    exited: u32,
+}
+
+impl EventWindow {
+    fn take(&mut self) -> (Vec<ProcEventRow>, Vec<ExitStamp>) {
+        self.started = 0;
+        self.exited = 0;
+        (
+            std::mem::take(&mut self.rows),
+            std::mem::take(&mut self.exit_stamps),
+        )
+    }
+}
+
+/// Try to start the live process-event watcher for `record` (start/stop only,
+/// no image events). Returns `None` (degraded) on elevation failure or any
+/// other error, after logging one clear warning — collection continues either
+/// way (the ETW path only sharpens exit timestamps and wake latency).
+#[cfg(windows)]
+fn try_start_event_source() -> Option<EventSource> {
+    use atlas_collectors::{EventError, ProcessEventWatcher};
+    match ProcessEventWatcher::start() {
+        Ok((watcher, rx)) => {
+            tracing::info!(session = watcher.session_name(), "process events: live");
+            Some(EventSource { rx, watcher })
+        }
+        Err(EventError::ElevationRequired) => {
+            tracing::warn!(
+                "process events degraded: not elevated — exact create/exit timestamps unavailable"
+            );
+            None
+        }
+        Err(e) => {
+            tracing::warn!("process events degraded: {e}");
+            None
+        }
+    }
+}
+
+/// Fold one drained ETW event into the window accumulator: buffer the row for
+/// `proc_event`, count it for the cadence controller, and (for a Stop) record
+/// an exact exit stamp for the writer to apply by pid.
+#[cfg(windows)]
+fn fold_event(win: &mut EventWindow, ev: atlas_collectors::ProcessEvent) {
+    use atlas_collectors::ProcessEventKind;
+    match ev.kind {
+        ProcessEventKind::Started {
+            parent_pid,
+            session_id,
+            image_name,
+        } => {
+            win.started += 1;
+            win.rows.push(ProcEventRow {
+                ts_ms: ev.ts_ms,
+                pid: ev.pid,
+                kind: PROC_EVENT_START,
+                parent_pid: Some(parent_pid),
+                session_id: Some(session_id),
+                image_name: Some(image_name),
+                exit_status: None,
+            });
+        }
+        ProcessEventKind::Stopped { exit_status } => {
+            win.exited += 1;
+            win.exit_stamps.push((ev.pid, ev.ts_ms, Some(exit_status)));
+            win.rows.push(ProcEventRow {
+                ts_ms: ev.ts_ms,
+                pid: ev.pid,
+                kind: PROC_EVENT_STOP,
+                parent_pid: None,
+                session_id: None,
+                image_name: None,
+                exit_status: Some(exit_status),
+            });
+        }
+        // record never enables image events; ignore any that slip through.
+        ProcessEventKind::ImageLoaded { .. } => {}
+    }
+}
+
+/// Wait up to `timeout` for the next ETW event, then drain all currently
+/// pending events into `win`. Returning on the first event (rather than always
+/// sleeping the full interval) is the event-driven wake: a process start/stop
+/// pulls the loop out of even a 15 s idle sleep so churn is sampled at active
+/// resolution. A quiet interval simply times out.
+///
+/// Returns `false` once the channel has disconnected (watcher thread gone).
+/// That arm must sleep out the timeout itself: `recv_timeout` on a dead
+/// channel returns instantly, and without the sleep the record loop would
+/// busy-spin for the rest of the session.
+#[cfg(windows)]
+fn wait_and_drain_events(
+    rx: &std::sync::mpsc::Receiver<atlas_collectors::ProcessEvent>,
+    timeout: Duration,
+    win: &mut EventWindow,
+) -> bool {
+    use std::sync::mpsc::RecvTimeoutError;
+    match rx.recv_timeout(timeout) {
+        Ok(ev) => fold_event(win, ev),
+        Err(RecvTimeoutError::Timeout) => return true,
+        Err(RecvTimeoutError::Disconnected) => {
+            std::thread::sleep(timeout);
+            return false;
+        }
+    }
+    // Drain the rest of the burst without blocking.
+    while let Ok(ev) = rx.try_recv() {
+        fold_event(win, ev);
+    }
+    true
+}
 
 fn cmd_record(
     db_path: PathBuf,
@@ -363,6 +511,16 @@ fn cmd_record(
         .name("atlas-writer".into())
         .spawn(move || writer_thread(writer_db, rx))?;
 
+    // Live process events sharpen exit timestamps and wake sampling instantly
+    // on process churn. When degraded, everything below falls back to snapshot
+    // diffs + a plain sleep, exactly as before.
+    #[cfg(windows)]
+    let event_source = try_start_event_source();
+    #[cfg(windows)]
+    let mut events_live = event_source.is_some();
+    #[cfg(not(windows))]
+    tracing::warn!("process events degraded: ETW is Windows-only");
+
     let mut sampler = Sampler::new()?;
     let own_pid = std::process::id();
     let mut cadence = CadenceController::new();
@@ -378,6 +536,7 @@ fn cmd_record(
     let mut accs: HashMap<ProcKey, AggAcc> = HashMap::new();
     let mut sys_buf: Vec<SysSampleRow> = Vec::new();
     let mut self_acc = SelfAcc::new();
+    let mut event_win = EventWindow::default();
     let mut prev_tick = Instant::now();
     // Windows dropped because the writer stalled, carried into the next batch
     // that lands (PRD §11.3 — degradation is observable, never silent).
@@ -393,6 +552,23 @@ fn cmd_record(
                 break;
             }
         }
+
+        // Event-driven wake: when the watcher is live, block on the event
+        // channel for at most `next_sleep`; an ETW start/stop returns
+        // immediately (so we sample the churn at 1 s resolution even from the
+        // 15 s idle tier), then we drain every pending event before sampling.
+        // When degraded, this is a plain sleep.
+        #[cfg(windows)]
+        match event_source.as_ref() {
+            Some(src) if events_live => {
+                events_live = wait_and_drain_events(&src.rx, next_sleep, &mut event_win);
+                if !events_live {
+                    tracing::warn!("process event channel closed; falling back to snapshot diffs");
+                }
+            }
+            _ => std::thread::sleep(next_sleep),
+        }
+        #[cfg(not(windows))]
         std::thread::sleep(next_sleep);
 
         // Time the sample() call itself — this is the dominant cost of a tick
@@ -402,6 +578,19 @@ fn cmd_record(
         let tick_us = t0.elapsed().as_micros() as u64;
         let dt_s = prev_tick.elapsed().as_secs_f64().max(1e-3);
         prev_tick = Instant::now();
+
+        // Prefer real ETW churn counts for the cadence decision when live; fall
+        // back to snapshot diffs when degraded. Only true on Windows with an
+        // active watcher.
+        #[cfg(windows)]
+        let live_events = events_live;
+        #[cfg(not(windows))]
+        let live_events = false;
+        let (started_n, exited_n) = if live_events {
+            (event_win.started, event_win.exited)
+        } else {
+            (set.started.len() as u32, set.exited.len() as u32)
+        };
 
         // Feed the cadence controller and pick the next sleep. The floor keeps
         // the active tier no faster than the user asked for.
@@ -413,8 +602,8 @@ fn cmd_record(
             .unwrap_or(0);
         let chosen = cadence.next_interval(Tick {
             sys_cpu_permille: set.system.cpu_permille,
-            started: set.started.len() as u32,
-            exited: set.exited.len() as u32,
+            started: started_n,
+            exited: exited_n,
             max_proc_cpu_permille: max_proc_cpu,
             elapsed: Duration::from_secs_f64(dt_s),
         });
@@ -441,13 +630,19 @@ fn cmd_record(
 
         if last_flush.elapsed() >= flush_every {
             let window_secs = last_flush.elapsed().as_secs().max(1) as u32;
+            // When live, exit marking comes from exact ETW Stop events, so the
+            // snapshot-diff `exited` set is suppressed to avoid double-marking.
+            let snapshot_exited: &[ProcKey] = if live_events { &[] } else { &set.exited };
+            let (event_rows, exit_stamps) = event_win.take();
             if let Some(batch) = build_batch(
                 &mut accs,
                 &mut sys_buf,
-                &set.exited,
+                snapshot_exited,
                 &self_acc,
                 window_secs,
                 dropped_pending,
+                event_rows,
+                exit_stamps,
             ) {
                 match tx.try_send(batch) {
                     Ok(()) => {
@@ -467,8 +662,10 @@ fn cmd_record(
         }
     }
 
-    // Final partial window before shutdown.
+    // Final partial window before shutdown: include any events drained since
+    // the last flush so they are not lost on a clean stop.
     let window_secs = last_flush.elapsed().as_secs().max(1) as u32;
+    let (event_rows, exit_stamps) = event_win.take();
     if let Some(batch) = build_batch(
         &mut accs,
         &mut sys_buf,
@@ -476,11 +673,25 @@ fn cmd_record(
         &self_acc,
         window_secs,
         dropped_pending,
+        event_rows,
+        exit_stamps,
     ) {
         if tx.try_send(batch).is_ok() {
             sent_batches += 1;
         } else {
             tracing::warn!("final flush window dropped (writer stalled)");
+        }
+    }
+
+    // Stop the ETW session cleanly before we tear down the writer.
+    #[cfg(windows)]
+    if let Some(src) = event_source {
+        let dropped = src.watcher.dropped_count();
+        if dropped > 0 {
+            tracing::warn!(dropped, "some process events were dropped (channel full)");
+        }
+        if let Err(e) = src.watcher.stop() {
+            tracing::warn!("stopping ETW session: {e}");
         }
     }
 
@@ -503,6 +714,7 @@ fn cmd_record(
 /// per-process aggregates carry a placeholder row id (-1); the writer thread
 /// resolves the real id via its own cache before persisting. Returns `None`
 /// when there is nothing to write.
+#[allow(clippy::too_many_arguments)]
 fn build_batch(
     accs: &mut HashMap<ProcKey, AggAcc>,
     sys_buf: &mut Vec<SysSampleRow>,
@@ -510,8 +722,12 @@ fn build_batch(
     self_acc: &SelfAcc,
     window_secs: u32,
     dropped_before: u64,
+    proc_events: Vec<ProcEventRow>,
+    exit_stamps: Vec<ExitStamp>,
 ) -> Option<FlushBatch> {
-    if accs.is_empty() && sys_buf.is_empty() {
+    // Events alone are enough to warrant a batch even with no samples buffered,
+    // so a burst of process churn on an idle machine still lands promptly.
+    if accs.is_empty() && sys_buf.is_empty() && proc_events.is_empty() && exit_stamps.is_empty() {
         return None;
     }
     let ts = sys_buf.last().map(|s| s.ts_ms).unwrap_or_else(now_ms);
@@ -530,6 +746,8 @@ fn build_batch(
         exited: exited.to_vec(),
         self_row: self_acc.finish(ts),
         dropped_before,
+        proc_events,
+        exit_stamps,
     })
 }
 
@@ -569,13 +787,31 @@ fn writer_thread(
             agg.proc_row_id = row_id;
             aggs.push(agg);
         }
+        // Snapshot-diff exits (degraded mode only): mark the instance exited at
+        // the flush timestamp — the best we can do without ETW.
         for key in &batch.exited {
             if let Some(row_id) = id_cache.remove(key) {
                 store.mark_exited(row_id, batch.agg_ts_ms)?;
             }
         }
 
-        store.write_batch(batch.agg_ts_ms, batch.window_secs, &batch.sys, &aggs)?;
+        // Exact ETW exits (live mode): stamp the matching live instance by pid
+        // with the event's own timestamp and exit status, and evict it from the
+        // id cache so a later pid reuse gets a fresh row (see stamp_exit_by_pid
+        // for why matching is by pid, not the (pid, create_time) key). A stop
+        // with no live instance (stop-without-start) stamps zero rows.
+        for (pid, exit_ms, exit_status) in &batch.exit_stamps {
+            store.stamp_exit_by_pid(*pid, *exit_ms, *exit_status)?;
+            id_cache.retain(|k, _| k.pid != *pid);
+        }
+
+        store.write_batch(
+            batch.agg_ts_ms,
+            batch.window_secs,
+            &batch.sys,
+            &aggs,
+            &batch.proc_events,
+        )?;
         store.write_self_sample(&batch.self_row)?;
         tracing::debug!(
             cpu_permille = batch.self_row.cpu_permille,
@@ -588,6 +824,8 @@ fn writer_thread(
         tracing::info!(
             proc_rows = aggs.len(),
             sys_rows = batch.sys.len(),
+            event_rows = batch.proc_events.len(),
+            exits_stamped = batch.exit_stamps.len(),
             window_secs = batch.window_secs,
             "flushed window"
         );
@@ -603,12 +841,12 @@ fn writer_thread(
 const EXIT_ELEVATION_REQUIRED: i32 = 2;
 
 #[cfg(windows)]
-fn cmd_events() -> Result<()> {
-    use atlas_collectors::{EventError, ProcessEventWatcher};
+fn cmd_events(images: bool) -> Result<()> {
+    use atlas_collectors::{EventError, ProcessEventWatcher, WatcherOptions};
 
     let stop = install_ctrlc();
 
-    let (watcher, rx) = match ProcessEventWatcher::start() {
+    let (watcher, rx) = match ProcessEventWatcher::start_with_options(WatcherOptions { images }) {
         Ok(pair) => pair,
         Err(EventError::ElevationRequired) => {
             eprintln!(
@@ -649,7 +887,7 @@ fn cmd_events() -> Result<()> {
 }
 
 #[cfg(not(windows))]
-fn cmd_events() -> Result<()> {
+fn cmd_events(_images: bool) -> Result<()> {
     anyhow::bail!("the `events` command requires Windows ETW");
 }
 
@@ -672,6 +910,14 @@ fn format_event(ev: &atlas_collectors::ProcessEvent) -> String {
         ProcessEventKind::Stopped { exit_status } => {
             format!("[{ts}] STOP  pid={} exit={}", ev.pid, exit_status)
         }
+        ProcessEventKind::ImageLoaded {
+            image_base,
+            image_size,
+            image_name,
+        } => format!(
+            "[{ts}] IMAGE pid={} base={image_base:#x} size={image_size} {image_name}",
+            ev.pid
+        ),
     }
 }
 
@@ -811,5 +1057,84 @@ mod tests {
             kind: ProcessEventKind::Stopped { exit_status: 0 },
         };
         assert_eq!(format_event(&stop), "[21:04:15.001] STOP  pid=1234 exit=0");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn format_event_image_load() {
+        use atlas_collectors::{ProcessEvent, ProcessEventKind};
+        let ev = ProcessEvent {
+            ts_ms: (3600 + 2 * 60 + 3) * 1000 + 4,
+            pid: 42,
+            kind: ProcessEventKind::ImageLoaded {
+                image_base: 0x1000,
+                image_size: 0x2000,
+                image_name: r"\Device\HarddiskVolume4\ntdll.dll".into(),
+            },
+        };
+        assert_eq!(
+            format_event(&ev),
+            r"[01:02:03.004] IMAGE pid=42 base=0x1000 size=8192 \Device\HarddiskVolume4\ntdll.dll"
+        );
+    }
+
+    /// A Start event folds into a start count and a `proc_event` start row; a
+    /// Stop folds into an exit count, an exit stamp, and a stop row. Image loads
+    /// (which `record` never enables) are ignored if one slips through.
+    #[cfg(windows)]
+    #[test]
+    fn fold_event_routes_start_stop_and_ignores_images() {
+        use atlas_collectors::{ProcessEvent, ProcessEventKind};
+        let mut win = EventWindow::default();
+
+        fold_event(
+            &mut win,
+            ProcessEvent {
+                ts_ms: 1_000,
+                pid: 7,
+                kind: ProcessEventKind::Started {
+                    parent_pid: 4,
+                    session_id: 1,
+                    image_name: "child.exe".into(),
+                },
+            },
+        );
+        fold_event(
+            &mut win,
+            ProcessEvent {
+                ts_ms: 2_000,
+                pid: 7,
+                kind: ProcessEventKind::Stopped { exit_status: 3 },
+            },
+        );
+        fold_event(
+            &mut win,
+            ProcessEvent {
+                ts_ms: 2_500,
+                pid: 9,
+                kind: ProcessEventKind::ImageLoaded {
+                    image_base: 1,
+                    image_size: 2,
+                    image_name: "ntdll.dll".into(),
+                },
+            },
+        );
+
+        assert_eq!(win.started, 1);
+        assert_eq!(win.exited, 1);
+        assert_eq!(win.rows.len(), 2, "image load produced no row");
+        assert_eq!(win.rows[0].kind, PROC_EVENT_START);
+        assert_eq!(win.rows[0].image_name.as_deref(), Some("child.exe"));
+        assert_eq!(win.rows[1].kind, PROC_EVENT_STOP);
+        assert_eq!(win.rows[1].exit_status, Some(3));
+        assert_eq!(win.exit_stamps, vec![(7, 2_000, Some(3))]);
+
+        // take() hands off buffers and resets the counters for the next window.
+        let (rows, stamps) = win.take();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(stamps.len(), 1);
+        assert_eq!(win.started, 0);
+        assert_eq!(win.exited, 0);
+        assert!(win.rows.is_empty());
     }
 }

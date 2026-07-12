@@ -76,6 +76,43 @@ CREATE TABLE IF NOT EXISTS gap_event (
 CREATE INDEX IF NOT EXISTS ix_gap_event_ts ON gap_event(ts_ms);
 "#;
 
+// Additive v3 migration (docs/phases.md M3): exact process lifecycle events
+// from ETW. `proc_event` is the raw event log (start/stop) with the event's own
+// timestamp; `process_instance` gains an `exit_status` column so a Stop event
+// can stamp the exact exit code onto the matching live instance.
+//
+// `proc_event` is created with IF NOT EXISTS; the `exit_status` column is added
+// with a guarded ALTER TABLE (SQLite has no `ADD COLUMN IF NOT EXISTS`) so
+// upgrading a v2 database in place is a no-op beyond bumping user_version.
+const SCHEMA_V3_PROC_EVENT: &str = r#"
+CREATE TABLE IF NOT EXISTS proc_event (
+    ts_ms INTEGER NOT NULL,
+    pid INTEGER NOT NULL,
+    kind INTEGER NOT NULL,           -- 0 = start, 1 = stop
+    parent_pid INTEGER,              -- start only
+    session_id INTEGER,              -- start only
+    image_name TEXT,                 -- start only (path/name from the event)
+    exit_status INTEGER              -- stop only
+);
+CREATE INDEX IF NOT EXISTS ix_proc_event_ts ON proc_event(ts_ms);
+CREATE INDEX IF NOT EXISTS ix_proc_event_pid ON proc_event(pid, ts_ms);
+"#;
+
+/// Whether `table` already has a column named `column`, via `PRAGMA table_info`.
+/// Used to make the v3 `ADD COLUMN` migration idempotent (SQLite lacks
+/// `ADD COLUMN IF NOT EXISTS`).
+fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let name: String = row.get(1)?;
+        if name == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 #[derive(Debug, Clone)]
 pub struct ProcIdentity {
     pub pid: u32,
@@ -126,6 +163,24 @@ pub struct SelfSampleRow {
     /// Ticks folded into this window.
     pub ticks: u32,
 }
+
+/// A raw process lifecycle event, as delivered by ETW (docs/phases.md M3).
+/// `kind` is 0 for start, 1 for stop; the optional fields carry only what the
+/// matching event kind supplies (start: parent/session/image; stop: exit).
+#[derive(Debug, Clone)]
+pub struct ProcEventRow {
+    pub ts_ms: i64,
+    pub pid: u32,
+    pub kind: u8,
+    pub parent_pid: Option<u32>,
+    pub session_id: Option<u32>,
+    pub image_name: Option<String>,
+    pub exit_status: Option<i32>,
+}
+
+/// `proc_event.kind` discriminants.
+pub const PROC_EVENT_START: u8 = 0;
+pub const PROC_EVENT_STOP: u8 = 1;
 
 #[derive(Debug, Clone)]
 pub struct TopProcessRow {
@@ -178,6 +233,18 @@ impl Store {
             self.conn.execute_batch(SCHEMA_V2)?;
             self.conn.execute_batch("PRAGMA user_version = 2;")?;
         }
+        if version < 3 {
+            self.conn.execute_batch(SCHEMA_V3_PROC_EVENT)?;
+            // Add exit_status to process_instance if it isn't already present.
+            // SQLite lacks `ADD COLUMN IF NOT EXISTS`, so probe the table info
+            // first; a v1/v2 database won't have the column, a re-run would.
+            if !column_exists(&self.conn, "process_instance", "exit_status")? {
+                self.conn.execute_batch(
+                    "ALTER TABLE process_instance ADD COLUMN exit_status INTEGER;",
+                )?;
+            }
+            self.conn.execute_batch("PRAGMA user_version = 3;")?;
+        }
         Ok(())
     }
 
@@ -217,12 +284,15 @@ impl Store {
     }
 
     /// One transaction per flush window — the only place samples touch disk.
+    /// `proc_events` are the raw ETW start/stop rows drained during the window;
+    /// they ride the same transaction so an event and its window land together.
     pub fn write_batch(
         &mut self,
         agg_ts_ms: i64,
         window_secs: u32,
         sys: &[SysSampleRow],
         aggs: &[ProcAggregate],
+        proc_events: &[ProcEventRow],
     ) -> Result<()> {
         let tx = self.conn.transaction()?;
         {
@@ -268,9 +338,56 @@ impl Store {
                     a.threads_last
                 ])?;
             }
+
+            if !proc_events.is_empty() {
+                let mut ev_stmt = tx.prepare_cached(
+                    "INSERT INTO proc_event
+                         (ts_ms, pid, kind, parent_pid, session_id, image_name, exit_status)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                )?;
+                for e in proc_events {
+                    ev_stmt.execute(params![
+                        e.ts_ms,
+                        e.pid,
+                        e.kind,
+                        e.parent_pid,
+                        e.session_id,
+                        e.image_name,
+                        e.exit_status
+                    ])?;
+                }
+            }
         }
         tx.commit()?;
         Ok(())
+    }
+
+    /// Stamps the exact exit timestamp and status onto the currently-live
+    /// process instance(s) matching `pid` (docs/phases.md M3 exit stamping).
+    ///
+    /// Matching is by `pid` against instances that have not yet been marked
+    /// exited (`exit_seen_ms IS NULL`). We deliberately do *not* reconstruct the
+    /// `(pid, create_time_100ns)` key from the ETW event: the event timestamp is
+    /// the process's *stop* time, which never equals the snapshot's CreateTime,
+    /// and ETW does not carry CreateTime on the Stop record. Within a single
+    /// recording session a live, un-exited instance for a pid is unique in
+    /// practice (a pid is not reused until its prior holder has exited, at which
+    /// point that instance is already stamped), so the pid match is safe.
+    ///
+    /// Returns the number of instance rows stamped (0 for a stop-without-start).
+    pub fn stamp_exit_by_pid(
+        &self,
+        pid: u32,
+        exit_ms: i64,
+        exit_status: Option<i32>,
+    ) -> Result<usize> {
+        let n = self.conn.execute(
+            "UPDATE process_instance
+                SET exit_seen_ms = ?2, exit_status = ?3
+              WHERE pid = ?1 AND exit_seen_ms IS NULL",
+            params![pid, exit_ms, exit_status],
+        )?;
+        Ok(n)
     }
 
     /// Deletes samples older than the cutoff. Returns (proc rows, sys rows)
@@ -438,7 +555,7 @@ mod tests {
             handle_count: 84,
         };
         store
-            .write_batch(10_000, 15, &[sys], &[agg(busy, 400), agg(idle, 10)])
+            .write_batch(10_000, 15, &[sys], &[agg(busy, 400), agg(idle, 10)], &[])
             .unwrap();
 
         let top = store.top_processes(0, 10).unwrap();
@@ -466,15 +583,16 @@ mod tests {
             .unwrap();
         assert_eq!(has_self, 0, "v1 database must not have self_sample");
 
-        // Wrapping the same connection in a Store runs migrate(), which should
-        // upgrade in place to v2 without touching the existing v1 data.
+        // Wrapping the same connection in a Store runs migrate(), which walks a
+        // v1 database up through every additive migration in place, without
+        // touching the existing v1 data.
         let store = Store { conn };
         store.migrate().unwrap();
         let version: i64 = store
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 2, "migration bumps user_version to 2");
+        assert_eq!(version, 3, "migration walks v1 up to the current schema");
 
         store
             .write_self_sample(&SelfSampleRow {
@@ -505,14 +623,150 @@ mod tests {
     }
 
     #[test]
-    fn fresh_database_is_v2() {
+    fn fresh_database_has_no_self_sample() {
+        let store = Store::open_in_memory().unwrap();
+        assert!(store.latest_self_sample().unwrap().is_none());
+    }
+
+    #[test]
+    fn v3_migration_upgrades_v2_in_place() {
+        // Build a v2 database: v1 + v2 schema, user_version pinned to 2, and no
+        // v3 artifacts (no proc_event table, no exit_status column). This mimics
+        // a database written before the M3 slice landed.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA_V1).unwrap();
+        conn.execute_batch(SCHEMA_V2).unwrap();
+        conn.execute_batch("PRAGMA user_version = 2;").unwrap();
+
+        assert!(
+            !column_exists(&conn, "process_instance", "exit_status").unwrap(),
+            "v2 process_instance must not have exit_status"
+        );
+        let has_events: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='proc_event'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(has_events, 0, "v2 database must not have proc_event");
+
+        // Seed a pre-existing process_instance row so we can prove the ALTER
+        // preserves data (existing rows get NULL exit_status).
+        conn.execute(
+            "INSERT INTO process_instance
+                 (pid, create_time_100ns, parent_pid, session_id, image_name,
+                  first_seen_ms, last_seen_ms)
+             VALUES (77, 123, 4, 1, 'pre.exe', 500, 500)",
+            [],
+        )
+        .unwrap();
+
+        let store = Store { conn };
+        store.migrate().unwrap();
+        let version: i64 = store
+            .conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, 3, "migration bumps user_version to 3");
+        assert!(column_exists(&store.conn, "process_instance", "exit_status").unwrap());
+
+        // Pre-existing row survived and has a NULL exit_status.
+        let (name, exit): (String, Option<i64>) = store
+            .conn
+            .query_row(
+                "SELECT image_name, exit_status FROM process_instance WHERE pid = 77",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(name, "pre.exe");
+        assert_eq!(exit, None);
+
+        // Migration is idempotent: a second run is a no-op.
+        store.migrate().unwrap();
+    }
+
+    #[test]
+    fn fresh_database_is_v3() {
         let store = Store::open_in_memory().unwrap();
         let version: i64 = store
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 2);
-        assert!(store.latest_self_sample().unwrap().is_none());
+        assert_eq!(version, 3);
+    }
+
+    #[test]
+    fn proc_event_batch_write_and_exit_stamping() {
+        let mut store = Store::open_in_memory().unwrap();
+        // A live instance for pid 4242 (as the snapshot collector would upsert).
+        let id = store.upsert_process(&identity(4242), 1_000).unwrap();
+
+        // A start event and a stop event for that pid ride a flush batch.
+        let events = vec![
+            ProcEventRow {
+                ts_ms: 1_100,
+                pid: 4242,
+                kind: PROC_EVENT_START,
+                parent_pid: Some(4),
+                session_id: Some(1),
+                image_name: Some("proc4242.exe".into()),
+                exit_status: None,
+            },
+            ProcEventRow {
+                ts_ms: 2_500,
+                pid: 4242,
+                kind: PROC_EVENT_STOP,
+                parent_pid: None,
+                session_id: None,
+                image_name: None,
+                exit_status: Some(0),
+            },
+        ];
+        store.write_batch(2_500, 15, &[], &[], &events).unwrap();
+
+        // Both rows landed with the right kind discriminants.
+        let (starts, stops): (i64, i64) = store
+            .conn
+            .query_row(
+                "SELECT
+                     SUM(kind = 0) AS starts,
+                     SUM(kind = 1) AS stops
+                 FROM proc_event WHERE pid = 4242",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((starts, stops), (1, 1));
+
+        // Exit stamping matches the live instance by pid and records the exact
+        // exit ts + status.
+        let stamped = store.stamp_exit_by_pid(4242, 2_500, Some(0)).unwrap();
+        assert_eq!(stamped, 1, "one live instance stamped");
+        let (exit_ms, exit_status): (Option<i64>, Option<i64>) = store
+            .conn
+            .query_row(
+                "SELECT exit_seen_ms, exit_status FROM process_instance WHERE id = ?1",
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(exit_ms, Some(2_500));
+        assert_eq!(exit_status, Some(0));
+
+        // A second stamp for the same pid finds no un-exited instance: it is a
+        // no-op (models a stop-without-live-start / duplicate stop).
+        let again = store.stamp_exit_by_pid(4242, 9_999, Some(1)).unwrap();
+        assert_eq!(again, 0, "already-exited instance is not re-stamped");
+    }
+
+    #[test]
+    fn stamp_exit_without_matching_instance_is_noop() {
+        // Stop-without-start: no live instance for the pid → zero rows stamped.
+        let store = Store::open_in_memory().unwrap();
+        let stamped = store.stamp_exit_by_pid(1234, 5_000, Some(0)).unwrap();
+        assert_eq!(stamped, 0);
     }
 
     #[test]
@@ -542,9 +796,11 @@ mod tests {
             handle_count: 1,
         };
         store
-            .write_batch(1_000, 15, &[sys(1_000)], std::slice::from_ref(&agg))
+            .write_batch(1_000, 15, &[sys(1_000)], std::slice::from_ref(&agg), &[])
             .unwrap();
-        store.write_batch(9_000, 15, &[sys(9_000)], &[agg]).unwrap();
+        store
+            .write_batch(9_000, 15, &[sys(9_000)], &[agg], &[])
+            .unwrap();
 
         let (p, s) = store.apply_retention(5_000).unwrap();
         assert_eq!((p, s), (1, 1));

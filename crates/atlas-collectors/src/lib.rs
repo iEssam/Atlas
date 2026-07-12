@@ -14,7 +14,7 @@ pub mod snapshot;
 
 pub use cadence::{CadenceController, Tick};
 #[cfg(windows)]
-pub use events::{EventError, ProcessEvent, ProcessEventKind, ProcessEventWatcher};
+pub use events::{EventError, ProcessEvent, ProcessEventKind, ProcessEventWatcher, WatcherOptions};
 pub use gauges::{cpu_times, memory_status, processor_count, CpuTimes, MemoryStatus};
 pub use sampler::{ProcKey, ProcSample, SampleSet, Sampler, SystemSample};
 pub use snapshot::{snapshot_processes, ProcessSnapshot};
