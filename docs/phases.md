@@ -31,7 +31,7 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 - [x] Adaptive cadence: 1 s active → 5 s → 15 s idle decay, instant return on activity (`CadenceController`, pure + unit-tested)
 - [x] Self-metrics: `self_sample` per flush window (own CPU/WS + sampler tick timing), surfaced as the `db-top` overhead line (PRD §12.2)
 
-### M2 — Storage v0 `[~]`
+### M2 — Storage v0 `[x]` ✅ (completed 2026-07-13)
 
 - [x] SQLite store (WAL, `synchronous=NORMAL`), schema v1, migrations via `PRAGMA user_version`
 - [x] Batched writes: per-process aggregates (avg/max over flush window) + 1 Hz system samples, one transaction per flush (PRD §12.4: no per-sample writes)
@@ -39,7 +39,7 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 - [x] 72 h retention sweep (PRD §9.3.1 default)
 - [x] Dev verification commands: `record`, `db-top`
 - [x] Writer thread + bounded channel with backpressure: stalls drop the window and record a `gap_event` row (schema v2); window aggregates time-weighted for variable cadence
-- [ ] **M-TSDB:** replace interim SQLite sample tables with the chunked Gorilla-compressed tiered store (tech-stack §4.2); keep SQLite for events/entities
+- [x] **M-TSDB:** Gorilla-compressed sample blocks (delta-of-delta ts + XOR values, CRC-framed) stored as SQLite BLOBs; raw per-tick T0 resolution; measured 1.73 B/sample live → ~215 MB/day steady-state (vs ~520 interim). T1/T2 roll-up tiers + file-based chunk store remain future work (closes the gap to ~150 MB/day)
 
 ### M3 — Process events & application grouping `[~]`
 
@@ -60,9 +60,9 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 
 - [x] .NET 10.0.301 SDK installed; `src-ui/Atlas.sln` — Atlas.IpcClient (gRPC-over-pipe via ConnectCallback, proto codegen, 15 tests), Atlas.DevCli (console interop proof), Atlas.App (WinUI 3, Windows App SDK 1.6, unpackaged; builds with PackageReferences only — no VS workloads needed)
 - [x] Live Activity page: NavigationView + Mica shell, virtualized process table updated in place at ~1 Hz from StreamSnapshots; verified running against `serve` at ~181 MB WS (budget < 200 MB)
+- [x] C# `MetricsRing` seqlock reader over the shared-mem ring (layout offsets pinned by tests against shm.rs); Live Activity + Overview prefer the ring, fall back to the gRPC stream, re-probe every ~15 s. Ring rows carry no thread/handle counts (layout v1) — those columns are stream-only
+- [x] Overview page v0 (gauge cards + top-5 consumers, measured values only)
 - [ ] NativeAOT publish profile — blocked on MVVMTK0045 (see decision note)
-- [ ] Overview page v0 (gauges, top consumers)
-- [ ] Bind Live Activity to the shared-mem ring for the hot path (currently gRPC stream only)
 
 ### M6 — Timeline v0, search, safe actions `[ ]`
 
@@ -116,4 +116,7 @@ Dynamic responsiveness protection · extended retention tiers + optional Parquet
 - **2026-07-13 — WinUI 3 builds under plain `dotnet` CLI**: no VS install or `dotnet workload` needed — Microsoft.WindowsAppSDK 1.6.250205002 + Microsoft.Windows.SDK.BuildTools PackageReferences with `<WindowsPackageType>None</WindowsPackageType>` (unpackaged). Do NOT add a custom `Program.cs` (the generated Main handles unpackaged bootstrap; `DisableXamlGeneratedMain` misbehaves under this SDK).
 - **2026-07-13 — NativeAOT for the UI is blocked** on CommunityToolkit.Mvvm 8.4.0: field-based `[ObservableProperty]` trips MVVMTK0045 (WinRT AOT marshalling), and the partial-property form fails codegen under this SDK (CS9248/CS8050). Suppressed via NoWarn for now; revisit with a newer toolkit before the M9 AOT/perf gates.
 - **2026-07-13 — Overhead baseline**: record pipeline 0.03% CPU avg / ~13 MB WS (both PASS); interim SQLite samples extrapolate to ~520 MB/day of disk writes vs the ~150 MB/day target — the M-TSDB Gorilla store is the planned fix and the harness now measures the before/after.
+- **2026-07-13 — sample_block wire format (ATB1)**: `magic "ATB1" | count u32 | start_ms i64 | end_ms i64 | bitlen u32 | bitstream | crc32`, little-endian frame; bitstream MSB-first — point 0 raw (64+64 bits); timestamps delta-of-delta with Gorilla bucket codes (`0`, `10`+7b, `110`+9b, `1110`+12b, `1111`+64b, zigzagged); values Gorilla XOR (`0` unchanged, `10` reuse window, `11`+5b leading+6b length). CRC-32 poly 0xEDB88320 hand-rolled. Duplicate timestamps kept; backwards timestamps rejected without wedging the head; corrupt blocks are typed errors, never panics.
+- **2026-07-13 — Blocks live in SQLite BLOBs, not chunk files** (maintainer decision): same compression win, SQLite keeps atomicity + retention trivial; `atlas-tsdb` stays byte-oriented (no rusqlite dep) so the tech-stack §4.2 file-based chunk store can swap in underneath the same API when tiering lands.
+- **2026-07-13 — App Control now also blocks freshly built UI exes**: this round's `Atlas.App.exe` was blocked from launching (error 4551) though the previous round's build ran. Local UI launch testing is unreliable until the policy exempts the repo's build outputs; data paths are verified via tests + the ring/DevCli harnesses instead.
 - **2026-07-13 — Machine policy blocks fresh build-script binaries**: an Application Control policy (error 4551) blocks executing freshly compiled build scripts (seen with `zmij`, a `serde_json` transitive build-dep) in fresh target dirs. Cached artifacts in the main `target/` are approved. Implications: full `cargo clean` or CI on this machine may need policy approval; and **never share a target dir between a worktree and the main repo** — doing so overwrote main's crate artifacts with worktree-era ones and broke the post-merge build until `cargo clean -p <workspace crates>`.
