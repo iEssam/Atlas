@@ -20,8 +20,15 @@ pub mod v0 {
 #[cfg(windows)]
 pub mod security;
 #[cfg(windows)]
+pub mod shm;
+#[cfg(windows)]
 pub mod transport;
 
+#[cfg(windows)]
+pub use shm::{
+    section_name, RingReader, RingRow, RingSnapshot, RingUpdate, RingWriter, RowInput, RowSnapshot,
+    LAYOUT_VERSION, RING_MAGIC, RING_NAME_LEN, RING_ROWS, RING_SIZE,
+};
 #[cfg(windows)]
 pub use transport::{connect, default_pipe_name, pipe_name, serve, PipeConnectInfo};
 

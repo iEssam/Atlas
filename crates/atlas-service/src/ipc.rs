@@ -19,8 +19,8 @@ use tonic::{Request, Response, Status};
 use atlas_collectors::{SampleSet, Sampler};
 use atlas_ipc::v0::atlas_query_server::AtlasQuery;
 use atlas_ipc::{
-    CapabilitiesReply, CapabilitiesRequest, ProcessRow, SnapshotReply, SnapshotRequest,
-    SystemGauges, CAP_PROCESS_SNAPSHOTS,
+    CapabilitiesReply, CapabilitiesRequest, ProcessRow, RingUpdate, RingWriter, RowInput,
+    SnapshotReply, SnapshotRequest, SystemGauges, CAP_PROCESS_SNAPSHOTS, RING_ROWS,
 };
 
 /// Latest published snapshot, already converted to the wire shape. `None`
@@ -99,17 +99,36 @@ impl QueryService {
     /// Spawns the sampler thread and returns the service handle. The thread
     /// runs until [`QueryService::shutdown`] flips the stop flag (or the
     /// process exits).
-    pub fn start() -> anyhow::Result<Self> {
+    ///
+    /// `ring_disc` is the shared-memory ring discriminator (typically the same
+    /// as the pipe discriminator so a `ring-read` client rendezvous with this
+    /// server). Ring creation is best-effort: a failure logs a warning and the
+    /// gRPC path continues unaffected (tech-stack §5.1).
+    pub fn start(ring_disc: &str) -> anyhow::Result<Self> {
         let slot: Slot = Arc::new(RwLock::new(None));
         let (tx, _rx) = tokio::sync::broadcast::channel(8);
         let stop = Arc::new(AtomicBool::new(false));
+
+        // Best-effort: the ring is a fast-path convenience, never a hard
+        // dependency. If the section cannot be created the service still serves
+        // snapshots over gRPC.
+        let ring = match RingWriter::create(ring_disc) {
+            Ok(w) => {
+                tracing::info!(ring = %atlas_ipc::section_name(ring_disc), "live ring published");
+                Some(w)
+            }
+            Err(e) => {
+                tracing::warn!("live ring unavailable (gRPC continues): {e}");
+                None
+            }
+        };
 
         let thread_slot = slot.clone();
         let thread_tx = tx.clone();
         let thread_stop = stop.clone();
         std::thread::Builder::new()
             .name("atlas-ipc-sampler".into())
-            .spawn(move || sampler_loop(thread_slot, thread_tx, thread_stop))?;
+            .spawn(move || sampler_loop(thread_slot, thread_tx, thread_stop, ring))?;
 
         Ok(Self { slot, tx, stop })
     }
@@ -120,11 +139,13 @@ impl QueryService {
     }
 }
 
-/// Sampler thread body: sample ~1 Hz, publish to the slot and broadcast.
+/// Sampler thread body: sample ~1 Hz, publish to the slot, the broadcast, and
+/// (best-effort) the shared-memory live ring.
 fn sampler_loop(
     slot: Slot,
     tx: tokio::sync::broadcast::Sender<SnapshotReply>,
     stop: Arc<AtomicBool>,
+    ring: Option<RingWriter>,
 ) {
     let mut sampler = match Sampler::new() {
         Ok(s) => s,
@@ -138,6 +159,11 @@ fn sampler_loop(
         match sampler.sample() {
             Ok(set) => {
                 let reply = to_reply(&set);
+                // Publish the top-N rows into the live ring (already CPU-sorted
+                // by `to_reply`). Best-effort; the ring only carries RING_ROWS.
+                if let Some(w) = ring.as_ref() {
+                    publish_ring(w, &reply);
+                }
                 if let Ok(mut guard) = slot.write() {
                     *guard = Some(reply.clone());
                 }
@@ -148,6 +174,39 @@ fn sampler_loop(
         }
     }
     tracing::debug!("ipc sampler thread stopped");
+}
+
+/// Publishes a (CPU-sorted) reply into the shared-memory ring: system gauges
+/// plus the top [`RING_ROWS`] process rows. The seqlock write is a single
+/// [`RingWriter::publish`] call.
+fn publish_ring(writer: &RingWriter, reply: &SnapshotReply) {
+    let rows: Vec<RowInput> = reply
+        .processes
+        .iter()
+        .take(RING_ROWS)
+        .map(|p| RowInput {
+            pid: p.pid,
+            cpu_permille: p.cpu_permille,
+            working_set: p.working_set,
+            private_bytes: p.private_bytes,
+            read_bps: p.read_bps,
+            write_bps: p.write_bps,
+            name: &p.image_name,
+        })
+        .collect();
+    let s = reply.system.as_ref();
+    writer.publish(&RingUpdate {
+        ts_ms: s.map(|g| g.ts_ms).unwrap_or(0),
+        cpu_permille: s.map(|g| g.cpu_permille).unwrap_or(0),
+        process_count: s.map(|g| g.process_count).unwrap_or(0),
+        thread_count: s.map(|g| g.thread_count).unwrap_or(0),
+        handle_count: s.map(|g| g.handle_count).unwrap_or(0),
+        mem_used: s.map(|g| g.mem_used).unwrap_or(0),
+        mem_total: s.map(|g| g.mem_total).unwrap_or(0),
+        commit_used: s.map(|g| g.commit_used).unwrap_or(0),
+        commit_limit: s.map(|g| g.commit_limit).unwrap_or(0),
+        rows: &rows,
+    });
 }
 
 #[tonic::async_trait]

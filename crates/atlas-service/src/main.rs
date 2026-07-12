@@ -111,6 +111,41 @@ enum Cmd {
         #[arg(long)]
         watch: bool,
     },
+    /// Attach to a running `serve`'s shared-memory live ring and print it (M4).
+    ///
+    /// Lock-free read path (seqlock) — the future emergency-UI fast path. Uses
+    /// the same discriminator as `serve --pipe` to rendezvous. With `--watch`,
+    /// repaints ~1 Hz until Ctrl+C.
+    RingRead {
+        /// Ring discriminator; must match the server's `serve --pipe` token
+        /// (default: current username).
+        #[arg(long)]
+        pipe: Option<String>,
+        /// Rows to display.
+        #[arg(long, default_value_t = 15)]
+        limit: usize,
+        /// Repaint continuously (~1 Hz) instead of a single read.
+        #[arg(long)]
+        watch: bool,
+    },
+    /// Measure Atlas's own collection overhead against the PRD budgets (M3).
+    ///
+    /// Runs the real record pipeline against a TEMP database for `--duration`
+    /// seconds, then reports own CPU/working-set, sampler tick timing, disk
+    /// write volume, and ETW live/degraded status with PASS/FAIL vs budget.
+    /// The temp database is deleted afterwards. Always exits 0 (informational;
+    /// M9 turns it into a CI gate).
+    Overhead {
+        /// Measurement duration in seconds.
+        #[arg(long, default_value_t = 30)]
+        duration: u64,
+        /// Sampling interval floor in seconds (matches `record`).
+        #[arg(long, default_value_t = 1.0)]
+        interval: f64,
+        /// Aggregation/flush window in seconds (matches `record`).
+        #[arg(long, default_value_t = 15)]
+        flush_secs: u64,
+    },
 }
 
 fn main() -> Result<()> {
@@ -144,6 +179,12 @@ fn main() -> Result<()> {
         }
         Cmd::Serve { pipe } => cmd_serve(pipe),
         Cmd::ClientSnapshot { pipe, top_n, watch } => cmd_client_snapshot(pipe, top_n, watch),
+        Cmd::RingRead { pipe, limit, watch } => cmd_ring_read(pipe, limit, watch),
+        Cmd::Overhead {
+            duration,
+            interval,
+            flush_secs,
+        } => cmd_overhead(duration, interval, flush_secs),
     }
 }
 
@@ -975,18 +1016,35 @@ fn resolve_pipe_name(pipe: Option<String>) -> String {
     }
 }
 
+/// The shared-memory ring discriminator for a given pipe discriminator. Uses
+/// the same token as the pipe (or the current username when unset) so `serve`
+/// and `ring-read` rendezvous on one flag.
+#[cfg(windows)]
+fn ring_discriminator(pipe: Option<String>) -> String {
+    pipe.filter(|s| !s.is_empty()).unwrap_or_else(|| {
+        std::env::var("USERNAME")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "session".to_string())
+    })
+}
+
 /// `serve`: host AtlasQuery over the named pipe until Ctrl+C.
 #[cfg(windows)]
 fn cmd_serve(pipe: Option<String>) -> Result<()> {
     use atlas_ipc::AtlasQueryServer;
 
+    let pipe_disc = pipe.clone();
     let name = resolve_pipe_name(pipe);
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
 
+    // The ring discriminator mirrors the pipe discriminator so a `ring-read`
+    // client with the same `--pipe` flag rendezvous with this server.
+    let ring_disc = ring_discriminator(pipe_disc);
     rt.block_on(async move {
-        let service = ipc::QueryService::start()?;
+        let service = ipc::QueryService::start(&ring_disc)?;
         let handle = std::sync::Arc::new(service);
         let router = tonic::transport::Server::builder()
             .add_service(AtlasQueryServer::from_arc(handle.clone()));
@@ -1111,6 +1169,81 @@ fn print_snapshot(reply: &atlas_ipc::SnapshotReply) {
     }
 }
 
+/// `ring-read`: attach to the shared-memory live ring published by a running
+/// `serve` and print the header + top rows. Lock-free seqlock read path.
+#[cfg(windows)]
+fn cmd_ring_read(pipe: Option<String>, limit: usize, watch: bool) -> Result<()> {
+    use atlas_ipc::RingReader;
+
+    let disc = ring_discriminator(pipe);
+    let reader = RingReader::open(&disc).map_err(|e| {
+        anyhow::anyhow!(
+            "attach to live ring '{}': {e}\nIs `serve` running with a matching --pipe?",
+            atlas_ipc::section_name(&disc)
+        )
+    })?;
+
+    if !watch {
+        match reader.snapshot() {
+            Some(snap) => render_ring(&snap, limit),
+            None => println!("Ring writer busy (seqlock retries exhausted); try again."),
+        }
+        return Ok(());
+    }
+
+    let stop = install_ctrlc();
+    println!("Reading live ring '{}' (Ctrl+C to stop)", section(&disc));
+    while !stop.load(Ordering::SeqCst) {
+        if let Some(snap) = reader.snapshot() {
+            // Clear-ish repaint: a couple of blank lines keep the block readable
+            // in a plain console without pulling in a TUI dependency.
+            println!("\n");
+            render_ring(&snap, limit);
+        }
+        std::thread::sleep(Duration::from_secs(1));
+    }
+    Ok(())
+}
+
+/// Section name helper for display.
+#[cfg(windows)]
+fn section(disc: &str) -> String {
+    atlas_ipc::section_name(disc)
+}
+
+/// Renders a ring snapshot as a header line + top rows, mirroring `print_snapshot`.
+#[cfg(windows)]
+fn render_ring(snap: &atlas_ipc::RingSnapshot, limit: usize) {
+    println!(
+        "Ring @ {} | CPU {:.1}%  Memory {:.1}/{:.1} GB  Commit {:.1}/{:.1} GB  {} processes, {} threads, {} handles",
+        format_ts(snap.ts_ms),
+        snap.cpu_permille as f64 / 10.0,
+        gb(snap.mem_used),
+        gb(snap.mem_total),
+        gb(snap.commit_used),
+        gb(snap.commit_limit),
+        snap.process_count,
+        snap.thread_count,
+        snap.handle_count
+    );
+    println!(
+        "{:>7} {:<30} {:>6} {:>9} {:>9} {:>11} {:>11}",
+        "PID", "NAME", "CPU%", "WS MB", "PRIV MB", "READ/s", "WRITE/s"
+    );
+    for r in snap.rows.iter().take(limit) {
+        println!(
+            "{:>7} {:<30} {:>6.1} {:>9.1} {:>9.1} {:>11} {:>11}",
+            r.pid,
+            truncate(&r.name, 30),
+            r.cpu_permille as f64 / 10.0,
+            mb(r.working_set),
+            mb(r.private_bytes),
+            rate(r.read_bps),
+            rate(r.write_bps),
+        );
+    }
+}
+
 #[cfg(not(windows))]
 fn cmd_serve(_pipe: Option<String>) -> Result<()> {
     anyhow::bail!("the `serve` command requires Windows named pipes");
@@ -1119,6 +1252,383 @@ fn cmd_serve(_pipe: Option<String>) -> Result<()> {
 #[cfg(not(windows))]
 fn cmd_client_snapshot(_pipe: Option<String>, _top_n: u32, _watch: bool) -> Result<()> {
     anyhow::bail!("the `client-snapshot` command requires Windows named pipes");
+}
+
+#[cfg(not(windows))]
+fn cmd_ring_read(_pipe: Option<String>, _limit: usize, _watch: bool) -> Result<()> {
+    anyhow::bail!("the `ring-read` command requires Windows shared memory");
+}
+
+/// Metrics accumulated across an `overhead` run, independent of what lands in
+/// the store. CPU/working-set come from the own-process sample each tick; tick
+/// timing measures the `sample()` call itself.
+struct OverheadMetrics {
+    ticks: u64,
+    cpu_permille_sum: f64,
+    cpu_weight_s: f64,
+    cpu_permille_max: u32,
+    working_set_max: u64,
+    working_set_last: u64,
+    tick_us_sum: u64,
+    tick_us_max: u64,
+}
+
+impl OverheadMetrics {
+    fn new() -> Self {
+        Self {
+            ticks: 0,
+            cpu_permille_sum: 0.0,
+            cpu_weight_s: 0.0,
+            cpu_permille_max: 0,
+            working_set_max: 0,
+            working_set_last: 0,
+            tick_us_sum: 0,
+            tick_us_max: 0,
+        }
+    }
+
+    fn record(&mut self, own: Option<&ProcSample>, dt_s: f64, tick_us: u64) {
+        self.ticks += 1;
+        self.tick_us_sum += tick_us;
+        self.tick_us_max = self.tick_us_max.max(tick_us);
+        if let Some(p) = own {
+            self.cpu_permille_sum += p.cpu_permille as f64 * dt_s;
+            self.cpu_weight_s += dt_s;
+            self.cpu_permille_max = self.cpu_permille_max.max(p.cpu_permille);
+            self.working_set_max = self.working_set_max.max(p.working_set);
+            self.working_set_last = p.working_set;
+        }
+    }
+
+    fn cpu_avg_permille(&self) -> f64 {
+        if self.cpu_weight_s > 0.0 {
+            self.cpu_permille_sum / self.cpu_weight_s
+        } else {
+            0.0
+        }
+    }
+
+    fn tick_us_avg(&self) -> u64 {
+        self.tick_us_sum.checked_div(self.ticks).unwrap_or(0)
+    }
+}
+
+/// PRD §12 budgets the harness evaluates against (tech-stack §10).
+const BUDGET_CPU_PERMILLE: f64 = 2.0; // < 0.2% idle average.
+const BUDGET_WS_BYTES: u64 = 100 * 1024 * 1024; // < 100 MB service standard mode.
+
+/// `overhead`: run the real record pipeline against a TEMP database for
+/// `duration` seconds and report own cost against the PRD budgets. Always
+/// returns Ok(()) so the process exits 0 — informational until M9 makes it a
+/// gate. The temp database is deleted on the way out.
+fn cmd_overhead(duration: u64, interval: f64, flush_secs: u64) -> Result<()> {
+    let stop = install_ctrlc();
+
+    // A unique temp DB so parallel runs never collide; deleted in all exit
+    // paths below (including the `?` early returns, via the guard).
+    let db_path = std::env::temp_dir().join(format!(
+        "atlas-overhead-{}-{}.db",
+        std::process::id(),
+        now_ms()
+    ));
+    let _guard = TempDbGuard(db_path.clone());
+
+    // Writer thread + channel, exactly as `record`.
+    let (tx, rx) = sync_channel::<FlushBatch>(4);
+    let writer_db = db_path.clone();
+    let writer = std::thread::Builder::new()
+        .name("atlas-overhead-writer".into())
+        .spawn(move || writer_thread(writer_db, rx))?;
+
+    #[cfg(windows)]
+    let event_source = try_start_event_source();
+    #[cfg(windows)]
+    let etw_live = event_source.is_some();
+    #[cfg(windows)]
+    let mut events_live = event_source.is_some();
+    #[cfg(not(windows))]
+    let etw_live = false;
+
+    let mut sampler = Sampler::new()?;
+    let own_pid = std::process::id();
+    let mut cadence = CadenceController::new();
+
+    println!(
+        "Running overhead harness for {duration}s (temp db: {}) ...",
+        db_path.display()
+    );
+
+    let started = Instant::now();
+    let flush_every = Duration::from_secs(flush_secs.max(2));
+    let mut last_flush = Instant::now();
+    let mut next_sleep = Duration::from_secs_f64(interval.max(0.25));
+
+    let mut accs: HashMap<ProcKey, AggAcc> = HashMap::new();
+    let mut sys_buf: Vec<SysSampleRow> = Vec::new();
+    let mut self_acc = SelfAcc::new();
+    let mut event_win = EventWindow::default();
+    let mut prev_tick = Instant::now();
+    let mut dropped_pending = 0u64;
+
+    let mut metrics = OverheadMetrics::new();
+    let mut flush_windows = 0u64;
+
+    loop {
+        if stop.load(Ordering::SeqCst) {
+            break;
+        }
+        if started.elapsed() >= Duration::from_secs(duration) {
+            break;
+        }
+
+        #[cfg(windows)]
+        match event_source.as_ref() {
+            Some(src) if events_live => {
+                events_live = wait_and_drain_events(&src.rx, next_sleep, &mut event_win);
+            }
+            _ => std::thread::sleep(next_sleep),
+        }
+        #[cfg(not(windows))]
+        std::thread::sleep(next_sleep);
+
+        let t0 = Instant::now();
+        let set = sampler.sample()?;
+        let tick_us = t0.elapsed().as_micros() as u64;
+        let dt_s = prev_tick.elapsed().as_secs_f64().max(1e-3);
+        prev_tick = Instant::now();
+
+        let own = set.processes.iter().find(|p| p.key.pid == own_pid);
+        metrics.record(own, dt_s, tick_us);
+
+        #[cfg(windows)]
+        let live_events = events_live;
+        #[cfg(not(windows))]
+        let live_events = false;
+        let (started_n, exited_n) = if live_events {
+            (event_win.started, event_win.exited)
+        } else {
+            (set.started.len() as u32, set.exited.len() as u32)
+        };
+        let max_proc_cpu = set
+            .processes
+            .iter()
+            .map(|p| p.cpu_permille)
+            .max()
+            .unwrap_or(0);
+        let chosen = cadence.next_interval(Tick {
+            sys_cpu_permille: set.system.cpu_permille,
+            started: started_n,
+            exited: exited_n,
+            max_proc_cpu_permille: max_proc_cpu,
+            elapsed: Duration::from_secs_f64(dt_s),
+        });
+        next_sleep = chosen.max(Duration::from_secs_f64(interval.max(0.25)));
+
+        sys_buf.push(SysSampleRow {
+            ts_ms: set.ts_ms,
+            cpu_permille: set.system.cpu_permille,
+            mem_used: set.system.mem_used,
+            mem_total: set.system.mem_total,
+            commit_used: set.system.commit_used,
+            commit_limit: set.system.commit_limit,
+            process_count: set.system.process_count,
+            thread_count: set.system.thread_count,
+            handle_count: set.system.handle_count,
+        });
+        self_acc.update(own, dt_s, tick_us);
+        for p in &set.processes {
+            accs.entry(p.key)
+                .or_insert_with(|| AggAcc::new(p))
+                .update(p, dt_s);
+        }
+
+        if last_flush.elapsed() >= flush_every {
+            let window_secs = last_flush.elapsed().as_secs().max(1) as u32;
+            let snapshot_exited: &[ProcKey] = if live_events { &[] } else { &set.exited };
+            let (event_rows, exit_stamps) = event_win.take();
+            if let Some(batch) = build_batch(
+                &mut accs,
+                &mut sys_buf,
+                snapshot_exited,
+                &self_acc,
+                window_secs,
+                dropped_pending,
+                event_rows,
+                exit_stamps,
+            ) {
+                match tx.try_send(batch) {
+                    Ok(()) => {
+                        flush_windows += 1;
+                        dropped_pending = 0;
+                    }
+                    Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_)) => {
+                        dropped_pending += 1;
+                    }
+                }
+            }
+            self_acc = SelfAcc::new();
+            last_flush = Instant::now();
+        }
+    }
+
+    let elapsed = started.elapsed();
+
+    // Final partial window.
+    let window_secs = last_flush.elapsed().as_secs().max(1) as u32;
+    let (event_rows, exit_stamps) = event_win.take();
+    if let Some(batch) = build_batch(
+        &mut accs,
+        &mut sys_buf,
+        &[],
+        &self_acc,
+        window_secs,
+        dropped_pending,
+        event_rows,
+        exit_stamps,
+    ) {
+        if tx.try_send(batch).is_ok() {
+            flush_windows += 1;
+        }
+    }
+
+    #[cfg(windows)]
+    if let Some(src) = event_source {
+        if let Err(e) = src.watcher.stop() {
+            tracing::warn!("stopping ETW session: {e}");
+        }
+    }
+
+    // Drain and join the writer, then size the database on disk.
+    drop(tx);
+    writer
+        .join()
+        .map_err(|_| anyhow::anyhow!("writer thread panicked"))??;
+
+    let db_bytes = db_on_disk_bytes(&db_path);
+
+    print_overhead_report(
+        &metrics,
+        elapsed,
+        flush_windows,
+        db_bytes,
+        etw_live,
+        interval,
+        flush_secs,
+    );
+
+    // `_guard` deletes the temp db here on drop.
+    Ok(())
+}
+
+/// Deletes the temp database (and its `-wal`/`-shm` sidecars) on drop, so every
+/// exit path of `cmd_overhead` cleans up.
+struct TempDbGuard(PathBuf);
+
+impl Drop for TempDbGuard {
+    fn drop(&mut self) {
+        for suffix in ["", "-wal", "-shm"] {
+            let p = if suffix.is_empty() {
+                self.0.clone()
+            } else {
+                PathBuf::from(format!("{}{suffix}", self.0.display()))
+            };
+            let _ = std::fs::remove_file(&p);
+        }
+    }
+}
+
+/// Sums the SQLite database file and its WAL/SHM sidecars on disk (bytes).
+fn db_on_disk_bytes(db_path: &std::path::Path) -> u64 {
+    let mut total = 0u64;
+    for suffix in ["", "-wal", "-shm"] {
+        let p = if suffix.is_empty() {
+            db_path.to_path_buf()
+        } else {
+            PathBuf::from(format!("{}{suffix}", db_path.display()))
+        };
+        if let Ok(meta) = std::fs::metadata(&p) {
+            total += meta.len();
+        }
+    }
+    total
+}
+
+/// Renders the compact overhead report block and PASS/FAIL/N.A. verdicts.
+#[allow(clippy::too_many_arguments)]
+fn print_overhead_report(
+    m: &OverheadMetrics,
+    elapsed: Duration,
+    flush_windows: u64,
+    db_bytes: u64,
+    etw_live: bool,
+    interval: f64,
+    flush_secs: u64,
+) {
+    let secs = elapsed.as_secs_f64().max(1e-3);
+    let cpu_avg = m.cpu_avg_permille();
+    let cpu_pct_avg = cpu_avg / 10.0;
+    let cpu_pct_max = m.cpu_permille_max as f64 / 10.0;
+    let ws = m.working_set_max.max(m.working_set_last);
+
+    // Extrapolate disk writes/day from bytes actually written during the run.
+    let mb_per_day = (db_bytes as f64 / (1024.0 * 1024.0)) * (86_400.0 / secs);
+
+    // Verdicts. CPU budget only meaningful once a few ticks landed own-process
+    // CPU; otherwise report N.A. rather than a false PASS.
+    let cpu_verdict = if m.cpu_weight_s <= 0.0 {
+        "N.A."
+    } else if cpu_avg < BUDGET_CPU_PERMILLE {
+        "PASS"
+    } else {
+        "FAIL"
+    };
+    let ws_verdict = if ws == 0 {
+        "N.A."
+    } else if ws < BUDGET_WS_BYTES {
+        "PASS"
+    } else {
+        "FAIL"
+    };
+
+    println!();
+    println!("======== Atlas overhead report ========");
+    println!(
+        "duration        {:.1}s ({} ticks, interval floor {:.2}s, flush {}s)",
+        secs, m.ticks, interval, flush_secs
+    );
+    println!(
+        "own CPU avg     {:.3}%   [budget < {:.1}%: {}]",
+        cpu_pct_avg,
+        BUDGET_CPU_PERMILLE / 10.0,
+        cpu_verdict
+    );
+    println!("own CPU max     {cpu_pct_max:.3}%");
+    println!(
+        "own working set {:.1} MB   [budget < {} MB: {}]",
+        mb(ws),
+        BUDGET_WS_BYTES / (1024 * 1024),
+        ws_verdict
+    );
+    println!(
+        "sampler tick    avg {:.3} ms   max {:.3} ms",
+        m.tick_us_avg() as f64 / 1000.0,
+        m.tick_us_max as f64 / 1000.0
+    );
+    println!(
+        "flush windows   {flush_windows} written   db on disk {:.2} MB   ~{:.1} MB/day extrapolated",
+        mb(db_bytes),
+        mb_per_day
+    );
+    println!(
+        "ETW events      {}",
+        if etw_live {
+            "LIVE (elevated)"
+        } else {
+            "DEGRADED (not elevated) — process create/exit timestamps not measured; \
+             overhead reflects the snapshot+storage path only"
+        }
+    );
+    println!("=======================================");
 }
 
 fn cmd_db_top(db_path: PathBuf, minutes: u64, limit: u32) -> Result<()> {
