@@ -1,9 +1,9 @@
 //! Atlas service host (tech-stack.md §4.1).
 //!
-//! Dev console mode today: `top` / `snapshot` / `record` / `db-top`
-//! subcommands exercise the collection → storage path end-to-end.
-//! Windows-service mode, IPC server, and ETW collectors arrive at
-//! milestones M3/M4/M9 (docs/phases.md).
+//! Dev console mode today: `top` / `snapshot` / `record` / `db-top` / `events`
+//! subcommands exercise the collection path end-to-end. The `events` command
+//! streams live ETW process start/stop (M3). Windows-service mode and the IPC
+//! server arrive at milestones M4/M9 (docs/phases.md).
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -60,6 +60,10 @@ enum Cmd {
         #[arg(long)]
         duration: Option<u64>,
     },
+    /// Stream live process start/stop events via ETW until Ctrl+C.
+    ///
+    /// Requires an elevated terminal (starting an ETW session needs admin).
+    Events,
     /// Query recorded data: top processes by average CPU.
     DbTop {
         /// Database path (default: %LOCALAPPDATA%\SystemAtlas\dev\atlas.db).
@@ -98,6 +102,7 @@ fn main() -> Result<()> {
             flush_secs,
             duration,
         ),
+        Cmd::Events => cmd_events(),
         Cmd::DbTop { db, minutes, limit } => {
             cmd_db_top(db.unwrap_or_else(default_db_path), minutes, limit)
         }
@@ -593,6 +598,96 @@ fn writer_thread(
     Ok(pruned)
 }
 
+/// Exit code returned when the ETW session cannot start because the process is
+/// not elevated — lets callers/scripts distinguish this from other failures.
+const EXIT_ELEVATION_REQUIRED: i32 = 2;
+
+#[cfg(windows)]
+fn cmd_events() -> Result<()> {
+    use atlas_collectors::{EventError, ProcessEventWatcher};
+
+    let stop = install_ctrlc();
+
+    let (watcher, rx) = match ProcessEventWatcher::start() {
+        Ok(pair) => pair,
+        Err(EventError::ElevationRequired) => {
+            eprintln!(
+                "Starting an ETW session requires administrator rights. \
+                 Rerun this command from an elevated (Run as administrator) terminal."
+            );
+            std::process::exit(EXIT_ELEVATION_REQUIRED);
+        }
+        Err(e) => return Err(anyhow::anyhow!(e.to_string())),
+    };
+
+    tracing::info!(
+        session = watcher.session_name(),
+        "ETW process events started (Ctrl+C to stop)"
+    );
+    println!(
+        "Streaming process events on {} (Ctrl+C to stop)",
+        watcher.session_name()
+    );
+
+    // Drain the channel with a short timeout so Ctrl+C is observed promptly even
+    // when no events arrive.
+    while !stop.load(Ordering::SeqCst) {
+        match rx.recv_timeout(Duration::from_millis(250)) {
+            Ok(ev) => println!("{}", format_event(&ev)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+
+    let dropped = watcher.dropped_count();
+    watcher.stop().map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    if dropped > 0 {
+        tracing::warn!(dropped, "some events were dropped (channel full)");
+    }
+    tracing::info!("ETW process events stopped");
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn cmd_events() -> Result<()> {
+    anyhow::bail!("the `events` command requires Windows ETW");
+}
+
+/// Render one event as a line, matching the M3 spec format:
+/// `[21:04:11.123] START pid=1234 parent=5678 session=1 notepad.exe`
+/// `[21:04:15.001] STOP  pid=1234 exit=0`
+#[cfg(windows)]
+fn format_event(ev: &atlas_collectors::ProcessEvent) -> String {
+    use atlas_collectors::ProcessEventKind;
+    let ts = format_ts(ev.ts_ms);
+    match &ev.kind {
+        ProcessEventKind::Started {
+            parent_pid,
+            session_id,
+            image_name,
+        } => format!(
+            "[{ts}] START pid={} parent={} session={} {}",
+            ev.pid, parent_pid, session_id, image_name
+        ),
+        ProcessEventKind::Stopped { exit_status } => {
+            format!("[{ts}] STOP  pid={} exit={}", ev.pid, exit_status)
+        }
+    }
+}
+
+/// Format a Unix-epoch-ms timestamp as `HH:MM:SS.mmm` wall-clock time of day.
+/// UTC-based (no timezone crate in the dev tool); good enough to correlate the
+/// stream by eye.
+fn format_ts(ts_ms: i64) -> String {
+    let ms_of_day = ts_ms.rem_euclid(86_400_000);
+    let ms = ms_of_day % 1000;
+    let secs = ms_of_day / 1000;
+    let h = secs / 3600;
+    let m = (secs % 3600) / 60;
+    let s = secs % 60;
+    format!("{h:02}:{m:02}:{s:02}.{ms:03}")
+}
+
 fn cmd_db_top(db_path: PathBuf, minutes: u64, limit: u32) -> Result<()> {
     let store = Store::open(&db_path)?;
     let since = now_ms() - (minutes as i64) * 60_000;
@@ -670,5 +765,51 @@ fn truncate(s: &str, max: usize) -> String {
     } else {
         let cut: String = s.chars().take(max.saturating_sub(1)).collect();
         format!("{cut}…")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_ts_renders_time_of_day() {
+        // 21:04:11.123 into the UTC day.
+        let ms = (21 * 3600 + 4 * 60 + 11) * 1000 + 123;
+        assert_eq!(format_ts(ms), "21:04:11.123");
+    }
+
+    #[test]
+    fn format_ts_pads_and_wraps() {
+        assert_eq!(format_ts(0), "00:00:00.000");
+        // One day plus 1 ms wraps back to the start of the day.
+        assert_eq!(format_ts(86_400_000 + 1), "00:00:00.001");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn format_event_start_and_stop() {
+        use atlas_collectors::{ProcessEvent, ProcessEventKind};
+        let ts = (21 * 3600 + 4 * 60 + 11) * 1000 + 123;
+        let start = ProcessEvent {
+            ts_ms: ts,
+            pid: 1234,
+            kind: ProcessEventKind::Started {
+                parent_pid: 5678,
+                session_id: 1,
+                image_name: "notepad.exe".into(),
+            },
+        };
+        assert_eq!(
+            format_event(&start),
+            "[21:04:11.123] START pid=1234 parent=5678 session=1 notepad.exe"
+        );
+
+        let stop = ProcessEvent {
+            ts_ms: ts + 3878,
+            pid: 1234,
+            kind: ProcessEventKind::Stopped { exit_status: 0 },
+        };
+        assert_eq!(format_event(&stop), "[21:04:15.001] STOP  pid=1234 exit=0");
     }
 }
