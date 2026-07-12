@@ -1,0 +1,11 @@
+# Build output
+bin/
+obj/
+
+# VS / user files
+*.user
+*.suo
+.vs/
+
+# Publish output
+publish/
