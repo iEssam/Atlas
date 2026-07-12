@@ -6,6 +6,12 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <!-- TestRingWriter mirrors the Rust writer with a pinned base pointer. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- The ring tests exercise Windows-only shared-memory APIs; the whole
+         suite runs on Windows, so the CA1416 platform-reachability advice is
+         noise here. -->
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

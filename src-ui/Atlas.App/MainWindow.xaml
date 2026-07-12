@@ -12,7 +12,12 @@
         IsSettingsVisible="False"
         SelectionChanged="Nav_SelectionChanged">
         <NavigationView.MenuItems>
-            <NavigationViewItem Content="Live Activity" IsSelected="True" Tag="live">
+            <NavigationViewItem Content="Overview" IsSelected="True" Tag="overview">
+                <NavigationViewItem.Icon>
+                    <FontIcon Glyph="&#xE80F;" />
+                </NavigationViewItem.Icon>
+            </NavigationViewItem>
+            <NavigationViewItem Content="Live Activity" Tag="live">
                 <NavigationViewItem.Icon>
                     <FontIcon Glyph="&#xE9D9;" />
                 </NavigationViewItem.Icon>

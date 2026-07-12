@@ -1,4 +1,5 @@
 using System.Globalization;
+using Atlas.App.Services;
 using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace Atlas.App.ViewModels;
@@ -47,11 +48,15 @@ public sealed partial class ProcessRowViewModel : ObservableObject
         CreateTime100ns = createTime100ns;
     }
 
-    /// <summary>Updates the mutable fields from a fresh proto row.</summary>
-    public void Update(Atlas.V0.ProcessRow row)
+    /// <summary>
+    /// Updates the mutable fields from a fresh normalized row. Thread/handle
+    /// counts are 0 when the source is the ring (which carries pid/cpu/memory/io
+    /// only, not thread/handle counts) — the gRPC stream carries them.
+    /// </summary>
+    public void Update(MetricsRow row)
     {
         ImageName = row.ImageName;
-        CpuPercent = row.CpuPermille / 10.0;
+        CpuPercent = row.CpuPercent;
         WorkingSetMb = row.WorkingSet / (1024.0 * 1024.0);
         PrivateMb = row.PrivateBytes / (1024.0 * 1024.0);
         ThreadCount = row.ThreadCount;

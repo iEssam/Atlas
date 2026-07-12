@@ -6,8 +6,8 @@ using Microsoft.UI.Xaml.Media;
 namespace Atlas.App;
 
 /// <summary>
-/// The single application window: a NavigationView shell with one functional
-/// page (Live Activity). Mica backdrop applied when available.
+/// The single application window: a NavigationView shell with Overview and Live
+/// Activity pages. Mica backdrop applied when available.
 /// </summary>
 public sealed partial class MainWindow : Window
 {
@@ -26,14 +26,20 @@ public sealed partial class MainWindow : Window
             // Leave default backdrop.
         }
 
-        ContentFrame.Navigate(typeof(LiveActivityPage));
+        ContentFrame.Navigate(typeof(OverviewPage));
     }
 
     private void Nav_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
     {
-        if (args.SelectedItemContainer is NavigationViewItem { Tag: "live" })
+        var type = (args.SelectedItemContainer as NavigationViewItem)?.Tag switch
         {
-            ContentFrame.Navigate(typeof(LiveActivityPage));
+            "overview" => typeof(OverviewPage),
+            "live" => typeof(LiveActivityPage),
+            _ => null,
+        };
+        if (type is not null && ContentFrame.CurrentSourcePageType != type)
+        {
+            ContentFrame.Navigate(type);
         }
     }
 }

@@ -6,7 +6,16 @@
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <RootNamespace>Atlas.IpcClient</RootNamespace>
+    <!-- The shared-ring reader (MetricsRing) uses a pinned base pointer over the
+         mapped section for lock-free seqlock reads. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
+
+  <!-- The layout tests assert Marshal offsets/sizes of the internal blittable
+       mirror structs against the pinned offset constants. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Atlas.IpcClient.Tests" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Google.Protobuf" Version="3.28.3" />
