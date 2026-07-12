@@ -7,9 +7,14 @@ rust-version.workspace = true
 [dependencies]
 atlas-collectors = { path = "../atlas-collectors" }
 atlas-store = { path = "../atlas-store" }
+atlas-ipc = { path = "../atlas-ipc" }
 anyhow = { workspace = true }
 clap = { workspace = true }
 serde_json = { workspace = true }
 ctrlc = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+# IPC host + client (M4): tokio runtime for the serve/client-snapshot paths.
+tokio = { workspace = true }
+tonic = { workspace = true }
+tokio-stream = { workspace = true }
