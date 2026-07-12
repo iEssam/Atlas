@@ -7,3 +7,7 @@ rust-version.workspace = true
 [dependencies]
 anyhow = { workspace = true }
 rusqlite = { workspace = true }
+# The TSDB owns the Gorilla block encoding; the store persists opaque payloads
+# (M-TSDB, docs/phases.md). atlas-tsdb has no rusqlite dependency — the byte
+# boundary keeps a future file-based chunk store swappable under the same API.
+atlas-tsdb = { path = "../atlas-tsdb" }

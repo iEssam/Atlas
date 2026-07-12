@@ -1,16 +1,23 @@
 //! SQLite-backed local store (tech-stack.md §4.2).
 //!
-//! Holds entities and events. Per-process samples are stored here *as
-//! window aggregates* only until the chunked TSDB lands (docs/phases.md,
-//! M-TSDB) — never one row per second per process, which would violate the
-//! disk write-amplification budget (PRD §12.4).
+//! Holds entities, events, and — as of schema v4 (M-TSDB) — Gorilla-compressed
+//! numeric samples as opaque `sample_block` BLOBs produced by `atlas-tsdb`. The
+//! interim `proc_sample` / `sys_sample` per-window aggregate tables are
+//! deprecated (kept for old data, no longer written); the block store keeps
+//! every 1 s sample at a fraction of the disk cost, staying within the
+//! write-amplification budget (PRD §12.4).
 
 use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use atlas_tsdb::{EncodedBlock, Metric, SeriesKey};
 use rusqlite::{params, Connection, OptionalExtension};
 
+// DEPRECATED as of schema v4 (M-TSDB): `proc_sample` and `sys_sample` are no
+// longer written. Numeric samples now live in `sample_block` as Gorilla-
+// compressed BLOBs (see SCHEMA_V4). The tables and any existing rows are left
+// in place for backward compatibility and are still swept by retention.
 const SCHEMA_V1: &str = r#"
 CREATE TABLE IF NOT EXISTS process_instance (
     id INTEGER PRIMARY KEY,
@@ -98,6 +105,28 @@ CREATE INDEX IF NOT EXISTS ix_proc_event_ts ON proc_event(ts_ms);
 CREATE INDEX IF NOT EXISTS ix_proc_event_pid ON proc_event(pid, ts_ms);
 "#;
 
+// Additive v4 migration (docs/phases.md M-TSDB): Gorilla-compressed sample
+// blocks. Each row is one sealed series block — `metric`/`scope` identify the
+// series, `start_ms`/`end_ms`/`points` are denormalised header fields the range
+// query indexes on (so it never decodes a block to test overlap), and `payload`
+// is the opaque encoded block from atlas-tsdb. This replaces per-window
+// `proc_sample` / `sys_sample` writes (both now deprecated). Created with
+// IF NOT EXISTS so a v3 database upgrades in place.
+const SCHEMA_V4: &str = r#"
+CREATE TABLE IF NOT EXISTS sample_block (
+    metric   INTEGER NOT NULL,
+    scope    INTEGER NOT NULL,
+    start_ms INTEGER NOT NULL,
+    end_ms   INTEGER NOT NULL,
+    points   INTEGER NOT NULL,
+    payload  BLOB    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_sample_block_series
+    ON sample_block(metric, scope, start_ms);
+CREATE INDEX IF NOT EXISTS ix_sample_block_time
+    ON sample_block(start_ms);
+"#;
+
 /// Whether `table` already has a column named `column`, via `PRAGMA table_info`.
 /// Used to make the v3 `ADD COLUMN` migration idempotent (SQLite lacks
 /// `ADD COLUMN IF NOT EXISTS`).
@@ -120,32 +149,6 @@ pub struct ProcIdentity {
     pub parent_pid: u32,
     pub session_id: u32,
     pub image_name: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct ProcAggregate {
-    pub proc_row_id: i64,
-    pub cpu_avg_permille: u32,
-    pub cpu_max_permille: u32,
-    pub working_set_max: u64,
-    pub private_bytes_max: u64,
-    pub read_bps_avg: u64,
-    pub write_bps_avg: u64,
-    pub handles_last: u32,
-    pub threads_last: u32,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct SysSampleRow {
-    pub ts_ms: i64,
-    pub cpu_permille: u32,
-    pub mem_used: u64,
-    pub mem_total: u64,
-    pub commit_used: u64,
-    pub commit_limit: u64,
-    pub process_count: u32,
-    pub thread_count: u32,
-    pub handle_count: u32,
 }
 
 /// One row per flush window recording Atlas's own overhead (PRD §12.2).
@@ -181,6 +184,17 @@ pub struct ProcEventRow {
 /// `proc_event.kind` discriminants.
 pub const PROC_EVENT_START: u8 = 0;
 pub const PROC_EVENT_STOP: u8 = 1;
+
+/// One stored sample block returned from a range query, with its decoded
+/// points. The store validates and decodes the payload via `atlas-tsdb`, so
+/// callers get `(ts_ms, value)` pairs directly and never touch the byte format.
+#[derive(Debug, Clone)]
+pub struct DecodedBlock {
+    pub key: SeriesKey,
+    pub start_ms: i64,
+    pub end_ms: i64,
+    pub points: Vec<(i64, f64)>,
+}
 
 #[derive(Debug, Clone)]
 pub struct TopProcessRow {
@@ -245,6 +259,10 @@ impl Store {
             }
             self.conn.execute_batch("PRAGMA user_version = 3;")?;
         }
+        if version < 4 {
+            self.conn.execute_batch(SCHEMA_V4)?;
+            self.conn.execute_batch("PRAGMA user_version = 4;")?;
+        }
         Ok(())
     }
 
@@ -284,59 +302,33 @@ impl Store {
     }
 
     /// One transaction per flush window — the only place samples touch disk.
+    /// As of schema v4 (M-TSDB) numeric samples ride as Gorilla `blocks` rather
+    /// than `proc_sample`/`sys_sample` rows (both deprecated, no longer written).
     /// `proc_events` are the raw ETW start/stop rows drained during the window;
     /// they ride the same transaction so an event and its window land together.
     pub fn write_batch(
         &mut self,
-        agg_ts_ms: i64,
-        window_secs: u32,
-        sys: &[SysSampleRow],
-        aggs: &[ProcAggregate],
+        blocks: &[EncodedBlock],
         proc_events: &[ProcEventRow],
     ) -> Result<()> {
         let tx = self.conn.transaction()?;
         {
-            let mut sys_stmt = tx.prepare_cached(
-                "INSERT OR REPLACE INTO sys_sample
-                     (ts_ms, cpu_permille, mem_used, mem_total, commit_used,
-                      commit_limit, process_count, thread_count, handle_count)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            )?;
-            for s in sys {
-                sys_stmt.execute(params![
-                    s.ts_ms,
-                    s.cpu_permille,
-                    s.mem_used as i64,
-                    s.mem_total as i64,
-                    s.commit_used as i64,
-                    s.commit_limit as i64,
-                    s.process_count,
-                    s.thread_count,
-                    s.handle_count
-                ])?;
-            }
-
-            let mut agg_stmt = tx.prepare_cached(
-                "INSERT INTO proc_sample
-                     (ts_ms, window_secs, proc_id, cpu_avg_permille, cpu_max_permille,
-                      working_set_max, private_bytes_max, read_bps_avg, write_bps_avg,
-                      handles_last, threads_last)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-            )?;
-            for a in aggs {
-                agg_stmt.execute(params![
-                    agg_ts_ms,
-                    window_secs,
-                    a.proc_row_id,
-                    a.cpu_avg_permille,
-                    a.cpu_max_permille,
-                    a.working_set_max as i64,
-                    a.private_bytes_max as i64,
-                    a.read_bps_avg as i64,
-                    a.write_bps_avg as i64,
-                    a.handles_last,
-                    a.threads_last
-                ])?;
+            if !blocks.is_empty() {
+                let mut blk_stmt = tx.prepare_cached(
+                    "INSERT INTO sample_block
+                         (metric, scope, start_ms, end_ms, points, payload)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                )?;
+                for b in blocks {
+                    blk_stmt.execute(params![
+                        b.key.metric.as_u16() as i64,
+                        b.key.scope,
+                        b.start_ms,
+                        b.end_ms,
+                        b.points as i64,
+                        b.payload
+                    ])?;
+                }
             }
 
             if !proc_events.is_empty() {
@@ -360,6 +352,110 @@ impl Store {
         }
         tx.commit()?;
         Ok(())
+    }
+
+    /// Persists sealed sample blocks in their own transaction. Used where there
+    /// are no accompanying events to batch (e.g. a scope-drain on process exit).
+    pub fn write_blocks(&mut self, blocks: &[EncodedBlock]) -> Result<()> {
+        self.write_batch(blocks, &[])
+    }
+
+    /// Reads sample blocks for `metric` overlapping the `[from_ms, to_ms]`
+    /// window, decoding each payload to points via atlas-tsdb. `scope_filter`
+    /// restricts to one series scope when `Some` (a process row id, or 0 for
+    /// system); `None` returns every scope for the metric.
+    ///
+    /// Overlap uses the denormalised `start_ms`/`end_ms` header columns so the
+    /// index does the pruning; a corrupt block surfaces as an error (never a
+    /// panic) and aborts the read — corruption is not silently skipped.
+    pub fn read_blocks(
+        &self,
+        metric: Metric,
+        scope_filter: Option<i64>,
+        from_ms: i64,
+        to_ms: i64,
+    ) -> Result<Vec<DecodedBlock>> {
+        let metric_id = metric.as_u16() as i64;
+        // A block overlaps the window iff start_ms <= to AND end_ms >= from.
+        let mut out = Vec::new();
+        let mut push = |scope: i64, start_ms: i64, end_ms: i64, payload: Vec<u8>| -> Result<()> {
+            let reader = atlas_tsdb::BlockReader::parse(&payload)
+                .map_err(|e| anyhow::anyhow!("decoding sample_block (scope {scope}): {e}"))?;
+            let points = reader.points().map_err(|e| {
+                anyhow::anyhow!("decoding sample_block points (scope {scope}): {e}")
+            })?;
+            out.push(DecodedBlock {
+                key: SeriesKey::new(metric, scope),
+                start_ms,
+                end_ms,
+                points,
+            });
+            Ok(())
+        };
+
+        match scope_filter {
+            Some(scope) => {
+                let mut stmt = self.conn.prepare_cached(
+                    "SELECT scope, start_ms, end_ms, payload FROM sample_block
+                     WHERE metric = ?1 AND scope = ?2 AND start_ms <= ?4 AND end_ms >= ?3
+                     ORDER BY start_ms",
+                )?;
+                let rows = stmt.query_map(params![metric_id, scope, from_ms, to_ms], |r| {
+                    Ok((
+                        r.get::<_, i64>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, i64>(2)?,
+                        r.get::<_, Vec<u8>>(3)?,
+                    ))
+                })?;
+                for row in rows {
+                    let (scope, start_ms, end_ms, payload) = row?;
+                    push(scope, start_ms, end_ms, payload)?;
+                }
+            }
+            None => {
+                let mut stmt = self.conn.prepare_cached(
+                    "SELECT scope, start_ms, end_ms, payload FROM sample_block
+                     WHERE metric = ?1 AND start_ms <= ?3 AND end_ms >= ?2
+                     ORDER BY scope, start_ms",
+                )?;
+                let rows = stmt.query_map(params![metric_id, from_ms, to_ms], |r| {
+                    Ok((
+                        r.get::<_, i64>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, i64>(2)?,
+                        r.get::<_, Vec<u8>>(3)?,
+                    ))
+                })?;
+                for row in rows {
+                    let (scope, start_ms, end_ms, payload) = row?;
+                    push(scope, start_ms, end_ms, payload)?;
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Total bytes of encoded sample-block payloads on record (SUM of
+    /// LENGTH(payload)). Surfaces storage footprint without a SQLite client.
+    pub fn sample_storage_bytes(&self) -> Result<u64> {
+        let bytes: i64 = self.conn.query_row(
+            "SELECT COALESCE(SUM(LENGTH(payload)), 0) FROM sample_block",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok(bytes as u64)
+    }
+
+    /// Total number of samples across all stored blocks (SUM of `points`).
+    /// Paired with [`Store::sample_storage_bytes`] to report bytes/sample.
+    pub fn sample_count(&self) -> Result<u64> {
+        let n: i64 = self.conn.query_row(
+            "SELECT COALESCE(SUM(points), 0) FROM sample_block",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok(n as u64)
     }
 
     /// Stamps the exact exit timestamp and status onto the currently-live
@@ -391,7 +487,9 @@ impl Store {
     }
 
     /// Deletes samples older than the cutoff. Returns (proc rows, sys rows)
-    /// removed.
+    /// removed from the deprecated interim tables — retained so an in-place
+    /// upgraded database still sheds its old `proc_sample`/`sys_sample` rows.
+    /// Sample blocks are swept by [`Store::apply_block_retention`].
     pub fn apply_retention(&self, cutoff_ms: i64) -> Result<(usize, usize)> {
         let p = self.conn.execute(
             "DELETE FROM proc_sample WHERE ts_ms < ?1",
@@ -402,6 +500,18 @@ impl Store {
             params![cutoff_ms],
         )?;
         Ok((p, s))
+    }
+
+    /// Deletes sample blocks that end before the cutoff (M-TSDB retention). A
+    /// block is dropped only once its whole span is past retention, so a block
+    /// straddling the cutoff is kept until it ages out entirely. Returns rows
+    /// removed.
+    pub fn apply_block_retention(&self, cutoff_ms: i64) -> Result<usize> {
+        let n = self.conn.execute(
+            "DELETE FROM sample_block WHERE end_ms < ?1",
+            params![cutoff_ms],
+        )?;
+        Ok(n)
     }
 
     /// Records Atlas's own overhead for one flush window (PRD §12.2).
@@ -457,31 +567,102 @@ impl Store {
         Ok(row)
     }
 
-    pub fn top_processes(&self, since_ms: i64, limit: u32) -> Result<Vec<TopProcessRow>> {
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT pi.pid, pi.image_name,
-                    AVG(ps.cpu_avg_permille) AS cpu_avg,
-                    MAX(ps.cpu_max_permille) AS cpu_peak,
-                    MAX(ps.working_set_max) AS ws_peak,
-                    COUNT(*) AS windows
-             FROM proc_sample ps
-             JOIN process_instance pi ON pi.id = ps.proc_id
-             WHERE ps.ts_ms >= ?1
-             GROUP BY ps.proc_id, pi.pid, pi.image_name
-             ORDER BY cpu_avg DESC
-             LIMIT ?2",
-        )?;
-        let rows = stmt.query_map(params![since_ms, limit], |r| {
-            Ok(TopProcessRow {
-                pid: r.get(0)?,
-                image_name: r.get(1)?,
-                cpu_avg_permille: r.get(2)?,
-                cpu_peak_permille: r.get(3)?,
-                working_set_peak: r.get::<_, i64>(4)? as u64,
-                windows: r.get(5)?,
-            })
-        })?;
-        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    /// Top processes by time-weighted average CPU over `[since_ms, now_ms]`,
+    /// computed over the Gorilla `sample_block` store (M-TSDB). CPU average is
+    /// weighted by each sample's wall-clock gap to its successor (so a variable
+    /// cadence doesn't over-count sparse ticks); CPU peak is the max sample in
+    /// the window; working-set peak comes from the WorkingSet series. Scopes are
+    /// joined to `process_instance` for pid/name. `windows` reports the CPU
+    /// sample count contributing (the analogue of the old per-window count).
+    pub fn top_processes(
+        &self,
+        since_ms: i64,
+        now_ms: i64,
+        limit: u32,
+    ) -> Result<Vec<TopProcessRow>> {
+        use std::collections::HashMap;
+
+        // Per-scope CPU aggregation from decoded CpuPermille blocks.
+        struct CpuAgg {
+            weighted_sum: f64,
+            weight_s: f64,
+            peak: u32,
+            samples: u32,
+        }
+        let mut cpu: HashMap<i64, CpuAgg> = HashMap::new();
+        for blk in self.read_blocks(Metric::CpuPermille, None, since_ms, now_ms)? {
+            let scope = blk.key.scope;
+            let entry = cpu.entry(scope).or_insert(CpuAgg {
+                weighted_sum: 0.0,
+                weight_s: 0.0,
+                peak: 0,
+                samples: 0,
+            });
+            let pts = &blk.points;
+            for (i, &(ts, v)) in pts.iter().enumerate() {
+                if ts < since_ms || ts > now_ms {
+                    continue;
+                }
+                // Weight by the gap to the next in-window sample; the last
+                // sample gets a nominal 1 s so a single point still counts.
+                let dt = pts
+                    .get(i + 1)
+                    .map(|&(nts, _)| (nts - ts).max(0) as f64 / 1000.0)
+                    .filter(|d| *d > 0.0)
+                    .unwrap_or(1.0);
+                entry.weighted_sum += v * dt;
+                entry.weight_s += dt;
+                entry.peak = entry.peak.max(v.round().max(0.0) as u32);
+                entry.samples += 1;
+            }
+        }
+
+        // Per-scope working-set peak from WorkingSet blocks.
+        let mut ws_peak: HashMap<i64, u64> = HashMap::new();
+        for blk in self.read_blocks(Metric::WorkingSet, None, since_ms, now_ms)? {
+            let peak = ws_peak.entry(blk.key.scope).or_insert(0);
+            for &(ts, v) in &blk.points {
+                if ts < since_ms || ts > now_ms {
+                    continue;
+                }
+                *peak = (*peak).max(v.max(0.0) as u64);
+            }
+        }
+
+        // Resolve scope (proc_row_id) → (pid, name) for scopes we saw.
+        let mut rows: Vec<TopProcessRow> = Vec::with_capacity(cpu.len());
+        let mut name_stmt = self
+            .conn
+            .prepare_cached("SELECT pid, image_name FROM process_instance WHERE id = ?1")?;
+        for (scope, agg) in cpu {
+            let avg = if agg.weight_s > 0.0 {
+                agg.weighted_sum / agg.weight_s
+            } else {
+                0.0
+            };
+            let named = name_stmt
+                .query_row(params![scope], |r| {
+                    Ok((r.get::<_, u32>(0)?, r.get::<_, String>(1)?))
+                })
+                .optional()?;
+            let (pid, image_name) = named.unwrap_or((0, format!("scope#{scope}")));
+            rows.push(TopProcessRow {
+                pid,
+                image_name,
+                cpu_avg_permille: avg,
+                cpu_peak_permille: agg.peak,
+                working_set_peak: ws_peak.get(&scope).copied().unwrap_or(0),
+                windows: agg.samples,
+            });
+        }
+        rows.sort_by(|a, b| {
+            b.cpu_avg_permille
+                .partial_cmp(&a.cpu_avg_permille)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(b.working_set_peak.cmp(&a.working_set_peak))
+        });
+        rows.truncate(limit as usize);
+        Ok(rows)
     }
 }
 
@@ -526,43 +707,77 @@ mod tests {
         assert_ne!(a, b);
     }
 
+    /// Builds a single-metric block for `scope` from (ts, value) points.
+    fn block(metric: Metric, scope: i64, pts: &[(i64, f64)]) -> EncodedBlock {
+        let mut hb = atlas_tsdb::HeadBlocks::new();
+        let key = SeriesKey::new(metric, scope);
+        for &(t, v) in pts {
+            assert!(hb.append(key, t, v));
+        }
+        hb.drain_all().pop().expect("one block")
+    }
+
     #[test]
-    fn batch_write_and_top_query_roundtrip() {
+    fn block_write_and_top_query_roundtrip() {
         let mut store = Store::open_in_memory().unwrap();
         let busy = store.upsert_process(&identity(10), 1_000).unwrap();
         let idle = store.upsert_process(&identity(20), 1_000).unwrap();
 
-        let agg = |id: i64, cpu: u32| ProcAggregate {
-            proc_row_id: id,
-            cpu_avg_permille: cpu,
-            cpu_max_permille: cpu + 50,
-            working_set_max: 100 << 20,
-            private_bytes_max: 80 << 20,
-            read_bps_avg: 1024,
-            write_bps_avg: 512,
-            handles_last: 42,
-            threads_last: 7,
-        };
-        let sys = SysSampleRow {
-            ts_ms: 10_000,
-            cpu_permille: 300,
-            mem_used: 8 << 30,
-            mem_total: 16 << 30,
-            commit_used: 10 << 30,
-            commit_limit: 32 << 30,
-            process_count: 2,
-            thread_count: 14,
-            handle_count: 84,
-        };
+        // 1 s cadence: busy averages ~400‰ (peaks 450), idle ~10‰.
+        let busy_cpu = block(
+            Metric::CpuPermille,
+            busy,
+            &[(10_000, 400.0), (11_000, 450.0), (12_000, 350.0)],
+        );
+        let idle_cpu = block(
+            Metric::CpuPermille,
+            idle,
+            &[(10_000, 10.0), (11_000, 10.0), (12_000, 10.0)],
+        );
+        let busy_ws = block(
+            Metric::WorkingSet,
+            busy,
+            &[
+                (10_000, (100u64 << 20) as f64),
+                (11_000, (120u64 << 20) as f64),
+            ],
+        );
         store
-            .write_batch(10_000, 15, &[sys], &[agg(busy, 400), agg(idle, 10)], &[])
+            .write_batch(&[busy_cpu, idle_cpu, busy_ws], &[])
             .unwrap();
 
-        let top = store.top_processes(0, 10).unwrap();
+        let top = store.top_processes(0, 20_000, 10).unwrap();
         assert_eq!(top.len(), 2);
         assert_eq!(top[0].pid, 10, "busiest process sorts first");
         assert_eq!(top[0].cpu_peak_permille, 450);
-        assert_eq!(top[0].windows, 1);
+        assert_eq!(top[0].working_set_peak, 120 << 20);
+        assert_eq!(top[0].windows, 3, "three CPU samples contributed");
+        assert!((top[0].cpu_avg_permille - 400.0).abs() < 30.0);
+    }
+
+    #[test]
+    fn read_blocks_scope_filter_and_overlap() {
+        let mut store = Store::open_in_memory().unwrap();
+        let a = block(Metric::CpuPermille, 1, &[(1_000, 5.0), (2_000, 6.0)]);
+        let b = block(Metric::CpuPermille, 2, &[(1_000, 7.0), (2_000, 8.0)]);
+        let later = block(Metric::CpuPermille, 1, &[(50_000, 9.0)]);
+        store.write_blocks(&[a, b, later]).unwrap();
+
+        // Scope filter returns only scope 1's overlapping blocks.
+        let s1 = store
+            .read_blocks(Metric::CpuPermille, Some(1), 0, 3_000)
+            .unwrap();
+        assert_eq!(s1.len(), 1);
+        assert_eq!(s1[0].points, vec![(1_000, 5.0), (2_000, 6.0)]);
+
+        // No filter, window excludes the `later` block.
+        let all = store
+            .read_blocks(Metric::CpuPermille, None, 0, 3_000)
+            .unwrap();
+        assert_eq!(all.len(), 2, "both scopes, later block pruned by time");
+
+        // Storage stat sums payload bytes.
+        assert!(store.sample_storage_bytes().unwrap() > 0);
     }
 
     #[test]
@@ -592,7 +807,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 3, "migration walks v1 up to the current schema");
+        assert_eq!(version, 4, "migration walks v1 up to the current schema");
 
         store
             .write_self_sample(&SelfSampleRow {
@@ -668,7 +883,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 3, "migration bumps user_version to 3");
+        assert_eq!(version, 4, "migration walks a v2 db to the current schema");
         assert!(column_exists(&store.conn, "process_instance", "exit_status").unwrap());
 
         // Pre-existing row survived and has a NULL exit_status.
@@ -685,16 +900,6 @@ mod tests {
 
         // Migration is idempotent: a second run is a no-op.
         store.migrate().unwrap();
-    }
-
-    #[test]
-    fn fresh_database_is_v3() {
-        let store = Store::open_in_memory().unwrap();
-        let version: i64 = store
-            .conn
-            .query_row("PRAGMA user_version", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(version, 3);
     }
 
     #[test]
@@ -724,7 +929,7 @@ mod tests {
                 exit_status: Some(0),
             },
         ];
-        store.write_batch(2_500, 15, &[], &[], &events).unwrap();
+        store.write_batch(&[], &events).unwrap();
 
         // Both rows landed with the right kind discriminants.
         let (starts, stops): (i64, i64) = store
@@ -770,40 +975,30 @@ mod tests {
     }
 
     #[test]
-    fn retention_removes_old_rows_only() {
+    fn block_retention_removes_fully_aged_blocks() {
         let mut store = Store::open_in_memory().unwrap();
         let id = store.upsert_process(&identity(10), 1_000).unwrap();
-        let agg = ProcAggregate {
-            proc_row_id: id,
-            cpu_avg_permille: 1,
-            cpu_max_permille: 1,
-            working_set_max: 1,
-            private_bytes_max: 1,
-            read_bps_avg: 0,
-            write_bps_avg: 0,
-            handles_last: 1,
-            threads_last: 1,
-        };
-        let sys = |ts: i64| SysSampleRow {
-            ts_ms: ts,
-            cpu_permille: 0,
-            mem_used: 0,
-            mem_total: 1,
-            commit_used: 0,
-            commit_limit: 1,
-            process_count: 1,
-            thread_count: 1,
-            handle_count: 1,
-        };
-        store
-            .write_batch(1_000, 15, &[sys(1_000)], std::slice::from_ref(&agg), &[])
-            .unwrap();
-        store
-            .write_batch(9_000, 15, &[sys(9_000)], &[agg], &[])
-            .unwrap();
+        // An old block (ends at 2_000) and a recent one (ends at 9_000).
+        let old = block(Metric::CpuPermille, id, &[(1_000, 5.0), (2_000, 5.0)]);
+        let recent = block(Metric::CpuPermille, id, &[(8_000, 7.0), (9_000, 7.0)]);
+        store.write_blocks(&[old, recent]).unwrap();
 
-        let (p, s) = store.apply_retention(5_000).unwrap();
-        assert_eq!((p, s), (1, 1));
-        assert_eq!(store.top_processes(0, 10).unwrap()[0].windows, 1);
+        let removed = store.apply_block_retention(5_000).unwrap();
+        assert_eq!(removed, 1, "only the fully-aged block is dropped");
+
+        // The survivor is still queryable.
+        let top = store.top_processes(0, 20_000, 10).unwrap();
+        assert_eq!(top.len(), 1);
+        assert_eq!(top[0].windows, 2);
+    }
+
+    #[test]
+    fn fresh_database_is_v4() {
+        let store = Store::open_in_memory().unwrap();
+        let version: i64 = store
+            .conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, 4);
     }
 }

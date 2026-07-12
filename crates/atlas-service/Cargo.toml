@@ -7,6 +7,7 @@ rust-version.workspace = true
 [dependencies]
 atlas-collectors = { path = "../atlas-collectors" }
 atlas-store = { path = "../atlas-store" }
+atlas-tsdb = { path = "../atlas-tsdb" }
 atlas-ipc = { path = "../atlas-ipc" }
 anyhow = { workspace = true }
 clap = { workspace = true }

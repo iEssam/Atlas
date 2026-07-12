@@ -1,11 +1,23 @@
 //! Time-series storage (tech-stack.md §4.2).
 //!
-//! Interim implementation: an in-memory series head with the API shape the
-//! persistent store will keep (push / range / min-max decimation). The
-//! chunked, Gorilla-compressed, tiered on-disk store replaces the internals
-//! at milestone M-TSDB (docs/phases.md) without changing this surface.
+//! Two layers live here:
+//!
+//! * [`SeriesRing`] — the interim in-memory ring kept for the live/decimation
+//!   API shape (push / range / min-max decimation).
+//! * The M-TSDB Gorilla codec ([`block`], [`series`]) — delta-of-delta
+//!   timestamp + Gorilla XOR value compression, packaged as self-describing
+//!   byte blocks. `atlas-tsdb` owns the entire encoding so the store persists
+//!   opaque [`EncodedBlock`] payloads (SQLite BLOBs today, chunk files later)
+//!   without ever parsing them. See [`block`] for the wire format spec.
 
 use std::collections::VecDeque;
+
+mod bits;
+pub mod block;
+pub mod series;
+
+pub use block::{BlockBuilder, BlockError, BlockHeader, BlockReader};
+pub use series::{EncodedBlock, HeadBlocks, Metric, SeriesKey, SYSTEM_SCOPE};
 
 /// Fixed-capacity ring of (timestamp_ms, value) points for one series.
 pub struct SeriesRing {

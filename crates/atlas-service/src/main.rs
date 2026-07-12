@@ -21,9 +21,9 @@ use clap::{Parser, Subcommand};
 
 use atlas_collectors::{CadenceController, ProcKey, ProcSample, SampleSet, Sampler, Tick};
 use atlas_store::{
-    ProcAggregate, ProcEventRow, ProcIdentity, SelfSampleRow, Store, SysSampleRow,
-    PROC_EVENT_START, PROC_EVENT_STOP,
+    ProcEventRow, ProcIdentity, SelfSampleRow, Store, PROC_EVENT_START, PROC_EVENT_STOP,
 };
+use atlas_tsdb::{HeadBlocks, Metric, SeriesKey, SYSTEM_SCOPE};
 
 #[derive(Parser)]
 #[command(
@@ -278,77 +278,48 @@ fn render_top(set: &SampleSet, limit: usize) {
     }
 }
 
-/// Per-process window accumulator. With a variable sampling cadence the ticks
-/// in a window no longer cover equal time, so averages are weighted by each
-/// tick's wall-clock duration: avg = Σ(value × dt) / Σ(dt). Maxima are still
-/// plain maxima; "last" fields keep the most recent value.
-struct AggAcc {
-    identity: ProcIdentity,
-    /// Σ(dt) in seconds across the ticks folded in — the weighting basis.
-    weight_s: f64,
-    cpu_weighted: f64,
-    cpu_max: u32,
-    ws_max: u64,
-    priv_max: u64,
-    read_bps_weighted: f64,
-    write_bps_weighted: f64,
-    handles_last: u32,
-    threads_last: u32,
+/// The five per-process metric values captured for one tick. These are the raw
+/// samples the writer appends into the Gorilla head blocks (M-TSDB) — no more
+/// per-window averaging on the sampling loop; the block store keeps every tick.
+#[derive(Clone, Copy)]
+struct ProcMetrics {
+    cpu_permille: u32,
+    working_set: u64,
+    private_bytes: u64,
+    read_bps: u64,
+    write_bps: u64,
 }
 
-impl AggAcc {
-    fn new(p: &ProcSample) -> Self {
+impl ProcMetrics {
+    fn from_sample(p: &ProcSample) -> Self {
         Self {
-            identity: ProcIdentity {
-                pid: p.key.pid,
-                create_time_100ns: p.key.create_time_100ns,
-                parent_pid: p.parent_pid,
-                session_id: p.session_id,
-                image_name: p.image_name.clone(),
-            },
-            weight_s: 0.0,
-            cpu_weighted: 0.0,
-            cpu_max: 0,
-            ws_max: 0,
-            priv_max: 0,
-            read_bps_weighted: 0.0,
-            write_bps_weighted: 0.0,
-            handles_last: 0,
-            threads_last: 0,
+            cpu_permille: p.cpu_permille,
+            working_set: p.working_set,
+            private_bytes: p.private_bytes,
+            read_bps: p.read_bps,
+            write_bps: p.write_bps,
         }
     }
+}
 
-    fn update(&mut self, p: &ProcSample, dt_s: f64) {
-        self.weight_s += dt_s;
-        self.cpu_weighted += p.cpu_permille as f64 * dt_s;
-        self.cpu_max = self.cpu_max.max(p.cpu_permille);
-        self.ws_max = self.ws_max.max(p.working_set);
-        self.priv_max = self.priv_max.max(p.private_bytes);
-        self.read_bps_weighted += p.read_bps as f64 * dt_s;
-        self.write_bps_weighted += p.write_bps as f64 * dt_s;
-        self.handles_last = p.handle_count;
-        self.threads_last = p.thread_count;
-    }
+/// System gauges captured for one tick (the six `Sys*` series).
+#[derive(Clone, Copy)]
+struct SysMetrics {
+    cpu_permille: u32,
+    mem_used: u64,
+    commit_used: u64,
+    process_count: u32,
+    thread_count: u32,
+    handle_count: u32,
+}
 
-    fn finish(&self, proc_row_id: i64) -> ProcAggregate {
-        // Guard against a zero-weight window (all dt collapsed to ~0).
-        let w = if self.weight_s > 0.0 {
-            self.weight_s
-        } else {
-            1.0
-        };
-        ProcAggregate {
-            proc_row_id,
-            cpu_avg_permille: (self.cpu_weighted / w).round() as u32,
-            cpu_max_permille: self.cpu_max,
-            working_set_max: self.ws_max,
-            private_bytes_max: self.priv_max,
-            read_bps_avg: (self.read_bps_weighted / w).round() as u64,
-            write_bps_avg: (self.write_bps_weighted / w).round() as u64,
-            handles_last: self.handles_last,
-            threads_last: self.threads_last,
-        }
-    }
+/// One tick's worth of raw samples handed to the writer: the timestamp, the
+/// system gauges, and every process seen with its identity (so the writer can
+/// resolve the scope/row-id) and its five metric values.
+struct TickSamples {
+    ts_ms: i64,
+    sys: SysMetrics,
+    procs: Vec<(ProcIdentity, ProcMetrics)>,
 }
 
 /// Time-weighted accumulator for Atlas's own overhead over a flush window
@@ -408,16 +379,17 @@ impl SelfAcc {
 }
 
 /// A complete flush window handed to the writer thread. It carries everything
-/// the writer needs to persist a window without touching the collection loop's
-/// state: the aggregation timestamp, window length, system rows, per-process
-/// aggregates *with their identity* (the writer owns the id cache and does the
-/// upsert/mark-exited bookkeeping), exited keys, the self-metrics row, and the
-/// count of windows dropped since the last successful send (PRD §11.3).
+/// the writer needs without touching the collection loop's state: the raw
+/// per-tick samples (the writer resolves identities to scopes and appends them
+/// into its Gorilla head blocks — M-TSDB), the exited keys, the self-metrics
+/// row, and the count of windows dropped since the last successful send
+/// (PRD §11.3).
 struct FlushBatch {
+    /// Timestamp used for gap/self rows when there are no ticks (falls back to
+    /// wall clock). Individual samples carry their own tick timestamps.
     agg_ts_ms: i64,
-    window_secs: u32,
-    sys: Vec<SysSampleRow>,
-    procs: Vec<(ProcIdentity, ProcAggregate)>,
+    /// Raw per-tick samples accumulated over the flush window.
+    ticks: Vec<TickSamples>,
     exited: Vec<ProcKey>,
     self_row: SelfSampleRow,
     dropped_before: u64,
@@ -605,8 +577,7 @@ fn cmd_record(
     // controller widens it toward 5 s / 15 s during sustained quiet.
     let mut next_sleep = Duration::from_secs_f64(interval.max(0.25));
 
-    let mut accs: HashMap<ProcKey, AggAcc> = HashMap::new();
-    let mut sys_buf: Vec<SysSampleRow> = Vec::new();
+    let mut tick_buf: Vec<TickSamples> = Vec::new();
     let mut self_acc = SelfAcc::new();
     let mut event_win = EventWindow::default();
     let mut prev_tick = Instant::now();
@@ -681,37 +652,19 @@ fn cmd_record(
         });
         next_sleep = chosen.max(Duration::from_secs_f64(interval.max(0.25)));
 
-        sys_buf.push(SysSampleRow {
-            ts_ms: set.ts_ms,
-            cpu_permille: set.system.cpu_permille,
-            mem_used: set.system.mem_used,
-            mem_total: set.system.mem_total,
-            commit_used: set.system.commit_used,
-            commit_limit: set.system.commit_limit,
-            process_count: set.system.process_count,
-            thread_count: set.system.thread_count,
-            handle_count: set.system.handle_count,
-        });
         let own = set.processes.iter().find(|p| p.key.pid == own_pid);
         self_acc.update(own, dt_s, tick_us);
-        for p in &set.processes {
-            accs.entry(p.key)
-                .or_insert_with(|| AggAcc::new(p))
-                .update(p, dt_s);
-        }
+        tick_buf.push(capture_tick(&set));
 
         if last_flush.elapsed() >= flush_every {
-            let window_secs = last_flush.elapsed().as_secs().max(1) as u32;
             // When live, exit marking comes from exact ETW Stop events, so the
             // snapshot-diff `exited` set is suppressed to avoid double-marking.
             let snapshot_exited: &[ProcKey] = if live_events { &[] } else { &set.exited };
             let (event_rows, exit_stamps) = event_win.take();
             if let Some(batch) = build_batch(
-                &mut accs,
-                &mut sys_buf,
+                &mut tick_buf,
                 snapshot_exited,
                 &self_acc,
-                window_secs,
                 dropped_pending,
                 event_rows,
                 exit_stamps,
@@ -736,14 +689,11 @@ fn cmd_record(
 
     // Final partial window before shutdown: include any events drained since
     // the last flush so they are not lost on a clean stop.
-    let window_secs = last_flush.elapsed().as_secs().max(1) as u32;
     let (event_rows, exit_stamps) = event_win.take();
     if let Some(batch) = build_batch(
-        &mut accs,
-        &mut sys_buf,
+        &mut tick_buf,
         &[],
         &self_acc,
-        window_secs,
         dropped_pending,
         event_rows,
         exit_stamps,
@@ -782,39 +732,58 @@ fn cmd_record(
     Ok(())
 }
 
-/// Drains the current accumulators into a self-contained [`FlushBatch`]. The
-/// per-process aggregates carry a placeholder row id (-1); the writer thread
-/// resolves the real id via its own cache before persisting. Returns `None`
-/// when there is nothing to write.
-#[allow(clippy::too_many_arguments)]
+/// Captures one sampled tick into raw per-series values for the writer to
+/// append into head blocks. Every process seen this tick contributes its
+/// identity + five metric values; system gauges ride alongside.
+fn capture_tick(set: &SampleSet) -> TickSamples {
+    let sys = SysMetrics {
+        cpu_permille: set.system.cpu_permille,
+        mem_used: set.system.mem_used,
+        commit_used: set.system.commit_used,
+        process_count: set.system.process_count,
+        thread_count: set.system.thread_count,
+        handle_count: set.system.handle_count,
+    };
+    let procs = set
+        .processes
+        .iter()
+        .map(|p| {
+            let identity = ProcIdentity {
+                pid: p.key.pid,
+                create_time_100ns: p.key.create_time_100ns,
+                parent_pid: p.parent_pid,
+                session_id: p.session_id,
+                image_name: p.image_name.clone(),
+            };
+            (identity, ProcMetrics::from_sample(p))
+        })
+        .collect();
+    TickSamples {
+        ts_ms: set.ts_ms,
+        sys,
+        procs,
+    }
+}
+
+/// Drains the buffered ticks into a self-contained [`FlushBatch`]. Returns
+/// `None` when there is nothing to write (no ticks and no events).
 fn build_batch(
-    accs: &mut HashMap<ProcKey, AggAcc>,
-    sys_buf: &mut Vec<SysSampleRow>,
+    tick_buf: &mut Vec<TickSamples>,
     exited: &[ProcKey],
     self_acc: &SelfAcc,
-    window_secs: u32,
     dropped_before: u64,
     proc_events: Vec<ProcEventRow>,
     exit_stamps: Vec<ExitStamp>,
 ) -> Option<FlushBatch> {
     // Events alone are enough to warrant a batch even with no samples buffered,
     // so a burst of process churn on an idle machine still lands promptly.
-    if accs.is_empty() && sys_buf.is_empty() && proc_events.is_empty() && exit_stamps.is_empty() {
+    if tick_buf.is_empty() && proc_events.is_empty() && exit_stamps.is_empty() {
         return None;
     }
-    let ts = sys_buf.last().map(|s| s.ts_ms).unwrap_or_else(now_ms);
-    let procs = accs
-        .drain()
-        .map(|(_, acc)| {
-            let agg = acc.finish(-1);
-            (acc.identity, agg)
-        })
-        .collect();
+    let ts = tick_buf.last().map(|t| t.ts_ms).unwrap_or_else(now_ms);
     Some(FlushBatch {
         agg_ts_ms: ts,
-        window_secs,
-        sys: std::mem::take(sys_buf),
-        procs,
+        ticks: std::mem::take(tick_buf),
         exited: exited.to_vec(),
         self_row: self_acc.finish(ts),
         dropped_before,
@@ -823,15 +792,145 @@ fn build_batch(
     })
 }
 
-/// Dedicated writer thread: owns the `Store` and the process id cache, applies
-/// each batch in one transaction, records any dropped-window gaps, and sweeps
-/// 72 h retention on shutdown. Returns (pruned_proc, pruned_sys) rows.
+/// Seal a head block once it reaches ~120 points or ~2 min of span, whichever
+/// comes first (tech-stack §4.2: bounded in-memory heads).
+const SEAL_MAX_POINTS: u32 = 120;
+const SEAL_MAX_AGE_MS: i64 = 120_000;
+
+/// Cardinality guard (tech-stack §4.2): a per-process scope whose last sample is
+/// older than this is sealed+drained and forgotten, so a machine that churns
+/// through thousands of short-lived processes cannot grow unbounded open heads.
+const SCOPE_IDLE_EVICT_MS: i64 = 5 * 60_000;
+
+/// Owns the Gorilla head blocks and per-series bookkeeping for the writer.
+/// Separated from the raw store so the append/seal logic is unit-testable.
+struct BlockWriter {
+    heads: HeadBlocks,
+    /// Last-seen wall-clock ms per process scope (row id), for the cardinality
+    /// guard. System scope is never evicted.
+    scope_last_seen: HashMap<i64, i64>,
+}
+
+impl BlockWriter {
+    fn new() -> Self {
+        Self {
+            heads: HeadBlocks::new(),
+            scope_last_seen: HashMap::new(),
+        }
+    }
+
+    /// Appends one tick's system gauges into the six `Sys*` series.
+    fn append_sys(&mut self, ts_ms: i64, sys: &SysMetrics) {
+        let _ = self.heads.append(
+            SeriesKey::system(Metric::SysCpuPermille),
+            ts_ms,
+            sys.cpu_permille as f64,
+        );
+        let _ = self.heads.append(
+            SeriesKey::system(Metric::SysMemUsed),
+            ts_ms,
+            sys.mem_used as f64,
+        );
+        let _ = self.heads.append(
+            SeriesKey::system(Metric::SysCommitUsed),
+            ts_ms,
+            sys.commit_used as f64,
+        );
+        let _ = self.heads.append(
+            SeriesKey::system(Metric::SysProcessCount),
+            ts_ms,
+            sys.process_count as f64,
+        );
+        let _ = self.heads.append(
+            SeriesKey::system(Metric::SysThreadCount),
+            ts_ms,
+            sys.thread_count as f64,
+        );
+        let _ = self.heads.append(
+            SeriesKey::system(Metric::SysHandleCount),
+            ts_ms,
+            sys.handle_count as f64,
+        );
+    }
+
+    /// Appends one process's five metric values under its resolved `scope`.
+    fn append_proc(&mut self, ts_ms: i64, scope: i64, m: &ProcMetrics) {
+        let _ = self.heads.append(
+            SeriesKey::new(Metric::CpuPermille, scope),
+            ts_ms,
+            m.cpu_permille as f64,
+        );
+        let _ = self.heads.append(
+            SeriesKey::new(Metric::WorkingSet, scope),
+            ts_ms,
+            m.working_set as f64,
+        );
+        let _ = self.heads.append(
+            SeriesKey::new(Metric::PrivateBytes, scope),
+            ts_ms,
+            m.private_bytes as f64,
+        );
+        let _ = self.heads.append(
+            SeriesKey::new(Metric::ReadBps, scope),
+            ts_ms,
+            m.read_bps as f64,
+        );
+        let _ = self.heads.append(
+            SeriesKey::new(Metric::WriteBps, scope),
+            ts_ms,
+            m.write_bps as f64,
+        );
+        self.scope_last_seen.insert(scope, ts_ms);
+    }
+
+    /// Seals heads that hit the point/age cap.
+    fn drain_sealed(&mut self) -> Vec<atlas_tsdb::EncodedBlock> {
+        self.heads.drain_sealed(SEAL_MAX_POINTS, SEAL_MAX_AGE_MS)
+    }
+
+    /// Seals+drains a scope's heads (a process exited) and forgets it.
+    fn drain_scope(&mut self, scope: i64) -> Vec<atlas_tsdb::EncodedBlock> {
+        self.scope_last_seen.remove(&scope);
+        self.heads.drain_scope(scope)
+    }
+
+    /// Cardinality guard: seal+drain and forget process scopes idle longer than
+    /// [`SCOPE_IDLE_EVICT_MS`] relative to `now_ms`.
+    fn evict_idle(&mut self, now_ms: i64) -> Vec<atlas_tsdb::EncodedBlock> {
+        let stale: Vec<i64> = self
+            .scope_last_seen
+            .iter()
+            .filter(|(scope, last)| {
+                **scope != SYSTEM_SCOPE && now_ms - **last >= SCOPE_IDLE_EVICT_MS
+            })
+            .map(|(scope, _)| *scope)
+            .collect();
+        let mut out = Vec::new();
+        for scope in stale {
+            out.extend(self.drain_scope(scope));
+        }
+        out
+    }
+
+    /// Final drain of every open head (shutdown).
+    fn drain_all(&mut self) -> Vec<atlas_tsdb::EncodedBlock> {
+        self.scope_last_seen.clear();
+        self.heads.drain_all()
+    }
+}
+
+/// Dedicated writer thread: owns the `Store`, the process id cache, and the
+/// Gorilla head blocks (M-TSDB). It resolves each tick's process identities to
+/// scopes, appends the raw per-tick samples into head blocks, seals and
+/// persists blocks, records dropped-window gaps, and sweeps 72 h retention on
+/// shutdown. Returns (pruned_proc, pruned_sys) rows from the deprecated tables.
 fn writer_thread(
     db_path: PathBuf,
     rx: std::sync::mpsc::Receiver<FlushBatch>,
 ) -> Result<(usize, usize)> {
     let mut store = Store::open(&db_path)?;
     let mut id_cache: HashMap<ProcKey, i64> = HashMap::new();
+    let mut bw = BlockWriter::new();
 
     for batch in rx {
         // Any windows the sampler dropped since the last landed batch are
@@ -840,50 +939,66 @@ fn writer_thread(
             store.record_gap(batch.agg_ts_ms, batch.dropped_before, "writer backpressure")?;
         }
 
-        // Resolve identities → row ids (this is the upsert bookkeeping moved
-        // off the sampling loop) and stamp them onto the aggregates.
-        let mut aggs = Vec::with_capacity(batch.procs.len());
-        for (identity, mut agg) in batch.procs {
-            let key = ProcKey {
-                pid: identity.pid,
-                create_time_100ns: identity.create_time_100ns,
-            };
-            let row_id = match id_cache.get(&key) {
-                Some(id) => *id,
-                None => {
-                    let id = store.upsert_process(&identity, batch.agg_ts_ms)?;
-                    id_cache.insert(key, id);
-                    id
-                }
-            };
-            agg.proc_row_id = row_id;
-            aggs.push(agg);
+        let mut latest_ts = batch.agg_ts_ms;
+        // Append every buffered tick into the head blocks, resolving identities
+        // → row ids on first sight (the upsert bookkeeping moved off the
+        // sampling loop).
+        for tick in &batch.ticks {
+            latest_ts = latest_ts.max(tick.ts_ms);
+            bw.append_sys(tick.ts_ms, &tick.sys);
+            for (identity, metrics) in &tick.procs {
+                let key = ProcKey {
+                    pid: identity.pid,
+                    create_time_100ns: identity.create_time_100ns,
+                };
+                let row_id = match id_cache.get(&key) {
+                    Some(id) => *id,
+                    None => {
+                        let id = store.upsert_process(identity, tick.ts_ms)?;
+                        id_cache.insert(key, id);
+                        id
+                    }
+                };
+                bw.append_proc(tick.ts_ms, row_id, metrics);
+            }
         }
+
+        // Collect blocks to persist: those sealed by point/age, plus any drained
+        // by exits below, plus the idle-scope cardinality guard.
+        let mut blocks = bw.drain_sealed();
+
         // Snapshot-diff exits (degraded mode only): mark the instance exited at
-        // the flush timestamp — the best we can do without ETW.
+        // the flush timestamp and drain its series so nothing is lost.
         for key in &batch.exited {
             if let Some(row_id) = id_cache.remove(key) {
                 store.mark_exited(row_id, batch.agg_ts_ms)?;
+                blocks.extend(bw.drain_scope(row_id));
             }
         }
 
         // Exact ETW exits (live mode): stamp the matching live instance by pid
-        // with the event's own timestamp and exit status, and evict it from the
-        // id cache so a later pid reuse gets a fresh row (see stamp_exit_by_pid
-        // for why matching is by pid, not the (pid, create_time) key). A stop
-        // with no live instance (stop-without-start) stamps zero rows.
+        // with the event's own timestamp and exit status, drain that scope's
+        // series, and evict it from the id cache so a later pid reuse gets a
+        // fresh row (see stamp_exit_by_pid for why matching is by pid, not the
+        // (pid, create_time) key). A stop with no live instance stamps nothing.
         for (pid, exit_ms, exit_status) in &batch.exit_stamps {
             store.stamp_exit_by_pid(*pid, *exit_ms, *exit_status)?;
+            // Drain+forget every cached scope for this pid before evicting it.
+            let scopes: Vec<i64> = id_cache
+                .iter()
+                .filter(|(k, _)| k.pid == *pid)
+                .map(|(_, id)| *id)
+                .collect();
+            for scope in scopes {
+                blocks.extend(bw.drain_scope(scope));
+            }
             id_cache.retain(|k, _| k.pid != *pid);
         }
 
-        store.write_batch(
-            batch.agg_ts_ms,
-            batch.window_secs,
-            &batch.sys,
-            &aggs,
-            &batch.proc_events,
-        )?;
+        // Cardinality guard: shed scopes idle beyond the eviction horizon.
+        blocks.extend(bw.evict_idle(latest_ts));
+
+        store.write_batch(&blocks, &batch.proc_events)?;
         store.write_self_sample(&batch.self_row)?;
         tracing::debug!(
             cpu_permille = batch.self_row.cpu_permille,
@@ -894,17 +1009,25 @@ fn writer_thread(
             "self metrics"
         );
         tracing::info!(
-            proc_rows = aggs.len(),
-            sys_rows = batch.sys.len(),
+            ticks = batch.ticks.len(),
+            blocks = blocks.len(),
+            open_series = bw.heads.series_count(),
             event_rows = batch.proc_events.len(),
             exits_stamped = batch.exit_stamps.len(),
-            window_secs = batch.window_secs,
             "flushed window"
         );
     }
 
+    // Final drain: seal everything still open so the last samples land.
+    let tail = bw.drain_all();
+    if !tail.is_empty() {
+        store.write_blocks(&tail)?;
+    }
+
     let cutoff = now_ms() - RETENTION_HOURS * 3_600_000;
     let pruned = store.apply_retention(cutoff)?;
+    let blocks_pruned = store.apply_block_retention(cutoff)?;
+    tracing::info!(blocks_pruned, "block retention swept");
     Ok(pruned)
 }
 
@@ -1363,8 +1486,7 @@ fn cmd_overhead(duration: u64, interval: f64, flush_secs: u64) -> Result<()> {
     let mut last_flush = Instant::now();
     let mut next_sleep = Duration::from_secs_f64(interval.max(0.25));
 
-    let mut accs: HashMap<ProcKey, AggAcc> = HashMap::new();
-    let mut sys_buf: Vec<SysSampleRow> = Vec::new();
+    let mut tick_buf: Vec<TickSamples> = Vec::new();
     let mut self_acc = SelfAcc::new();
     let mut event_win = EventWindow::default();
     let mut prev_tick = Instant::now();
@@ -1424,34 +1546,16 @@ fn cmd_overhead(duration: u64, interval: f64, flush_secs: u64) -> Result<()> {
         });
         next_sleep = chosen.max(Duration::from_secs_f64(interval.max(0.25)));
 
-        sys_buf.push(SysSampleRow {
-            ts_ms: set.ts_ms,
-            cpu_permille: set.system.cpu_permille,
-            mem_used: set.system.mem_used,
-            mem_total: set.system.mem_total,
-            commit_used: set.system.commit_used,
-            commit_limit: set.system.commit_limit,
-            process_count: set.system.process_count,
-            thread_count: set.system.thread_count,
-            handle_count: set.system.handle_count,
-        });
         self_acc.update(own, dt_s, tick_us);
-        for p in &set.processes {
-            accs.entry(p.key)
-                .or_insert_with(|| AggAcc::new(p))
-                .update(p, dt_s);
-        }
+        tick_buf.push(capture_tick(&set));
 
         if last_flush.elapsed() >= flush_every {
-            let window_secs = last_flush.elapsed().as_secs().max(1) as u32;
             let snapshot_exited: &[ProcKey] = if live_events { &[] } else { &set.exited };
             let (event_rows, exit_stamps) = event_win.take();
             if let Some(batch) = build_batch(
-                &mut accs,
-                &mut sys_buf,
+                &mut tick_buf,
                 snapshot_exited,
                 &self_acc,
-                window_secs,
                 dropped_pending,
                 event_rows,
                 exit_stamps,
@@ -1474,14 +1578,11 @@ fn cmd_overhead(duration: u64, interval: f64, flush_secs: u64) -> Result<()> {
     let elapsed = started.elapsed();
 
     // Final partial window.
-    let window_secs = last_flush.elapsed().as_secs().max(1) as u32;
     let (event_rows, exit_stamps) = event_win.take();
     if let Some(batch) = build_batch(
-        &mut accs,
-        &mut sys_buf,
+        &mut tick_buf,
         &[],
         &self_acc,
-        window_secs,
         dropped_pending,
         event_rows,
         exit_stamps,
@@ -1506,11 +1607,24 @@ fn cmd_overhead(duration: u64, interval: f64, flush_secs: u64) -> Result<()> {
 
     let db_bytes = db_on_disk_bytes(&db_path);
 
+    // Steady-state projection: the encoded sample-block payload is the honest
+    // driver of disk growth. A short harness run's *file* size is dominated by
+    // fixed SQLite page/WAL overhead plus the one-time final drain of every open
+    // head into tiny (sub-120-point) blocks, so extrapolating it overstates the
+    // rate. Projecting from bytes/sample × sample rate reflects the sealed-block
+    // steady state the store actually settles into. Read before the guard runs.
+    let block_stats = Store::open(&db_path).ok().and_then(|s| {
+        let bytes = s.sample_storage_bytes().ok()?;
+        let samples = s.sample_count().ok()?;
+        Some((bytes, samples))
+    });
+
     print_overhead_report(
         &metrics,
         elapsed,
         flush_windows,
         db_bytes,
+        block_stats,
         etw_live,
         interval,
         flush_secs,
@@ -1560,6 +1674,7 @@ fn print_overhead_report(
     elapsed: Duration,
     flush_windows: u64,
     db_bytes: u64,
+    block_stats: Option<(u64, u64)>,
     etw_live: bool,
     interval: f64,
     flush_secs: u64,
@@ -1572,6 +1687,23 @@ fn print_overhead_report(
 
     // Extrapolate disk writes/day from bytes actually written during the run.
     let mb_per_day = (db_bytes as f64 / (1024.0 * 1024.0)) * (86_400.0 / secs);
+
+    // Steady-state projection from the encoded sample-block payload: bytes/
+    // sample × the sample production rate. This is the honest disk-growth figure
+    // the M-TSDB store settles into once blocks seal at the point cap (a short
+    // run's raw file size is dominated by fixed SQLite overhead + the one-time
+    // final drain of open heads). Samples/s is derived from the ticks actually
+    // taken so it tracks the adaptive cadence during the run.
+    let steady = block_stats.map(|(payload_bytes, samples)| {
+        let bytes_per_sample = if samples > 0 {
+            payload_bytes as f64 / samples as f64
+        } else {
+            0.0
+        };
+        let samples_per_s = samples as f64 / secs;
+        let payload_mb_per_day = bytes_per_sample * samples_per_s * 86_400.0 / (1024.0 * 1024.0);
+        (bytes_per_sample, payload_mb_per_day)
+    });
 
     // Verdicts. CPU budget only meaningful once a few ticks landed own-process
     // CPU; otherwise report N.A. rather than a false PASS.
@@ -1615,10 +1747,17 @@ fn print_overhead_report(
         m.tick_us_max as f64 / 1000.0
     );
     println!(
-        "flush windows   {flush_windows} written   db on disk {:.2} MB   ~{:.1} MB/day extrapolated",
+        "flush windows   {flush_windows} written   db on disk {:.2} MB   ~{:.1} MB/day (cold-file extrapolation)",
         mb(db_bytes),
         mb_per_day
     );
+    match steady {
+        Some((bytes_per_sample, payload_mb_per_day)) => println!(
+            "sample blocks   {:.3} bytes/sample   ~{:.1} MB/day steady-state payload",
+            bytes_per_sample, payload_mb_per_day
+        ),
+        None => println!("sample blocks   (no blocks written)"),
+    }
     println!(
         "ETW events      {}",
         if etw_live {
@@ -1633,8 +1772,9 @@ fn print_overhead_report(
 
 fn cmd_db_top(db_path: PathBuf, minutes: u64, limit: u32) -> Result<()> {
     let store = Store::open(&db_path)?;
-    let since = now_ms() - (minutes as i64) * 60_000;
-    let rows = store.top_processes(since, limit)?;
+    let now = now_ms();
+    let since = now - (minutes as i64) * 60_000;
+    let rows = store.top_processes(since, now, limit)?;
     if rows.is_empty() {
         println!(
             "No recorded data in the last {minutes} minutes ({}).",
@@ -1645,13 +1785,13 @@ fn cmd_db_top(db_path: PathBuf, minutes: u64, limit: u32) -> Result<()> {
         return Ok(());
     }
     println!(
-        "Top processes by average CPU over the last {minutes} minutes ({} windows source: {})",
+        "Top processes by average CPU over the last {minutes} minutes ({} rows, source: {})",
         rows.len(),
         db_path.display()
     );
     println!(
         "{:>7} {:<30} {:>8} {:>9} {:>11} {:>8}",
-        "PID", "NAME", "AVG CPU%", "PEAK CPU%", "PEAK WS MB", "WINDOWS"
+        "PID", "NAME", "AVG CPU%", "PEAK CPU%", "PEAK WS MB", "SAMPLES"
     );
     for r in rows {
         println!(
@@ -1714,6 +1854,74 @@ fn truncate(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sys_metrics() -> SysMetrics {
+        SysMetrics {
+            cpu_permille: 100,
+            mem_used: 1 << 30,
+            commit_used: 2 << 30,
+            process_count: 200,
+            thread_count: 2000,
+            handle_count: 40000,
+        }
+    }
+
+    fn proc_metrics(cpu: u32) -> ProcMetrics {
+        ProcMetrics {
+            cpu_permille: cpu,
+            working_set: 100 << 20,
+            private_bytes: 80 << 20,
+            read_bps: 0,
+            write_bps: 0,
+        }
+    }
+
+    /// A head that reaches the point cap seals into exactly the six system
+    /// series (one block each) and clears.
+    #[test]
+    fn block_writer_seals_sys_series_on_point_cap() {
+        let mut bw = BlockWriter::new();
+        for i in 0..SEAL_MAX_POINTS as i64 {
+            bw.append_sys(1000 + i * 1000, &sys_metrics());
+        }
+        let blocks = bw.drain_sealed();
+        // Six Sys* series, each sealed once at the cap.
+        assert_eq!(blocks.len(), 6);
+        assert!(blocks.iter().all(|b| b.points == SEAL_MAX_POINTS));
+        assert!(blocks.iter().all(|b| b.key.scope == SYSTEM_SCOPE));
+    }
+
+    /// Draining a process scope on exit flushes its five series and forgets it,
+    /// so the cardinality guard no longer tracks it.
+    #[test]
+    fn block_writer_drains_scope_on_exit() {
+        let mut bw = BlockWriter::new();
+        bw.append_proc(1000, 42, &proc_metrics(500));
+        bw.append_proc(2000, 42, &proc_metrics(400));
+        let blocks = bw.drain_scope(42);
+        assert_eq!(blocks.len(), 5, "five per-process series");
+        assert!(blocks.iter().all(|b| b.key.scope == 42 && b.points == 2));
+        assert!(!bw.scope_last_seen.contains_key(&42));
+    }
+
+    /// The cardinality guard seals+forgets a scope idle past the horizon while
+    /// leaving a recently-seen scope open.
+    #[test]
+    fn block_writer_evicts_idle_scope() {
+        let mut bw = BlockWriter::new();
+        bw.append_proc(1000, 1, &proc_metrics(10)); // last seen at t=1000
+        bw.append_proc(1000, 2, &proc_metrics(20));
+        // Scope 2 keeps getting samples; scope 1 goes quiet.
+        let now = 1000 + SCOPE_IDLE_EVICT_MS;
+        bw.append_proc(now, 2, &proc_metrics(20));
+
+        let evicted = bw.evict_idle(now);
+        // Only scope 1's five series are shed.
+        assert_eq!(evicted.len(), 5);
+        assert!(evicted.iter().all(|b| b.key.scope == 1));
+        assert!(!bw.scope_last_seen.contains_key(&1));
+        assert!(bw.scope_last_seen.contains_key(&2), "active scope kept");
+    }
 
     #[test]
     fn format_ts_renders_time_of_day() {
