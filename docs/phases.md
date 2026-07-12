@@ -22,14 +22,14 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 
 ## Phase 1 — MVP (PRD §18.1)
 
-### M1 — Collection heartbeat `[~]`
+### M1 — Collection heartbeat `[x]` ✅ (completed 2026-07-13)
 
 - [x] Process snapshot collector: single `NtQuerySystemInformation(SystemProcessInformation)` call per tick (tech-stack §4.1) — CPU times, cycle time, working set, private bytes, I/O totals, handles, threads, session, parent
 - [x] System gauges: `GetSystemTimes` (CPU), `GlobalMemoryStatusEx` (memory/commit)
 - [x] Sampler: per-process CPU‰ / IO-rate deltas, keyed by `(pid, create_time)` so PID reuse cannot corrupt attribution
 - [x] Dev verification commands: `top`, `snapshot`
-- [ ] Adaptive cadence: 1 s active → 5 s → 15 s idle decay, instant return on activity (tech-stack §4.1)
-- [ ] Self-metrics (`atlas.self.*`): the product must display its own overhead (PRD §12.2)
+- [x] Adaptive cadence: 1 s active → 5 s → 15 s idle decay, instant return on activity (`CadenceController`, pure + unit-tested)
+- [x] Self-metrics: `self_sample` per flush window (own CPU/WS + sampler tick timing), surfaced as the `db-top` overhead line (PRD §12.2)
 
 ### M2 — Storage v0 `[~]`
 
@@ -38,13 +38,14 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 - [x] Process instance registry with first/last/exit timestamps (PID-reuse-safe identity)
 - [x] 72 h retention sweep (PRD §9.3.1 default)
 - [x] Dev verification commands: `record`, `db-top`
-- [ ] Writer thread + bounded channel with backpressure (drop derived data first, record `data_gap` markers)
+- [x] Writer thread + bounded channel with backpressure: stalls drop the window and record a `gap_event` row (schema v2); window aggregates time-weighted for variable cadence
 - [ ] **M-TSDB:** replace interim SQLite sample tables with the chunked Gorilla-compressed tiered store (tech-stack §4.2); keep SQLite for events/entities
 
-### M3 — Process events & application grouping `[ ]`
+### M3 — Process events & application grouping `[~]`
 
-- [ ] ETW session: `Microsoft-Windows-Kernel-Process` (start/stop/image load) via `ferrisetw`
-- [ ] Exact process lifecycle from events (create/exit timestamps, command line where available)
+- [x] ETW session: `Microsoft-Windows-Kernel-Process` ProcessStart/ProcessStop via `ferrisetw` 1.2.0 (`ProcessEventWatcher` + `events` subcommand; elevation-aware). Live path covered by an `#[ignore]` test — needs one elevated validation run
+- [ ] Image-load events (same provider)
+- [ ] Exact process lifecycle from events (create/exit timestamps, command line where available) wired into the `record` pipeline
 - [ ] Application identity & grouping heuristics: main/renderer/helper/service roles (PRD §9.2.1)
 - [ ] ETW cost harness — measure collector overhead against the 0.2% idle budget (tech-stack §13 spike 2)
 
@@ -106,4 +107,6 @@ Dynamic responsiveness protection · extended retention tiers + optional Parquet
 
 - **2026-07-13 — Interim samples in SQLite.** Per-process samples are stored as *window aggregates* (avg/max over the flush interval) in SQLite until the chunked TSDB lands (M-TSDB). Bounds row growth (~1 row/process/15 s instead of 1/s) while keeping the end-to-end path real. The `atlas-tsdb` crate holds the target API shape.
 - **2026-07-13 — Hand-written FFI in `atlas-collectors::ffi`.** The first slice needs ~5 functions with stable ABIs; owning the definitions keeps the entire unsafe surface reviewable in one file and avoids feature-name churn. Struct layouts are locked by offset tests. Migration to `windows-sys` planned when the collector set grows (M3, ETW).
-- **2026-07-13 — Dev data lives outside the repo** (`%LOCALAPPDATA%\SystemAtlas\dev`): keeps OneDrive sync and git status clean; production location will be `%ProgramData%` (service) per tech-stack §7.
+- **2026-07-13 — Dev data lives outside the repo** (`%LOCALAPPDATA%\SystemAtlas\dev`): keeps OneDrive sync and git status clean; production location will be `%ProgramData%` (service) per tech-stack §7. (Repo itself moved to `C:\Projects\System Atlas` the same day.)
+- **2026-07-13 — ferrisetw 1.2.0** for ETW. Gotchas encoded in `events.rs`: use `start()` + own processing thread (the convenience `start_and_process()` can't be stopped cleanly); access-denied surfaces as HRESULT `0x80070005`, not Win32 error 5 — match both; parse the payload `ProcessID` (subject), not the ETW header pid (reporter); `raw_timestamp()` is FILETIME 100 ns units.
+- **2026-07-13 — Writer backpressure semantics**: a stalled writer drops whole flush windows (counted, then recorded as `gap_event` rows by the next landed batch) rather than blocking the sampling loop — degradation is observable, never silent (PRD §11.3).
