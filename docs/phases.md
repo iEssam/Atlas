@@ -44,17 +44,17 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 ### M3 — Process events & application grouping `[~]`
 
 - [x] ETW session: `Microsoft-Windows-Kernel-Process` ProcessStart/ProcessStop via `ferrisetw` 1.2.0 (`ProcessEventWatcher` + `events` subcommand; elevation-aware). Live path covered by an `#[ignore]` test — needs one elevated validation run
-- [ ] Image-load events (same provider)
-- [ ] Exact process lifecycle from events (create/exit timestamps, command line where available) wired into the `record` pipeline
-- [ ] Application identity & grouping heuristics: main/renderer/helper/service roles (PRD §9.2.1)
+- [x] Image-load events (same provider, id 5, keyword 0x40) — opt-in via `WatcherOptions` / `events --images`
+- [x] Process lifecycle wired into `record`: event-driven wake (recv_timeout), `proc_event` table + `process_instance.exit_status` (schema v3), exact exit stamping by pid against live instances; clean degraded mode when not elevated. Command lines still unavailable from this provider — revisit with rundown/NT kernel logger later
+- [ ] Application identity & grouping heuristics: main/renderer/helper/service roles (PRD §9.2.1) — deferred to pair with the M5 UI, which is its first consumer
 - [ ] ETW cost harness — measure collector overhead against the 0.2% idle budget (tech-stack §13 spike 2)
 
-### M4 — IPC contract `[ ]`
+### M4 — IPC contract `[~]`
 
-- [ ] Compile [proto/atlas.proto](../proto/atlas.proto): `prost`/`tonic` (Rust), named-pipe server in service
-- [ ] Pipe security: SDDL (SYSTEM + interactive user), message-mode, size caps
+- [x] Compile [proto/atlas.proto](../proto/atlas.proto): `atlas-ipc` crate, tonic 0.13 + prost 0.13, hermetic protoc via `protoc-bin-vendored`; named-pipe accept loop (always one listener pending) + client connector with pipe-busy retry; `serve` / `client-snapshot [--watch]` subcommands; unprivileged end-to-end round-trip test
+- [x] Pipe security: full SDDL DACL — SYSTEM + Administrators full control, current user RW, nobody else (`atlas-ipc/src/security.rs`); per-connection client PID/signature auth noted as future hardening
 - [ ] Shared-memory live ring (seqlock) for 1 Hz top-N rows (tech-stack §5.1)
-- [ ] Capability flags in `GetCapabilities` (degraded-mode propagation)
+- [x] Capability flags in `GetCapabilities` (currently: `process_snapshots`)
 
 ### M5 — UI shell (WinUI 3) `[ ]`
 
@@ -110,3 +110,6 @@ Dynamic responsiveness protection · extended retention tiers + optional Parquet
 - **2026-07-13 — Dev data lives outside the repo** (`%LOCALAPPDATA%\SystemAtlas\dev`): keeps OneDrive sync and git status clean; production location will be `%ProgramData%` (service) per tech-stack §7. (Repo itself moved to `C:\Projects\System Atlas` the same day.)
 - **2026-07-13 — ferrisetw 1.2.0** for ETW. Gotchas encoded in `events.rs`: use `start()` + own processing thread (the convenience `start_and_process()` can't be stopped cleanly); access-denied surfaces as HRESULT `0x80070005`, not Win32 error 5 — match both; parse the payload `ProcessID` (subject), not the ETW header pid (reporter); `raw_timestamp()` is FILETIME 100 ns units.
 - **2026-07-13 — Writer backpressure semantics**: a stalled writer drops whole flush windows (counted, then recorded as `gap_event` rows by the next landed batch) rather than blocking the sampling loop — degradation is observable, never silent (PRD §11.3).
+- **2026-07-13 — tonic pinned to 0.13** (not 0.14): 0.14 reworked the transport/`serve_with_incoming` surface; 0.13 has the stable `Connected` API the named-pipe transport builds on. protoc is vendored (`protoc-bin-vendored`) so builds are hermetic — no system protoc install.
+- **2026-07-13 — Exit-stamping matches by pid, not (pid, create_time)**: ETW Stop events carry the stop time, never the snapshot's CreateTime, so the identity key cannot be reconstructed; stamping targets the unique live (`exit_seen_ms IS NULL`) instance per pid. Documented on `stamp_exit_by_pid`.
+- **2026-07-13 — Machine policy blocks fresh build-script binaries**: an Application Control policy (error 4551) blocks executing freshly compiled build scripts (seen with `zmij`, a `serde_json` transitive build-dep) in fresh target dirs. Cached artifacts in the main `target/` are approved. Implications: full `cargo clean` or CI on this machine may need policy approval; and **never share a target dir between a worktree and the main repo** — doing so overwrote main's crate artifacts with worktree-era ones and broke the post-merge build until `cargo clean -p <workspace crates>`.
