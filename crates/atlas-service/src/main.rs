@@ -2,8 +2,12 @@
 //!
 //! Dev console mode today: `top` / `snapshot` / `record` / `db-top` / `events`
 //! subcommands exercise the collection path end-to-end. The `events` command
-//! streams live ETW process start/stop (M3). Windows-service mode and the IPC
-//! server arrive at milestones M4/M9 (docs/phases.md).
+//! streams live ETW process start/stop (M3). The `serve` command hosts the
+//! `AtlasQuery` gRPC contract over a named pipe and `client-snapshot` is its
+//! dev client (M4, docs/phases.md). Windows-service mode arrives at M9.
+
+#[cfg(windows)]
+mod ipc;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -75,6 +79,31 @@ enum Cmd {
         #[arg(long, default_value_t = 15)]
         limit: u32,
     },
+    /// Host the AtlasQuery gRPC contract over a named pipe until Ctrl+C (M4).
+    ///
+    /// Runs the sampler at 1 s in the background and serves GetCapabilities /
+    /// GetSnapshot / StreamSnapshots. Runs unprivileged; the pipe DACL grants
+    /// SYSTEM, Administrators, and the current user only.
+    Serve {
+        /// Override the pipe name discriminator (default: current username).
+        #[arg(long)]
+        pipe: Option<String>,
+    },
+    /// Connect to a running `serve` over the pipe and print a snapshot (M4).
+    ///
+    /// Calls GetCapabilities + GetSnapshot(top_n); with `--watch`, streams one
+    /// line per update via StreamSnapshots until Ctrl+C.
+    ClientSnapshot {
+        /// Override the pipe name discriminator (default: current username).
+        #[arg(long)]
+        pipe: Option<String>,
+        /// Rows to request (0 = all).
+        #[arg(long, default_value_t = 10)]
+        top_n: u32,
+        /// Stream continuous updates instead of a single snapshot.
+        #[arg(long)]
+        watch: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -106,6 +135,8 @@ fn main() -> Result<()> {
         Cmd::DbTop { db, minutes, limit } => {
             cmd_db_top(db.unwrap_or_else(default_db_path), minutes, limit)
         }
+        Cmd::Serve { pipe } => cmd_serve(pipe),
+        Cmd::ClientSnapshot { pipe, top_n, watch } => cmd_client_snapshot(pipe, top_n, watch),
     }
 }
 
@@ -686,6 +717,162 @@ fn format_ts(ts_ms: i64) -> String {
     let m = (secs % 3600) / 60;
     let s = secs % 60;
     format!("{h:02}:{m:02}:{s:02}.{ms:03}")
+}
+
+/// Resolves the pipe name from an optional discriminator override, falling
+/// back to the default (current-user-scoped) name.
+#[cfg(windows)]
+fn resolve_pipe_name(pipe: Option<String>) -> String {
+    match pipe {
+        Some(who) => atlas_ipc::pipe_name(&who),
+        None => atlas_ipc::default_pipe_name(),
+    }
+}
+
+/// `serve`: host AtlasQuery over the named pipe until Ctrl+C.
+#[cfg(windows)]
+fn cmd_serve(pipe: Option<String>) -> Result<()> {
+    use atlas_ipc::AtlasQueryServer;
+
+    let name = resolve_pipe_name(pipe);
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+
+    rt.block_on(async move {
+        let service = ipc::QueryService::start()?;
+        let handle = std::sync::Arc::new(service);
+        let router = tonic::transport::Server::builder()
+            .add_service(AtlasQueryServer::from_arc(handle.clone()));
+
+        tracing::info!(pipe = %name, "AtlasQuery serving (Ctrl+C to stop)");
+        println!("Serving AtlasQuery on {name} (Ctrl+C to stop)");
+
+        let shutdown = async {
+            let _ = tokio::signal::ctrl_c().await;
+        };
+        let result = atlas_ipc::serve(&name, router, shutdown).await;
+        handle.shutdown();
+        result
+    })?;
+
+    tracing::info!("AtlasQuery server stopped");
+    Ok(())
+}
+
+/// `client-snapshot`: connect to a running `serve` and print capabilities +
+/// a snapshot (or stream with `--watch`).
+#[cfg(windows)]
+fn cmd_client_snapshot(pipe: Option<String>, top_n: u32, watch: bool) -> Result<()> {
+    use atlas_ipc::{AtlasQueryClient, CapabilitiesRequest, SnapshotRequest};
+
+    let name = resolve_pipe_name(pipe);
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+
+    rt.block_on(async move {
+        let channel = atlas_ipc::connect(&name)
+            .await
+            .map_err(|e| anyhow::anyhow!("connect to {name}: {e}"))?;
+        let mut client = AtlasQueryClient::new(channel);
+
+        let caps = client
+            .get_capabilities(CapabilitiesRequest {})
+            .await?
+            .into_inner();
+        println!(
+            "Capabilities: service_version={} flags=[{}]",
+            caps.service_version,
+            caps.capability_flags.join(", ")
+        );
+
+        if watch {
+            let mut stream = client
+                .stream_snapshots(SnapshotRequest { top_n })
+                .await?
+                .into_inner();
+            println!("Streaming snapshots (Ctrl+C to stop)");
+            loop {
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => break,
+                    item = stream.message() => match item? {
+                        Some(reply) => println!("{}", format_snapshot_line(&reply)),
+                        None => break,
+                    },
+                }
+            }
+        } else {
+            let reply = client
+                .get_snapshot(SnapshotRequest { top_n })
+                .await?
+                .into_inner();
+            print_snapshot(&reply);
+        }
+        Ok::<(), anyhow::Error>(())
+    })?;
+
+    Ok(())
+}
+
+/// One-line summary of a snapshot for `--watch`.
+#[cfg(windows)]
+fn format_snapshot_line(reply: &atlas_ipc::SnapshotReply) -> String {
+    let sys = reply.system.as_ref();
+    let cpu = sys.map(|s| s.cpu_permille as f64 / 10.0).unwrap_or(0.0);
+    let top = reply
+        .processes
+        .first()
+        .map(|p| format!("{} {:.1}%", p.image_name, p.cpu_permille as f64 / 10.0))
+        .unwrap_or_else(|| "-".to_string());
+    format!(
+        "CPU {cpu:>5.1}%  procs {:>4}  top: {top}",
+        reply.processes.len()
+    )
+}
+
+/// Full snapshot dump for the one-shot client (the M4 dev proof).
+#[cfg(windows)]
+fn print_snapshot(reply: &atlas_ipc::SnapshotReply) {
+    if let Some(s) = &reply.system {
+        println!(
+            "System: CPU {:.1}%  Memory {:.1}/{:.1} GB  Commit {:.1}/{:.1} GB  {} processes, {} threads, {} handles",
+            s.cpu_permille as f64 / 10.0,
+            gb(s.mem_used),
+            gb(s.mem_total),
+            gb(s.commit_used),
+            gb(s.commit_limit),
+            s.process_count,
+            s.thread_count,
+            s.handle_count
+        );
+    }
+    println!(
+        "{:>7} {:<30} {:>6} {:>9} {:>9} {:>5} {:>7}",
+        "PID", "NAME", "CPU%", "WS MB", "PRIV MB", "THR", "HANDLE"
+    );
+    for p in &reply.processes {
+        println!(
+            "{:>7} {:<30} {:>6.1} {:>9.1} {:>9.1} {:>5} {:>7}",
+            p.pid,
+            truncate(&p.image_name, 30),
+            p.cpu_permille as f64 / 10.0,
+            mb(p.working_set),
+            mb(p.private_bytes),
+            p.thread_count,
+            p.handle_count
+        );
+    }
+}
+
+#[cfg(not(windows))]
+fn cmd_serve(_pipe: Option<String>) -> Result<()> {
+    anyhow::bail!("the `serve` command requires Windows named pipes");
+}
+
+#[cfg(not(windows))]
+fn cmd_client_snapshot(_pipe: Option<String>, _top_n: u32, _watch: bool) -> Result<()> {
+    anyhow::bail!("the `client-snapshot` command requires Windows named pipes");
 }
 
 fn cmd_db_top(db_path: PathBuf, minutes: u64, limit: u32) -> Result<()> {

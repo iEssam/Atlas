@@ -4,6 +4,7 @@ members = [
     "crates/atlas-collectors",
     "crates/atlas-store",
     "crates/atlas-tsdb",
+    "crates/atlas-ipc",
     "crates/atlas-service",
 ]
 
@@ -22,6 +23,17 @@ ctrlc = "3"
 ferrisetw = "1.2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# IPC (M4): gRPC over Windows named pipes. tonic 0.13 has the stable
+# serve_with_incoming + Connected transport surface this crate wires against.
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "io-util", "macros", "sync", "signal"] }
+tonic = "0.13"
+prost = "0.13"
+tower = "0.5"
+tokio-stream = "0.1"
+tonic-build = "0.13"
+prost-build = "0.13"
+protoc-bin-vendored = "3"
+hyper-util = { version = "0.1", features = ["tokio"] }
 
 [profile.release]
 lto = "thin"
