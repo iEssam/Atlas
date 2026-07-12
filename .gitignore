@@ -22,3 +22,7 @@ obj/
 # OS noise
 Thumbs.db
 desktop.ini
+
+# Claude Code local state (agent worktrees, per-user settings)
+.claude/worktrees/
+.claude/settings.local.json

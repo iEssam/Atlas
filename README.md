@@ -51,15 +51,9 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-### Note for this working copy (OneDrive)
+### Dev data locations
 
-This repo currently lives inside a OneDrive-synced folder. Build artifacts and dev databases are deliberately kept **out** of the tree (`%LOCALAPPDATA%\SystemAtlas`), and it is recommended to point cargo's target directory outside OneDrive too:
-
-```powershell
-$env:CARGO_TARGET_DIR = "$env:LOCALAPPDATA\SystemAtlas\target"
-```
-
-Longer term, consider moving the repo outside OneDrive (sync engines and `.git`/build churn don't mix well).
+Build artifacts stay in `target/` (gitignored). The dev database defaults to `%LOCALAPPDATA%\SystemAtlas\dev\atlas.db`, deliberately outside the repo.
 
 ## Status
 
