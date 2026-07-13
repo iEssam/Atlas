@@ -178,6 +178,79 @@ impl AtlasQuery for FakeQuery {
             services: vec![],
         }))
     }
+
+    // M8 incidents/diagnostics/reports: fixed responses so the transport test
+    // exercises the three new RPCs end-to-end (not the detection/diagnosis
+    // logic, which is unit-tested in atlas-service).
+    async fn list_incidents(
+        &self,
+        _req: Request<atlas_ipc::ListIncidentsRequest>,
+    ) -> Result<Response<atlas_ipc::ListIncidentsReply>, Status> {
+        Ok(Response::new(atlas_ipc::ListIncidentsReply {
+            incidents: vec![atlas_ipc::Incident {
+                id: 5,
+                kind: atlas_ipc::IncidentKind::CpuSaturation as i32,
+                start_ms: 1_000,
+                end_ms: 0, // ongoing
+                severity: atlas_ipc::Severity::Critical as i32,
+                peak_value: 96.0,
+                summary: "CPU saturation (ongoing)".into(),
+            }],
+            truncated: false,
+        }))
+    }
+
+    async fn diagnose(
+        &self,
+        req: Request<atlas_ipc::DiagnoseRequest>,
+    ) -> Result<Response<atlas_ipc::DiagnoseReply>, Status> {
+        let id = req.into_inner().incident_id;
+        Ok(Response::new(atlas_ipc::DiagnoseReply {
+            available: true,
+            unavailable_reason: String::new(),
+            diagnosis: Some(atlas_ipc::Diagnosis {
+                observed: format!("diagnosis for incident {id}"),
+                range: Some(atlas_ipc::TimeRange {
+                    from_ms: 1_000,
+                    to_ms: 20_000,
+                }),
+                evidence: vec![atlas_ipc::EvidenceItem {
+                    text: "Peak system CPU 96%".into(),
+                    ts_ms: 5_000,
+                    metric: "sys_cpu_pct".into(),
+                    value: 96.0,
+                }],
+                factors: vec![atlas_ipc::ContributingFactor {
+                    description: "proc1.exe (pid 100) averaged 80% CPU".into(),
+                    confidence: atlas_ipc::Confidence::High as i32,
+                    pid: 100,
+                    image_name: "proc1.exe".into(),
+                    attribution: 0.8,
+                }],
+                overall_confidence: atlas_ipc::Confidence::High as i32,
+                alternatives: vec![],
+                recommendation: "close proc1.exe".into(),
+                risk: "loses unsaved work".into(),
+                reversibility: "reversible".into(),
+                verification_plan: "watch CPU".into(),
+            }),
+        }))
+    }
+
+    async fn generate_report(
+        &self,
+        req: Request<atlas_ipc::GenerateReportRequest>,
+    ) -> Result<Response<atlas_ipc::GenerateReportReply>, Status> {
+        let fmt = req.into_inner().format;
+        Ok(Response::new(atlas_ipc::GenerateReportReply {
+            content: "Atlas incident report".into(),
+            content_type: if fmt == atlas_ipc::ReportFormat::ReportHtml as i32 {
+                "text/html".into()
+            } else {
+                "text/plain".into()
+            },
+        }))
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -230,6 +303,53 @@ async fn capabilities_and_snapshot_round_trip() {
         .expect("GetSnapshot all")
         .into_inner();
     assert_eq!(all.processes.len(), 3);
+
+    // M8: ListIncidents returns the ongoing CPU incident.
+    let incidents = client
+        .list_incidents(atlas_ipc::ListIncidentsRequest {
+            range: None,
+            limit: 0,
+        })
+        .await
+        .expect("ListIncidents")
+        .into_inner();
+    assert_eq!(incidents.incidents.len(), 1);
+    assert_eq!(incidents.incidents[0].id, 5);
+    assert_eq!(incidents.incidents[0].end_ms, 0, "ongoing incident");
+
+    // M8: Diagnose an incident by id round-trips the structured diagnosis.
+    let diag = client
+        .diagnose(atlas_ipc::DiagnoseRequest {
+            incident_id: 5,
+            range: None,
+        })
+        .await
+        .expect("Diagnose")
+        .into_inner();
+    assert!(diag.available);
+    let d = diag.diagnosis.expect("diagnosis present");
+    assert_eq!(d.overall_confidence, atlas_ipc::Confidence::High as i32);
+    assert_eq!(d.factors.len(), 1);
+    assert_eq!(d.evidence.len(), 1);
+
+    // M8: GenerateReport returns content + a matching content type.
+    let report = client
+        .generate_report(atlas_ipc::GenerateReportRequest {
+            incident_id: 5,
+            range: None,
+            format: atlas_ipc::ReportFormat::ReportHtml as i32,
+            redaction: Some(atlas_ipc::RedactionOptions {
+                redact_user_names: true,
+                redact_computer_name: false,
+                redact_paths: true,
+                redact_command_lines: false,
+            }),
+        })
+        .await
+        .expect("GenerateReport")
+        .into_inner();
+    assert_eq!(report.content_type, "text/html");
+    assert!(!report.content.is_empty());
 
     // Shut the server down cleanly.
     let _ = shutdown_tx.send(());

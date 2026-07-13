@@ -8,8 +8,11 @@
 
 #[cfg(windows)]
 mod broker;
+mod detectors;
+mod diagnostics;
 #[cfg(windows)]
 mod ipc;
+mod report;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -237,6 +240,64 @@ enum Cmd {
         #[arg(long, default_value_t = 15)]
         flush_secs: u64,
     },
+    /// List detected incidents over a look-back window (M8).
+    ///
+    /// Refreshes detection over the window (idempotent) then lists incidents.
+    Incidents {
+        #[arg(long)]
+        db: Option<PathBuf>,
+        /// Look-back window in minutes.
+        #[arg(long, default_value_t = 60)]
+        minutes: u64,
+        #[arg(long, default_value_t = 50)]
+        limit: u32,
+    },
+    /// Print the structured diagnosis for an incident or an ad-hoc range (M8).
+    ///
+    /// Evidence-based, no LLM: peak metrics, ranked contributing factors with
+    /// PRD-ladder confidence, and a templated recommendation (PRD §9.15).
+    Diagnose {
+        #[arg(long)]
+        db: Option<PathBuf>,
+        /// Diagnose a detected incident by id (from `incidents`).
+        #[arg(long)]
+        incident: Option<i64>,
+        /// Ad-hoc: diagnose the last N minutes instead of an incident.
+        #[arg(long)]
+        minutes: Option<u64>,
+    },
+    /// Render an incident diagnosis report (M8): text | json | csv | html.
+    ///
+    /// Applies a redaction pass (user/computer names, paths, command lines)
+    /// before formatting so every format is redacted identically (PRD §9.18).
+    Report {
+        #[arg(long)]
+        db: Option<PathBuf>,
+        /// Incident id to report on (from `incidents`).
+        #[arg(long)]
+        incident: Option<i64>,
+        /// Ad-hoc range in minutes instead of an incident.
+        #[arg(long)]
+        minutes: Option<u64>,
+        /// Output format: text | json | csv | html.
+        #[arg(long, default_value = "text")]
+        format: String,
+        /// Write to this file instead of stdout.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Replace the current user name with <USER>.
+        #[arg(long)]
+        redact_users: bool,
+        /// Replace the computer name with <HOST>.
+        #[arg(long)]
+        redact_computer: bool,
+        /// Replace file paths with <PATH>.
+        #[arg(long)]
+        redact_paths: bool,
+        /// Replace command-line arguments with <CMD-ARGS>.
+        #[arg(long)]
+        redact_command_lines: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -322,6 +383,37 @@ fn main() -> Result<()> {
             interval,
             flush_secs,
         } => cmd_overhead(duration, interval, flush_secs),
+        Cmd::Incidents { db, minutes, limit } => {
+            cmd_incidents(db.unwrap_or_else(default_db_path), minutes, limit)
+        }
+        Cmd::Diagnose {
+            db,
+            incident,
+            minutes,
+        } => cmd_diagnose(db.unwrap_or_else(default_db_path), incident, minutes),
+        Cmd::Report {
+            db,
+            incident,
+            minutes,
+            format,
+            out,
+            redact_users,
+            redact_computer,
+            redact_paths,
+            redact_command_lines,
+        } => cmd_report(
+            db.unwrap_or_else(default_db_path),
+            incident,
+            minutes,
+            &format,
+            out,
+            atlas_ipc::RedactionOptions {
+                redact_user_names: redact_users,
+                redact_computer_name: redact_computer,
+                redact_paths,
+                redact_command_lines,
+            },
+        ),
     }
 }
 
@@ -439,11 +531,15 @@ impl ProcMetrics {
     }
 }
 
-/// System gauges captured for one tick (the six `Sys*` series).
+/// System gauges captured for one tick (the six `Sys*` series). `mem_total` is
+/// not itself a recorded series (it is effectively constant for a machine) but
+/// is carried here so the incident detectors can turn recorded `SysMemUsed`
+/// bytes into a percent of total for the memory-pressure threshold (M8).
 #[derive(Clone, Copy)]
 struct SysMetrics {
     cpu_permille: u32,
     mem_used: u64,
+    mem_total: u64,
     commit_used: u64,
     process_count: u32,
     thread_count: u32,
@@ -540,6 +636,13 @@ struct FlushBatch {
 }
 
 const RETENTION_HOURS: i64 = 72;
+
+/// Rolling window the per-flush incident detection pass scans (M8). Short
+/// incidents only become visible once their sample blocks seal (point/age caps),
+/// so a final full-span pass also runs at writer shutdown; detection is
+/// idempotent (`upsert_incident` keys by `(kind, start_ms)`) so overlapping
+/// passes never duplicate an incident.
+const DETECT_WINDOW_MS: i64 = 15 * 60_000;
 
 /// The live ETW process-event source for the record loop, when available.
 /// `None` fields mean the watcher is degraded (not elevated / failed to start):
@@ -876,6 +979,7 @@ fn capture_tick(set: &SampleSet) -> TickSamples {
     let sys = SysMetrics {
         cpu_permille: set.system.cpu_permille,
         mem_used: set.system.mem_used,
+        mem_total: set.system.mem_total,
         commit_used: set.system.commit_used,
         process_count: set.system.process_count,
         thread_count: set.system.thread_count,
@@ -1068,6 +1172,9 @@ fn writer_thread(
     let mut store = Store::open(&db_path)?;
     let mut id_cache: HashMap<ProcKey, i64> = HashMap::new();
     let mut bw = BlockWriter::new();
+    // Latest observed total physical memory (bytes), for the memory-pressure
+    // detector's percent-of-total threshold. Effectively constant per machine.
+    let mut latest_mem_total: u64 = 0;
 
     for batch in rx {
         // Any windows the sampler dropped since the last landed batch are
@@ -1082,6 +1189,9 @@ fn writer_thread(
         // sampling loop).
         for tick in &batch.ticks {
             latest_ts = latest_ts.max(tick.ts_ms);
+            if tick.sys.mem_total > 0 {
+                latest_mem_total = tick.sys.mem_total;
+            }
             bw.append_sys(tick.ts_ms, &tick.sys);
             for (identity, metrics) in &tick.procs {
                 let key = ProcKey {
@@ -1153,12 +1263,33 @@ fn writer_thread(
             exits_stamped = batch.exit_stamps.len(),
             "flushed window"
         );
+
+        // M8: run the detectors over the recent (sealed) window each flush so a
+        // long, ongoing incident surfaces during recording. Best-effort: a
+        // detection error never disrupts the write path.
+        let det_from = latest_ts - DETECT_WINDOW_MS;
+        match detectors::run_detection_pass(&store, det_from, latest_ts, latest_mem_total) {
+            Ok(n) if n > 0 => tracing::info!(incidents = n, "detection pass upserted incidents"),
+            Ok(_) => {}
+            Err(e) => tracing::warn!("incident detection pass failed: {e}"),
+        }
     }
 
     // Final drain: seal everything still open so the last samples land.
     let tail = bw.drain_all();
     if !tail.is_empty() {
         store.write_blocks(&tail)?;
+    }
+
+    // M8: a final full-span detection pass over everything now persisted. A
+    // short recording seals its blocks only here (at drain_all), so this is the
+    // pass that catches incidents from brief `record` runs. Idempotent with the
+    // per-flush passes.
+    let final_to = now_ms();
+    let final_from = final_to - RETENTION_HOURS * 3_600_000;
+    match detectors::run_detection_pass(&store, final_from, final_to, latest_mem_total) {
+        Ok(n) => tracing::info!(incidents = n, "final detection pass complete"),
+        Err(e) => tracing::warn!("final incident detection pass failed: {e}"),
     }
 
     let cutoff = now_ms() - RETENTION_HOURS * 3_600_000;
@@ -2379,6 +2510,207 @@ fn print_self_summary(store: &Store) -> Result<()> {
     Ok(())
 }
 
+/// Best-effort read of total physical memory (bytes) for the memory-pressure
+/// percent-of-total threshold. Takes one live sample; returns 0 if unavailable
+/// (memory detection/diagnosis then degrades to CPU only, never fabricates).
+#[cfg(windows)]
+fn current_mem_total() -> u64 {
+    match Sampler::new().and_then(|mut s| s.sample()) {
+        Ok(set) => set.system.mem_total,
+        Err(_) => 0,
+    }
+}
+
+#[cfg(not(windows))]
+fn current_mem_total() -> u64 {
+    0
+}
+
+/// Human label for an incident kind discriminant (dev display).
+fn incident_kind_label(kind: i32) -> &'static str {
+    match kind {
+        detectors::KIND_CPU_SATURATION => "CPU saturation",
+        detectors::KIND_MEMORY_PRESSURE => "Memory pressure",
+        detectors::KIND_DISK_LATENCY => "Disk latency",
+        _ => "unspecified",
+    }
+}
+
+/// Human label for a severity discriminant (dev display).
+fn severity_label(sev: i32) -> &'static str {
+    match sev {
+        detectors::SEV_INFO => "info",
+        detectors::SEV_WARNING => "warning",
+        detectors::SEV_CRITICAL => "critical",
+        _ => "?",
+    }
+}
+
+/// Converts a store incident row to the proto `Incident` (0 end = ongoing).
+fn incident_row_to_proto(r: &atlas_store::IncidentRow) -> atlas_ipc::Incident {
+    atlas_ipc::Incident {
+        id: r.id,
+        kind: r.kind,
+        start_ms: r.start_ms,
+        end_ms: r.end_ms.unwrap_or(0),
+        severity: r.severity,
+        peak_value: r.peak_value,
+        summary: r.summary.clone(),
+    }
+}
+
+/// `incidents`: refresh detection over the window (idempotent) then list.
+fn cmd_incidents(db_path: PathBuf, minutes: u64, limit: u32) -> Result<()> {
+    let store = Store::open(&db_path)?;
+    let now = now_ms();
+    let from = now - (minutes as i64) * 60_000;
+    let mem_total = current_mem_total();
+    // Refresh: catch any incidents in this window not already persisted (e.g.
+    // data recorded before detection existed). Idempotent by (kind, start).
+    let found = detectors::run_detection_pass(&store, from, now, mem_total)?;
+    let (rows, truncated) = store.list_incidents(from, now, limit)?;
+    println!(
+        "Incidents over the last {minutes} min ({} shown{}, {} upserted this pass, source {})",
+        rows.len(),
+        if truncated { ", truncated" } else { "" },
+        found,
+        db_path.display()
+    );
+    if mem_total == 0 {
+        println!("(note: total memory unknown here — memory-pressure detection skipped)");
+    }
+    if rows.is_empty() {
+        println!("(no incidents — record under load, or widen --minutes)");
+        return Ok(());
+    }
+    println!(
+        "{:>5} {:<16} {:<9} {:<13} {:<13} {:>6}  SUMMARY",
+        "ID", "KIND", "SEVERITY", "START", "END", "PEAK%"
+    );
+    for r in &rows {
+        println!(
+            "{:>5} {:<16} {:<9} {:<13} {:<13} {:>6.0}  {}",
+            r.id,
+            incident_kind_label(r.kind),
+            severity_label(r.severity),
+            format_ts(r.start_ms),
+            r.end_ms.map(format_ts).unwrap_or_else(|| "ongoing".into()),
+            r.peak_value,
+            truncate(&r.summary, 60),
+        );
+    }
+    Ok(())
+}
+
+/// Resolves an incident id (or an ad-hoc `minutes` range) and diagnoses it,
+/// returning the proto incident + the diagnose reply.
+fn resolve_and_diagnose(
+    store: &Store,
+    incident: Option<i64>,
+    minutes: Option<u64>,
+    now: i64,
+    mem_total: u64,
+) -> Result<(atlas_ipc::Incident, atlas_ipc::DiagnoseReply)> {
+    match incident {
+        Some(id) => {
+            let row = store
+                .get_incident(id)?
+                .ok_or_else(|| anyhow::anyhow!("no incident #{id} (run `incidents` first)"))?;
+            let ctx = diagnostics::DiagnoseContext {
+                kind: row.kind,
+                start_ms: row.start_ms,
+                end_ms: row.end_ms.unwrap_or(0),
+                peak_value: row.peak_value,
+            };
+            let reply = diagnostics::diagnose(store, &ctx, now, mem_total)?;
+            Ok((incident_row_to_proto(&row), reply))
+        }
+        None => {
+            let mins = minutes.unwrap_or(10);
+            let from = now - (mins as i64) * 60_000;
+            let ctx = diagnostics::DiagnoseContext {
+                kind: 0, // inferred from the data
+                start_ms: from,
+                end_ms: 0,
+                peak_value: 0.0,
+            };
+            let reply = diagnostics::diagnose(store, &ctx, now, mem_total)?;
+            let inc = atlas_ipc::Incident {
+                id: 0,
+                kind: 0,
+                start_ms: from,
+                end_ms: 0,
+                severity: 0,
+                peak_value: 0.0,
+                summary: format!("Ad-hoc diagnosis of the last {mins} min"),
+            };
+            Ok((inc, reply))
+        }
+    }
+}
+
+/// `diagnose`: print the structured diagnosis (as a plain-text report).
+fn cmd_diagnose(db_path: PathBuf, incident: Option<i64>, minutes: Option<u64>) -> Result<()> {
+    let store = Store::open(&db_path)?;
+    let now = now_ms();
+    let mem_total = current_mem_total();
+    let (inc, reply) = resolve_and_diagnose(&store, incident, minutes, now, mem_total)?;
+    if !reply.available {
+        println!("Diagnosis unavailable: {}", reply.unavailable_reason);
+        return Ok(());
+    }
+    // No redaction for the local dev view.
+    let (content, _ct) = report::render_report(
+        &inc,
+        &reply,
+        atlas_ipc::ReportFormat::ReportText,
+        &atlas_ipc::RedactionOptions::default(),
+    );
+    print!("{content}");
+    Ok(())
+}
+
+/// Parses a report-format token.
+fn parse_report_format(token: &str) -> Result<atlas_ipc::ReportFormat> {
+    Ok(match token.to_ascii_lowercase().as_str() {
+        "text" | "txt" => atlas_ipc::ReportFormat::ReportText,
+        "json" => atlas_ipc::ReportFormat::ReportJson,
+        "csv" => atlas_ipc::ReportFormat::ReportCsv,
+        "html" => atlas_ipc::ReportFormat::ReportHtml,
+        other => anyhow::bail!("unknown format '{other}'. Use: text | json | csv | html"),
+    })
+}
+
+/// `report`: render a diagnosis report in the chosen format, with redaction.
+fn cmd_report(
+    db_path: PathBuf,
+    incident: Option<i64>,
+    minutes: Option<u64>,
+    format: &str,
+    out: Option<PathBuf>,
+    redaction: atlas_ipc::RedactionOptions,
+) -> Result<()> {
+    let fmt = parse_report_format(format)?;
+    let store = Store::open(&db_path)?;
+    let now = now_ms();
+    let mem_total = current_mem_total();
+    let (inc, reply) = resolve_and_diagnose(&store, incident, minutes, now, mem_total)?;
+    let (content, content_type) = report::render_report(&inc, &reply, fmt, &redaction);
+    match out {
+        Some(path) => {
+            std::fs::write(&path, content.as_bytes())?;
+            println!(
+                "Wrote {} report ({}) to {}",
+                format,
+                content_type,
+                path.display()
+            );
+        }
+        None => print!("{content}"),
+    }
+    Ok(())
+}
+
 fn gb(bytes: u64) -> f64 {
     bytes as f64 / (1u64 << 30) as f64
 }
@@ -2413,6 +2745,7 @@ mod tests {
         SysMetrics {
             cpu_permille: 100,
             mem_used: 1 << 30,
+            mem_total: 8 << 30,
             commit_used: 2 << 30,
             process_count: 200,
             thread_count: 2000,

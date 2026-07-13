@@ -28,16 +28,21 @@ use atlas_collectors::{
 use atlas_ipc::v0::atlas_query_server::AtlasQuery;
 use atlas_ipc::{
     Bookmark, CapabilitiesReply, CapabilitiesRequest, CapabilityKind, CreateBookmarkReply,
-    CreateBookmarkRequest, EventRow, ListBookmarksReply, ListBookmarksRequest, ListEventsReply,
-    ListEventsRequest, ListPrivacyEventsReply, ListPrivacyEventsRequest, ListPrivacyUsageReply,
-    ListPrivacyUsageRequest, ListServicesReply, ListServicesRequest, ListStartupReply,
-    ListStartupRequest, MetricKind, PrivacyEvent, PrivacyUsage, ProcessHit, ProcessRole,
-    ProcessRow, QueryRangeReply, QueryRangeRequest, RangeBucket, RingUpdate, RingWriter, RowInput,
-    SearchHit, SearchReply, SearchRequest, ServiceEntry, ServiceStartType, ServiceState,
-    SnapshotReply, SnapshotRequest, StartupEntry, StartupSource, SystemGauges, TimeRange,
-    CAP_FTS5_SEARCH, CAP_HISTORY_QUERIES, CAP_PRIVACY_EVENTS, CAP_PROCESS_SNAPSHOTS,
-    CAP_SAFE_ACTIONS, CAP_SERVICES_INVENTORY, CAP_STARTUP_INVENTORY, RING_ROWS,
+    CreateBookmarkRequest, DiagnoseReply, DiagnoseRequest, EventRow, GenerateReportReply,
+    GenerateReportRequest, Incident, ListBookmarksReply, ListBookmarksRequest, ListEventsReply,
+    ListEventsRequest, ListIncidentsReply, ListIncidentsRequest, ListPrivacyEventsReply,
+    ListPrivacyEventsRequest, ListPrivacyUsageReply, ListPrivacyUsageRequest, ListServicesReply,
+    ListServicesRequest, ListStartupReply, ListStartupRequest, MetricKind, PrivacyEvent,
+    PrivacyUsage, ProcessHit, ProcessRole, ProcessRow, QueryRangeReply, QueryRangeRequest,
+    RangeBucket, ReportFormat, RingUpdate, RingWriter, RowInput, SearchHit, SearchReply,
+    SearchRequest, ServiceEntry, ServiceStartType, ServiceState, SnapshotReply, SnapshotRequest,
+    StartupEntry, StartupSource, SystemGauges, TimeRange, CAP_DIAGNOSTICS, CAP_FTS5_SEARCH,
+    CAP_HISTORY_QUERIES, CAP_INCIDENT_DETECTION, CAP_PRIVACY_EVENTS, CAP_PROCESS_SNAPSHOTS,
+    CAP_REPORTS, CAP_SAFE_ACTIONS, CAP_SERVICES_INVENTORY, CAP_STARTUP_INVENTORY, RING_ROWS,
 };
+
+use crate::diagnostics::{self, DiagnoseContext};
+use crate::report;
 use atlas_store::Store;
 use atlas_tsdb::Metric;
 
@@ -308,6 +313,12 @@ impl AtlasQuery for QueryService {
         if self.has_fts5 {
             flags.push(CAP_FTS5_SEARCH.to_string());
         }
+        // M8: incidents are detected on the record/writer path and served from
+        // the store; diagnostics + reports are computed on demand from recorded
+        // data. All three are store-backed and always available here.
+        flags.push(CAP_INCIDENT_DETECTION.to_string());
+        flags.push(CAP_DIAGNOSTICS.to_string());
+        flags.push(CAP_REPORTS.to_string());
         // M7 inventories are live OS reads (startup/services) and store-backed
         // history (privacy). On Windows all three are always available here.
         #[cfg(windows)]
@@ -553,6 +564,168 @@ impl AtlasQuery for QueryService {
         let services = list_services_impl(&r.filter);
         Ok(Response::new(ListServicesReply { services }))
     }
+
+    async fn list_incidents(
+        &self,
+        req: Request<ListIncidentsRequest>,
+    ) -> Result<Response<ListIncidentsReply>, Status> {
+        // Pure read of the incidents the record/writer path detected. Detection
+        // itself runs where the samples are written, not on the query path.
+        let r = req.into_inner();
+        let (from_ms, to_ms) = range_bounds(&r.range);
+        let limit = if r.limit == 0 { 100 } else { r.limit };
+        let store = self.store.lock().map_err(|_| poisoned())?;
+        let (rows, truncated) = store
+            .list_incidents(from_ms, to_ms, limit)
+            .map_err(|e| Status::internal(format!("list_incidents: {e}")))?;
+        Ok(Response::new(ListIncidentsReply {
+            incidents: rows.iter().map(incident_row_to_proto).collect(),
+            truncated,
+        }))
+    }
+
+    async fn diagnose(
+        &self,
+        req: Request<DiagnoseRequest>,
+    ) -> Result<Response<DiagnoseReply>, Status> {
+        let r = req.into_inner();
+        let now = now_ms();
+        let mem_total = self.slot_mem_total();
+        let store = self.store.lock().map_err(|_| poisoned())?;
+        let reply = self
+            .diagnose_inner(&store, r.incident_id, &r.range, now, mem_total)
+            .map_err(|e| Status::internal(format!("diagnose: {e}")))?;
+        Ok(Response::new(reply))
+    }
+
+    async fn generate_report(
+        &self,
+        req: Request<GenerateReportRequest>,
+    ) -> Result<Response<GenerateReportReply>, Status> {
+        let r = req.into_inner();
+        let now = now_ms();
+        let mem_total = self.slot_mem_total();
+        let format = ReportFormat::try_from(r.format).unwrap_or(ReportFormat::ReportText);
+        let redaction = r.redaction.unwrap_or_default();
+        let store = self.store.lock().map_err(|_| poisoned())?;
+        let (incident, reply) = self
+            .resolve_and_diagnose(&store, r.incident_id, &r.range, now, mem_total)
+            .map_err(|e| Status::internal(format!("generate_report: {e}")))?;
+        let (content, content_type) = report::render_report(&incident, &reply, format, &redaction);
+        Ok(Response::new(GenerateReportReply {
+            content,
+            content_type,
+        }))
+    }
+}
+
+impl QueryService {
+    /// Total physical memory (bytes) from the latest published snapshot, for the
+    /// memory-pressure percent-of-total threshold. 0 until the first sample or if
+    /// gauges are absent (memory diagnosis then degrades to CPU only).
+    fn slot_mem_total(&self) -> u64 {
+        self.slot
+            .read()
+            .ok()
+            .and_then(|g| {
+                g.as_ref()
+                    .and_then(|r| r.system.as_ref().map(|s| s.mem_total))
+            })
+            .unwrap_or(0)
+    }
+
+    /// Resolves a `DiagnoseRequest`/`GenerateReportRequest` target — a detected
+    /// incident by id, or the ad-hoc range — into a `Diagnosis`.
+    fn diagnose_inner(
+        &self,
+        store: &Store,
+        incident_id: i64,
+        range: &Option<TimeRange>,
+        now: i64,
+        mem_total: u64,
+    ) -> anyhow::Result<DiagnoseReply> {
+        Ok(self
+            .resolve_and_diagnose(store, incident_id, range, now, mem_total)?
+            .1)
+    }
+
+    /// Shared resolution for diagnose + report: returns the proto incident (a
+    /// real row, or a synthetic ad-hoc incident) alongside its diagnosis.
+    fn resolve_and_diagnose(
+        &self,
+        store: &Store,
+        incident_id: i64,
+        range: &Option<TimeRange>,
+        now: i64,
+        mem_total: u64,
+    ) -> anyhow::Result<(Incident, DiagnoseReply)> {
+        if incident_id != 0 {
+            match store.get_incident(incident_id)? {
+                Some(row) => {
+                    let ctx = DiagnoseContext {
+                        kind: row.kind,
+                        start_ms: row.start_ms,
+                        end_ms: row.end_ms.unwrap_or(0),
+                        peak_value: row.peak_value,
+                    };
+                    let reply = diagnostics::diagnose(store, &ctx, now, mem_total)?;
+                    Ok((incident_row_to_proto(&row), reply))
+                }
+                None => {
+                    let reply = DiagnoseReply {
+                        available: false,
+                        unavailable_reason: format!("no incident #{incident_id}"),
+                        diagnosis: None,
+                    };
+                    Ok((Incident::default(), reply))
+                }
+            }
+        } else {
+            // Ad-hoc range: a missing range degenerates to the last 10 minutes.
+            let (from, to) = match range {
+                Some(tr) if tr.to_ms > tr.from_ms => (tr.from_ms, tr.to_ms),
+                _ => (now - 10 * 60_000, now),
+            };
+            let ctx = DiagnoseContext {
+                kind: 0,
+                start_ms: from,
+                end_ms: to,
+                peak_value: 0.0,
+            };
+            let reply = diagnostics::diagnose(store, &ctx, now, mem_total)?;
+            let inc = Incident {
+                id: 0,
+                kind: 0,
+                start_ms: from,
+                end_ms: to,
+                severity: 0,
+                peak_value: 0.0,
+                summary: "Ad-hoc range diagnosis".to_string(),
+            };
+            Ok((inc, reply))
+        }
+    }
+}
+
+/// Converts a store incident row to the proto `Incident` (0 end = ongoing).
+fn incident_row_to_proto(r: &atlas_store::IncidentRow) -> Incident {
+    Incident {
+        id: r.id,
+        kind: r.kind,
+        start_ms: r.start_ms,
+        end_ms: r.end_ms.unwrap_or(0),
+        severity: r.severity,
+        peak_value: r.peak_value,
+        summary: r.summary.clone(),
+    }
+}
+
+/// Wall-clock Unix-epoch milliseconds (for closing an open diagnosis window).
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 // ---------------------------------------------------------------------------
