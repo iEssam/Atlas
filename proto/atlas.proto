@@ -473,6 +473,168 @@ service AtlasQuery {
   rpc ListModules(ListModulesRequest) returns (ListModulesReply);
   rpc ListThreads(ListThreadsRequest) returns (ListThreadsReply);
   rpc FindResourceOwners(FindResourceOwnersRequest) returns (FindResourceOwnersReply);
+  rpc ListConnections(ListConnectionsRequest) returns (ListConnectionsReply);
+  rpc ListListeningPorts(ListListeningPortsRequest) returns (ListListeningPortsReply);
+  rpc ListScheduledTasks(ListScheduledTasksRequest) returns (ListScheduledTasksReply);
+  rpc ListBoots(ListBootsRequest) returns (ListBootsReply);
+  rpc GetBatteryStatus(GetBatteryStatusRequest) returns (GetBatteryStatusReply);
+  rpc GetThermal(GetThermalRequest) returns (GetThermalReply);
+}
+
+// ---------------------------------------------------------------------------
+// R2: monitors — network, scheduled tasks, boot analysis, battery, thermal.
+// All read-only. Hardware-dependent replies (battery, thermal) carry
+// available + unavailable_reason so absent sensors degrade honestly (§9.6.7).
+// ---------------------------------------------------------------------------
+
+enum L4Protocol {
+  L4_PROTOCOL_UNSPECIFIED = 0;
+  TCP = 1;
+  UDP = 2;
+}
+
+enum TcpState {
+  TCP_STATE_UNSPECIFIED = 0;
+  TCP_CLOSED = 1;
+  TCP_LISTEN = 2;
+  TCP_SYN_SENT = 3;
+  TCP_SYN_RCVD = 4;
+  TCP_ESTABLISHED = 5;
+  TCP_FIN_WAIT1 = 6;
+  TCP_FIN_WAIT2 = 7;
+  TCP_CLOSE_WAIT = 8;
+  TCP_CLOSING = 9;
+  TCP_LAST_ACK = 10;
+  TCP_TIME_WAIT = 11;
+  TCP_DELETE_TCB = 12;
+}
+
+message Connection {
+  uint32 pid = 1;
+  string image_name = 2;
+  L4Protocol protocol = 3;
+  string local_addr = 4;
+  uint32 local_port = 5;
+  string remote_addr = 6;
+  uint32 remote_port = 7;
+  // Resolved via the DNS cache where available; empty otherwise.
+  string remote_domain = 8;
+  // Only meaningful for TCP.
+  TcpState state = 9;
+  bool is_ipv6 = 10;
+}
+
+message ListConnectionsRequest {
+  bool include_listening = 1;
+}
+
+message ListConnectionsReply {
+  repeated Connection connections = 1;
+}
+
+message ListeningPort {
+  L4Protocol protocol = 1;
+  string bind_addr = 2;
+  uint32 port = 3;
+  uint32 pid = 4;
+  string image_name = 5;
+  bool is_ipv6 = 6;
+}
+
+message ListListeningPortsRequest {}
+
+message ListListeningPortsReply {
+  repeated ListeningPort ports = 1;
+}
+
+message ScheduledTask {
+  string name = 1;
+  // Full task path incl. folder, e.g. "\Microsoft\Windows\Foo".
+  string path = 2;
+  string folder = 3;
+  bool enabled = 4;
+  // Human-readable trigger summary.
+  string triggers = 5;
+  // Executable + arguments of the primary action.
+  string action = 6;
+  int64 last_run_ms = 7;
+  int64 next_run_ms = 8;
+  int32 last_result = 9;
+  string author = 10;
+  bool run_as_highest = 11;
+  bool runs_on_idle = 12;
+  bool wakes_to_run = 13;
+}
+
+message ListScheduledTasksRequest {
+  // Case-insensitive substring over name/path; empty = all.
+  string filter = 1;
+}
+
+message ListScheduledTasksReply {
+  repeated ScheduledTask tasks = 1;
+}
+
+message BootRecord {
+  // When the boot occurred.
+  int64 boot_ms = 1;
+  uint32 boot_duration_ms = 2;
+  uint32 main_path_ms = 3;
+  uint32 post_boot_ms = 4;
+  // Flagged slower than the rolling baseline.
+  bool degraded = 5;
+}
+
+message ListBootsRequest {
+  uint32 limit = 1;
+}
+
+message ListBootsReply {
+  bool available = 1;
+  // e.g. "diagnostics-performance log unavailable".
+  string unavailable_reason = 2;
+  repeated BootRecord boots = 3;
+}
+
+message BatteryStatus {
+  bool present = 1;
+  bool charging = 2;
+  bool on_ac = 3;
+  uint32 percent = 4;
+  // Charge/discharge rate in milliwatts; negative = discharging.
+  int32 rate_mw = 5;
+  uint64 remaining_mwh = 6;
+  uint64 full_charge_mwh = 7;
+  uint64 design_mwh = 8;
+  // full_charge / design, where derivable.
+  uint32 health_percent = 9;
+  uint32 cycle_count = 10;
+  int64 est_runtime_s = 11;
+}
+
+message GetBatteryStatusRequest {}
+
+message GetBatteryStatusReply {
+  bool available = 1;
+  // "no battery present" on desktops.
+  string unavailable_reason = 2;
+  BatteryStatus status = 3;
+}
+
+message ThermalSensor {
+  string name = 1;
+  double celsius = 2;
+  // Where the reading came from (ACPI thermal zone, OEM WMI, ...).
+  string source = 3;
+}
+
+message GetThermalRequest {}
+
+message GetThermalReply {
+  bool available = 1;
+  // "no thermal sensors exposed" — honest when hardware doesn't provide them.
+  string unavailable_reason = 2;
+  repeated ThermalSensor sensors = 3;
 }
 
 // ---------------------------------------------------------------------------
