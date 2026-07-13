@@ -8,6 +8,7 @@
 use tonic::{Request, Response, Status};
 
 use atlas_ipc::v0::atlas_query_server::{AtlasQuery, AtlasQueryServer};
+use atlas_ipc::v0::atlas_rules_server::{AtlasRules, AtlasRulesServer};
 use atlas_ipc::{
     CapabilitiesReply, CapabilitiesRequest, ProcessRow, SnapshotReply, SnapshotRequest,
     SystemGauges, CAP_PROCESS_SNAPSHOTS,
@@ -366,6 +367,184 @@ impl AtlasQuery for FakeQuery {
     }
 }
 
+/// Minimal fixed-response AtlasRules service so the transport test exercises the
+/// R2 rules-engine RPCs end-to-end (the real resolver/applier logic is
+/// unit-tested in atlas-service). Echoes enough to assert the wire shape.
+#[derive(Default)]
+struct FakeRules;
+
+fn fake_rule(id: i64, image: &str) -> atlas_ipc::Rule {
+    atlas_ipc::Rule {
+        id,
+        name: format!("throttle {image}"),
+        enabled: true,
+        match_image: image.to_string(),
+        trigger: atlas_ipc::RuleTrigger::WhileRunning as i32,
+        action: Some(atlas_ipc::RuleAction {
+            priority: atlas_ipc::PriorityClass::PriorityBelowNormal as i32,
+            affinity_mode: atlas_ipc::CoreAffinityMode::CoreAffinityUnspecified as i32,
+            affinity_mask: 0,
+            eco_qos: true,
+        }),
+        precedence: 10,
+        created_ms: 1_700_000_000_000,
+    }
+}
+
+#[tonic::async_trait]
+impl AtlasRules for FakeRules {
+    async fn list_rules(
+        &self,
+        _req: Request<atlas_ipc::ListRulesRequest>,
+    ) -> Result<Response<atlas_ipc::ListRulesReply>, Status> {
+        Ok(Response::new(atlas_ipc::ListRulesReply {
+            rules: vec![fake_rule(1, "chrome.exe")],
+        }))
+    }
+
+    async fn get_rule(
+        &self,
+        req: Request<atlas_ipc::GetRuleRequest>,
+    ) -> Result<Response<atlas_ipc::GetRuleReply>, Status> {
+        let id = req.into_inner().id;
+        Ok(Response::new(atlas_ipc::GetRuleReply {
+            found: id == 1,
+            rule: (id == 1).then(|| fake_rule(1, "chrome.exe")),
+        }))
+    }
+
+    async fn create_rule(
+        &self,
+        req: Request<atlas_ipc::CreateRuleRequest>,
+    ) -> Result<Response<atlas_ipc::CreateRuleReply>, Status> {
+        // Echo a fixed id regardless of the (id-ignored) input rule.
+        let _ = req.into_inner().rule;
+        Ok(Response::new(atlas_ipc::CreateRuleReply { id: 42 }))
+    }
+
+    async fn update_rule(
+        &self,
+        _req: Request<atlas_ipc::UpdateRuleRequest>,
+    ) -> Result<Response<atlas_ipc::UpdateRuleReply>, Status> {
+        Ok(Response::new(atlas_ipc::UpdateRuleReply {
+            ok: true,
+            message: String::new(),
+        }))
+    }
+
+    async fn delete_rule(
+        &self,
+        _req: Request<atlas_ipc::DeleteRuleRequest>,
+    ) -> Result<Response<atlas_ipc::DeleteRuleReply>, Status> {
+        Ok(Response::new(atlas_ipc::DeleteRuleReply { ok: true }))
+    }
+
+    async fn set_rule_enabled(
+        &self,
+        _req: Request<atlas_ipc::SetRuleEnabledRequest>,
+    ) -> Result<Response<atlas_ipc::SetRuleEnabledReply>, Status> {
+        Ok(Response::new(atlas_ipc::SetRuleEnabledReply { ok: true }))
+    }
+
+    async fn simulate_rule(
+        &self,
+        _req: Request<atlas_ipc::SimulateRuleRequest>,
+    ) -> Result<Response<atlas_ipc::SimulateRuleReply>, Status> {
+        Ok(Response::new(atlas_ipc::SimulateRuleReply {
+            targets: vec![
+                atlas_ipc::SimulatedTarget {
+                    pid: 1234,
+                    image_name: "chrome.exe".into(),
+                    current_priority: "Normal".into(),
+                    new_priority: "Below Normal".into(),
+                    current_affinity: "0xff".into(),
+                    new_affinity: "0xff".into(),
+                    eco_qos_change: true,
+                    blocked: false,
+                    blocked_reason: String::new(),
+                },
+                atlas_ipc::SimulatedTarget {
+                    pid: 700,
+                    image_name: "lsass.exe".into(),
+                    current_priority: String::new(),
+                    new_priority: String::new(),
+                    current_affinity: String::new(),
+                    new_affinity: String::new(),
+                    eco_qos_change: false,
+                    blocked: true,
+                    blocked_reason: "protected-critical".into(),
+                },
+            ],
+            conflicts: vec![
+                "priority conflicts with rule #2 (precedence 5) — this rule wins".into(),
+            ],
+        }))
+    }
+
+    async fn list_interventions(
+        &self,
+        _req: Request<atlas_ipc::ListInterventionsRequest>,
+    ) -> Result<Response<atlas_ipc::ListInterventionsReply>, Status> {
+        Ok(Response::new(atlas_ipc::ListInterventionsReply {
+            interventions: vec![atlas_ipc::Intervention {
+                rule_id: 1,
+                rule_name: "throttle chrome.exe".into(),
+                pid: 1234,
+                image_name: "chrome.exe".into(),
+                applied: "priority + EcoQoS".into(),
+                since_ms: 1_700_000_000_000,
+            }],
+        }))
+    }
+
+    async fn list_profiles(
+        &self,
+        _req: Request<atlas_ipc::ListProfilesRequest>,
+    ) -> Result<Response<atlas_ipc::ListProfilesReply>, Status> {
+        Ok(Response::new(atlas_ipc::ListProfilesReply {
+            profiles: vec![atlas_ipc::Profile {
+                id: 1,
+                name: "Gaming".into(),
+                rule_ids: vec![1],
+                power_mode: "HighPerformance".into(),
+                active: false,
+            }],
+        }))
+    }
+
+    async fn create_profile(
+        &self,
+        _req: Request<atlas_ipc::CreateProfileRequest>,
+    ) -> Result<Response<atlas_ipc::CreateProfileReply>, Status> {
+        Ok(Response::new(atlas_ipc::CreateProfileReply { id: 7 }))
+    }
+
+    async fn update_profile(
+        &self,
+        _req: Request<atlas_ipc::UpdateProfileRequest>,
+    ) -> Result<Response<atlas_ipc::UpdateProfileReply>, Status> {
+        Ok(Response::new(atlas_ipc::UpdateProfileReply { ok: true }))
+    }
+
+    async fn delete_profile(
+        &self,
+        _req: Request<atlas_ipc::DeleteProfileRequest>,
+    ) -> Result<Response<atlas_ipc::DeleteProfileReply>, Status> {
+        Ok(Response::new(atlas_ipc::DeleteProfileReply { ok: true }))
+    }
+
+    async fn set_profile_active(
+        &self,
+        req: Request<atlas_ipc::SetProfileActiveRequest>,
+    ) -> Result<Response<atlas_ipc::SetProfileActiveReply>, Status> {
+        let active = req.into_inner().active;
+        Ok(Response::new(atlas_ipc::SetProfileActiveReply {
+            ok: true,
+            message: format!("profile active={active}"),
+        }))
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn capabilities_and_snapshot_round_trip() {
     // Unique pipe per test run so parallel/repeat runs never collide.
@@ -373,7 +552,9 @@ async fn capabilities_and_snapshot_round_trip() {
     let name = atlas_ipc::pipe_name(&who);
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-    let router = tonic::transport::Server::builder().add_service(AtlasQueryServer::new(FakeQuery));
+    let router = tonic::transport::Server::builder()
+        .add_service(AtlasQueryServer::new(FakeQuery))
+        .add_service(AtlasRulesServer::new(FakeRules));
     let server_name = name.clone();
     let server = tokio::spawn(async move {
         atlas_ipc::serve(&server_name, router, async {
@@ -524,6 +705,73 @@ async fn capabilities_and_snapshot_round_trip() {
     assert_eq!(owners.owners.len(), 1);
     assert_eq!(owners.owners[0].pid, 4321);
     assert!(!owners.owners[0].is_service);
+
+    // R2: the AtlasRules service round-trips on the same pipe. CreateRule echoes
+    // an id; ListRules returns the rule with its flattened action.
+    let mut rules = atlas_ipc::AtlasRulesClient::new(
+        atlas_ipc::connect(&name)
+            .await
+            .expect("rules client connects"),
+    );
+    let created = rules
+        .create_rule(atlas_ipc::CreateRuleRequest {
+            rule: Some(fake_rule(0, "chrome.exe")),
+        })
+        .await
+        .expect("CreateRule")
+        .into_inner();
+    assert_eq!(created.id, 42);
+
+    let listed = rules
+        .list_rules(atlas_ipc::ListRulesRequest {})
+        .await
+        .expect("ListRules")
+        .into_inner();
+    assert_eq!(listed.rules.len(), 1);
+    let action = listed.rules[0].action.as_ref().expect("action present");
+    assert_eq!(
+        action.priority,
+        atlas_ipc::PriorityClass::PriorityBelowNormal as i32
+    );
+    assert!(action.eco_qos);
+
+    // SimulateRule returns a normal target and a blocked (protected) target,
+    // plus a conflict note — applying nothing.
+    let sim = rules
+        .simulate_rule(atlas_ipc::SimulateRuleRequest {
+            rule: Some(fake_rule(0, "chrome.exe")),
+        })
+        .await
+        .expect("SimulateRule")
+        .into_inner();
+    assert_eq!(sim.targets.len(), 2);
+    assert!(sim.targets.iter().any(|t| !t.blocked && t.eco_qos_change));
+    assert!(sim
+        .targets
+        .iter()
+        .any(|t| t.blocked && t.image_name == "lsass.exe"));
+    assert_eq!(sim.conflicts.len(), 1);
+
+    // ListInterventions surfaces the live ledger entry.
+    let interventions = rules
+        .list_interventions(atlas_ipc::ListInterventionsRequest {})
+        .await
+        .expect("ListInterventions")
+        .into_inner();
+    assert_eq!(interventions.interventions.len(), 1);
+    assert_eq!(interventions.interventions[0].pid, 1234);
+
+    // Profiles round-trip: SetProfileActive echoes the toggle.
+    let activated = rules
+        .set_profile_active(atlas_ipc::SetProfileActiveRequest {
+            id: 1,
+            active: true,
+        })
+        .await
+        .expect("SetProfileActive")
+        .into_inner();
+    assert!(activated.ok);
+    assert!(activated.message.contains("active=true"));
 
     // Shut the server down cleanly.
     let _ = shutdown_tx.send(());

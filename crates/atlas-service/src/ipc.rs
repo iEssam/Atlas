@@ -41,13 +41,14 @@ use atlas_ipc::{
     SearchReply, SearchRequest, ServiceEntry, ServiceStartType, ServiceState, SnapshotReply,
     SnapshotRequest, StartupEntry, StartupSource, SystemGauges, ThreadRow, TimeRange,
     CAP_DIAGNOSTICS, CAP_FTS5_SEARCH, CAP_HISTORY_QUERIES, CAP_INCIDENT_DETECTION,
-    CAP_PRIVACY_EVENTS, CAP_PROCESS_INSPECTOR, CAP_PROCESS_SNAPSHOTS, CAP_REPORTS,
-    CAP_RESOURCE_OWNERSHIP, CAP_SAFE_ACTIONS, CAP_SERVICES_INVENTORY, CAP_STARTUP_INVENTORY,
-    RING_ROWS,
+    CAP_PRIVACY_EVENTS, CAP_PROCESS_INSPECTOR, CAP_PROCESS_SNAPSHOTS, CAP_PROFILES, CAP_REPORTS,
+    CAP_RESOURCE_OWNERSHIP, CAP_RULES_ENGINE, CAP_SAFE_ACTIONS, CAP_SERVICES_INVENTORY,
+    CAP_STARTUP_INVENTORY, RING_ROWS,
 };
 
 use crate::diagnostics::{self, DiagnoseContext};
 use crate::report;
+use crate::rules::RulesEngine;
 use atlas_store::Store;
 use atlas_tsdb::Metric;
 
@@ -164,6 +165,12 @@ pub struct QueryService {
     stop: Arc<AtomicBool>,
     store: SharedStore,
     has_fts5: bool,
+    /// The R2 rules engine: shared with the sampler thread (the applier runs on
+    /// each tick) and with the AtlasRules service (interventions + simulation).
+    engine: Arc<RulesEngine>,
+    /// The sampler thread handle, so a clean shutdown can join it and guarantee
+    /// the rules engine's restore-all has finished before the process exits.
+    sampler: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
 impl QueryService {
@@ -171,6 +178,12 @@ impl QueryService {
     /// connection/audit log).
     pub fn store(&self) -> SharedStore {
         self.store.clone()
+    }
+
+    /// The shared rules engine (so the AtlasRules service reads the same live
+    /// intervention ledger the sampler-thread applier writes).
+    pub fn rules_engine(&self) -> Arc<RulesEngine> {
+        self.engine.clone()
     }
 
     /// Spawns the sampler thread and returns the service handle. The thread
@@ -191,6 +204,9 @@ impl QueryService {
         let store = Store::open(&db_path)?;
         let has_fts5 = store.has_fts5();
         let store: SharedStore = Arc::new(Mutex::new(store));
+        // The rules engine shares the store (rule reads + audit); it detects CPU
+        // topology once here and owns the reversal ledger.
+        let engine = Arc::new(RulesEngine::new(store.clone()));
         let slot: Slot = Arc::new(RwLock::new(None));
         let (tx, _rx) = tokio::sync::broadcast::channel(8);
         let stop = Arc::new(AtomicBool::new(false));
@@ -212,9 +228,12 @@ impl QueryService {
         let thread_slot = slot.clone();
         let thread_tx = tx.clone();
         let thread_stop = stop.clone();
-        std::thread::Builder::new()
+        let thread_engine = engine.clone();
+        let sampler = std::thread::Builder::new()
             .name("atlas-ipc-sampler".into())
-            .spawn(move || sampler_loop(thread_slot, thread_tx, thread_stop, ring))?;
+            .spawn(move || {
+                sampler_loop(thread_slot, thread_tx, thread_stop, ring, thread_engine)
+            })?;
 
         Ok(Self {
             slot,
@@ -222,12 +241,26 @@ impl QueryService {
             stop,
             store,
             has_fts5,
+            engine,
+            sampler: Mutex::new(Some(sampler)),
         })
     }
 
     /// Signals the sampler thread to stop.
     pub fn shutdown(&self) {
         self.stop.store(true, Ordering::SeqCst);
+    }
+
+    /// Joins the sampler thread, blocking until it has exited — which is *after*
+    /// the rules engine's `restore_all` runs (reversibility on shutdown). Call
+    /// after [`QueryService::shutdown`]. Idempotent: a second call is a no-op.
+    pub fn join_sampler(&self) {
+        let handle = self.sampler.lock().ok().and_then(|mut g| g.take());
+        if let Some(h) = handle {
+            if h.join().is_err() {
+                tracing::warn!("ipc sampler thread panicked during shutdown");
+            }
+        }
     }
 }
 
@@ -238,6 +271,7 @@ fn sampler_loop(
     tx: tokio::sync::broadcast::Sender<SnapshotReply>,
     stop: Arc<AtomicBool>,
     ring: Option<RingWriter>,
+    engine: Arc<RulesEngine>,
 ) {
     let mut sampler = match Sampler::new() {
         Ok(s) => s,
@@ -250,6 +284,12 @@ fn sampler_loop(
         std::thread::sleep(Duration::from_secs(1));
         match sampler.sample() {
             Ok(set) => {
+                // R2 rules engine: apply/undo policy deltas against the live
+                // process set before we hand it on. The applier owns the reversal
+                // ledger; it never blocks the publish path meaningfully (same-user
+                // handle ops on a handful of matched processes).
+                engine.apply_tick(&set);
+
                 let reply = to_reply(&set);
                 // Publish the top-N rows into the live ring (already CPU-sorted
                 // by `to_reply`). Best-effort; the ring only carries RING_ROWS.
@@ -265,6 +305,9 @@ fn sampler_loop(
             Err(e) => tracing::warn!("sample failed: {e}"),
         }
     }
+    // Reversibility (PRD §3.3): on shutdown the same thread that applied
+    // interventions restores every original, so nothing is left modified.
+    engine.restore_all();
     tracing::debug!("ipc sampler thread stopped");
 }
 
@@ -335,6 +378,10 @@ impl AtlasQuery for QueryService {
             // live OS reads (no store), always available on Windows here.
             flags.push(CAP_PROCESS_INSPECTOR.to_string());
             flags.push(CAP_RESOURCE_OWNERSHIP.to_string());
+            // R2: the performance rules engine + profiles (AtlasRules). Store-
+            // backed persistence + audit; the applier runs on the sampler thread.
+            flags.push(CAP_RULES_ENGINE.to_string());
+            flags.push(CAP_PROFILES.to_string());
         }
         Ok(Response::new(CapabilitiesReply {
             service_version: env!("CARGO_PKG_VERSION").to_string(),

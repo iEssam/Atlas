@@ -185,9 +185,17 @@ fn image_family(name: &str) -> String {
 }
 
 /// Whether `image_name` (any form) is on the protected-critical list.
-fn is_critical_image(image_name: &str) -> bool {
+pub(crate) fn is_critical_image(image_name: &str) -> bool {
     let fam = image_family(image_name);
     CRITICAL_IMAGES.contains(&fam.as_str())
+}
+
+/// Whether a process is off-limits to *any* mutation (the broker's action verbs
+/// or the rules engine): on the protected-critical list, a low kernel pid
+/// (≤ 4), or a session-0 (service / system) process. Reused by the rules engine
+/// so both surfaces share one exclusion policy (docs/phases.md R2 safety).
+pub(crate) fn is_protected_process(image_name: &str, pid: u32, session_id: u32) -> bool {
+    is_critical_image(image_name) || pid <= 4 || session_id == 0
 }
 
 /// Human-readable action name for the audit log and messages.

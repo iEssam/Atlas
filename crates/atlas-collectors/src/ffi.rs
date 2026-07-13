@@ -1021,3 +1021,186 @@ pub struct RM_PROCESS_INFO {
     pub TSSessionId: DWORD,
     pub bRestartable: BOOL,
 }
+
+// ---------------------------------------------------------------------------
+// R2 rules-engine action FFI (docs/phases.md Phase 2, PRD §9.7, tech-stack
+// §4.3). The reversible action set the rules engine applies to matching
+// processes: priority class, processor affinity / P-E-core steering (CPU sets),
+// and EcoQoS (ProcessPowerThrottling). Plus the trigger inputs: AC/DC power
+// (GetSystemPowerStatus) and the foreground window pid (GetForegroundWindow +
+// GetWindowThreadProcessId, the latter already declared above). Hand-written in
+// the collector style — stable-ABI Win32 calls, no `windows-sys` dependency.
+//
+// Every apply is a same-user, unprivileged user-mode call; a cross-user or
+// protected target simply fails `OpenProcess` and the caller degrades + skips
+// (never crashes, never escalates). No REALTIME priority is exposed.
+// ---------------------------------------------------------------------------
+
+/// `OpenProcess` rights for the rules-engine action set. Reads (GetPriorityClass
+/// / GetProcessAffinityMask / GetProcessInformation / GetProcessDefaultCpuSets)
+/// need query rights; writes need set rights. CPU-set assignment additionally
+/// needs `PROCESS_SET_LIMITED_INFORMATION`.
+pub const PROCESS_SET_INFORMATION: DWORD = 0x0200;
+pub const PROCESS_SET_LIMITED_INFORMATION: DWORD = 0x2000;
+
+/// `SetPriorityClass` / `GetPriorityClass` process-priority-class values. No
+/// `REALTIME_PRIORITY_CLASS` — deliberately unsupported (unsafe, PRD §9.7).
+pub const IDLE_PRIORITY_CLASS: DWORD = 0x0000_0040;
+pub const BELOW_NORMAL_PRIORITY_CLASS: DWORD = 0x0000_4000;
+pub const NORMAL_PRIORITY_CLASS: DWORD = 0x0000_0020;
+pub const ABOVE_NORMAL_PRIORITY_CLASS: DWORD = 0x0000_8000;
+pub const HIGH_PRIORITY_CLASS: DWORD = 0x0000_0080;
+pub const REALTIME_PRIORITY_CLASS: DWORD = 0x0000_0100;
+
+/// `SetProcessInformation` / `GetProcessInformation` class `ProcessPowerThrottling`.
+pub const PROCESS_INFORMATION_CLASS_POWER_THROTTLING: u32 = 4;
+/// `PROCESS_POWER_THROTTLING_STATE.Version`.
+pub const PROCESS_POWER_THROTTLING_CURRENT_VERSION: u32 = 1;
+/// `PROCESS_POWER_THROTTLING_STATE` execution-speed control bit (EcoQoS).
+pub const PROCESS_POWER_THROTTLING_EXECUTION_SPEED: u32 = 0x1;
+
+/// `GetSystemPowerStatus.ACLineStatus` values: 0 = on battery (DC), 1 = plugged
+/// in (AC), 255 = unknown.
+pub const AC_LINE_STATUS_OFFLINE: u8 = 0;
+pub const AC_LINE_STATUS_ONLINE: u8 = 1;
+pub const AC_LINE_STATUS_UNKNOWN: u8 = 255;
+
+/// `SYSTEM_POWER_STATUS` — AC/DC power state for the ON_AC_POWER/ON_DC_POWER
+/// rule triggers. Only `ACLineStatus` is consumed; the rest fixes the layout.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct SYSTEM_POWER_STATUS {
+    pub ACLineStatus: u8,
+    pub BatteryFlag: u8,
+    pub BatteryLifePercent: u8,
+    pub SystemStatusFlag: u8,
+    pub BatteryLifeTime: u32,
+    pub BatteryFullLifeTime: u32,
+}
+
+/// `PROCESS_POWER_THROTTLING_STATE` — the EcoQoS request/response. Enabling
+/// EcoQoS sets both masks to `EXECUTION_SPEED`; disabling throttling sets
+/// `ControlMask = EXECUTION_SPEED, StateMask = 0`; both zero returns the process
+/// to system-managed (the default).
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct PROCESS_POWER_THROTTLING_STATE {
+    pub Version: u32,
+    pub ControlMask: u32,
+    pub StateMask: u32,
+}
+
+#[link(name = "kernel32")]
+extern "system" {
+    /// Sets the priority class of `hProcess` (needs PROCESS_SET_INFORMATION).
+    pub fn SetPriorityClass(hProcess: HANDLE, dwPriorityClass: DWORD) -> BOOL;
+
+    /// Reads the priority class of `hProcess` (needs query rights). 0 on failure.
+    pub fn GetPriorityClass(hProcess: HANDLE) -> DWORD;
+
+    /// Sets the processor affinity mask of `hProcess` (needs SET_INFORMATION).
+    pub fn SetProcessAffinityMask(hProcess: HANDLE, dwProcessAffinityMask: usize) -> BOOL;
+
+    /// Reads the process + system affinity masks of `hProcess` (query rights).
+    pub fn GetProcessAffinityMask(
+        hProcess: HANDLE,
+        lpProcessAffinityMask: *mut usize,
+        lpSystemAffinityMask: *mut usize,
+    ) -> BOOL;
+
+    /// Sets a process information class (here `ProcessPowerThrottling` for
+    /// EcoQoS). Needs PROCESS_SET_INFORMATION.
+    pub fn SetProcessInformation(
+        hProcess: HANDLE,
+        ProcessInformationClass: u32,
+        ProcessInformation: PVOID,
+        ProcessInformationSize: DWORD,
+    ) -> BOOL;
+
+    /// Reads a process information class (here `ProcessPowerThrottling`, to
+    /// capture the original EcoQoS state for reversal). Needs query rights.
+    pub fn GetProcessInformation(
+        hProcess: HANDLE,
+        ProcessInformationClass: u32,
+        ProcessInformation: PVOID,
+        ProcessInformationSize: DWORD,
+    ) -> BOOL;
+
+    /// Sets `hProcess`'s default CPU sets (P/E-core steering). NULL/0 clears the
+    /// assignment. Needs PROCESS_SET_LIMITED_INFORMATION.
+    pub fn SetProcessDefaultCpuSets(
+        Process: HANDLE,
+        CpuSetIds: *const u32,
+        CpuSetIdCount: u32,
+    ) -> BOOL;
+
+    /// Reads `hProcess`'s default CPU set assignment (to capture the original for
+    /// reversal). `RequiredIdCount` receives the count; 0 = none assigned.
+    pub fn GetProcessDefaultCpuSets(
+        Process: HANDLE,
+        CpuSetIds: *mut u32,
+        CpuSetIdCount: u32,
+        RequiredIdCount: *mut u32,
+    ) -> BOOL;
+
+    /// Enumerates the system's CPU sets (for P vs E core detection via each
+    /// set's `EfficiencyClass`). Two-call size pattern via `ReturnedLength`.
+    /// `Process` NULL = system-wide; `Flags` reserved 0.
+    pub fn GetSystemCpuSetInformation(
+        Information: *mut u8,
+        BufferLength: u32,
+        ReturnedLength: *mut u32,
+        Process: HANDLE,
+        Flags: u32,
+    ) -> BOOL;
+
+    /// AC/DC + battery power state (ON_AC_POWER / ON_DC_POWER triggers).
+    pub fn GetSystemPowerStatus(lpSystemPowerStatus: *mut SYSTEM_POWER_STATUS) -> BOOL;
+
+    /// Loads a DLL by name (used to resolve the lightly-documented
+    /// `PowerSetActiveOverlayScheme` at runtime; it is not in the import lib).
+    pub fn LoadLibraryW(lpLibFileName: *const u16) -> HMODULE;
+
+    /// Resolves an exported symbol address in a loaded module (ANSI name).
+    pub fn GetProcAddress(hModule: HMODULE, lpProcName: *const u8) -> *mut c_void;
+
+    /// Releases a module handle from `LoadLibraryW`.
+    pub fn FreeLibrary(hLibModule: HMODULE) -> BOOL;
+}
+
+#[link(name = "user32")]
+extern "system" {
+    /// Handle of the current foreground window (ON_FULLSCREEN trigger). NULL when
+    /// no window has focus; the owning pid comes from `GetWindowThreadProcessId`.
+    pub fn GetForegroundWindow() -> HWND;
+}
+
+/// The `PowerSetActiveOverlayScheme(*const GUID) -> DWORD` signature, resolved
+/// dynamically from `powrprof.dll` (the export is not in the SDK import library).
+/// Sets the active power *overlay* scheme (the "power mode" slider: Better
+/// Battery / Balanced / Best Performance). Feature-flagged: an unresolved export
+/// degrades to a no-op (PRD §9.7.4).
+pub type PowerSetActiveOverlaySchemeFn = unsafe extern "system" fn(*const GUID) -> DWORD;
+
+/// Power-overlay GUIDs (the "power mode" slider). The all-zero GUID selects the
+/// recommended/Balanced overlay.
+pub const OVERLAY_BALANCED: GUID = GUID {
+    Data1: 0,
+    Data2: 0,
+    Data3: 0,
+    Data4: [0; 8],
+};
+/// "Better Battery" (power-saver) overlay.
+pub const OVERLAY_POWER_SAVER: GUID = GUID {
+    Data1: 0x961c_c777,
+    Data2: 0x2547,
+    Data3: 0x4f9d,
+    Data4: [0x81, 0x74, 0x7d, 0x86, 0x18, 0x1b, 0x8a, 0x7a],
+};
+/// "Best Performance" overlay.
+pub const OVERLAY_HIGH_PERFORMANCE: GUID = GUID {
+    Data1: 0xded5_74b5,
+    Data2: 0x45a0,
+    Data3: 0x4f42,
+    Data4: [0x87, 0x37, 0x46, 0x34, 0x5c, 0x09, 0xc2, 0x38],
+};

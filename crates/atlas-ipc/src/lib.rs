@@ -38,6 +38,8 @@ pub use v0::atlas_control_client::AtlasControlClient;
 pub use v0::atlas_control_server::{AtlasControl, AtlasControlServer};
 pub use v0::atlas_query_client::AtlasQueryClient;
 pub use v0::atlas_query_server::{AtlasQuery, AtlasQueryServer};
+pub use v0::atlas_rules_client::AtlasRulesClient;
+pub use v0::atlas_rules_server::{AtlasRules, AtlasRulesServer};
 pub use v0::{
     ActionRisk, Bookmark, CapabilitiesReply, CapabilitiesRequest, CapabilityKind, Confidence,
     ContributingFactor, CreateBookmarkReply, CreateBookmarkRequest, DiagnoseReply, DiagnoseRequest,
@@ -54,6 +56,16 @@ pub use v0::{
     RangeBucket, RedactionOptions, ReportFormat, ResourceOwner, SearchHit, SearchReply,
     SearchRequest, ServiceEntry, ServiceStartType, ServiceState, Severity, SnapshotReply,
     SnapshotRequest, StartupEntry, StartupSource, SystemGauges, ThreadRow, TimeRange,
+};
+// R2 rules engine + profiles (AtlasRules service, PRD §9.7).
+pub use v0::{
+    CoreAffinityMode, CreateProfileReply, CreateProfileRequest, CreateRuleReply, CreateRuleRequest,
+    DeleteProfileReply, DeleteProfileRequest, DeleteRuleReply, DeleteRuleRequest, GetRuleReply,
+    GetRuleRequest, Intervention, ListInterventionsReply, ListInterventionsRequest,
+    ListProfilesReply, ListProfilesRequest, ListRulesReply, ListRulesRequest, PriorityClass,
+    Profile, Rule, RuleAction, RuleTrigger, SetProfileActiveReply, SetProfileActiveRequest,
+    SetRuleEnabledReply, SetRuleEnabledRequest, SimulateRuleReply, SimulateRuleRequest,
+    SimulatedTarget, UpdateProfileReply, UpdateProfileRequest, UpdateRuleReply, UpdateRuleRequest,
 };
 
 /// Capability flag advertised by [`v0::CapabilitiesReply`] when the service can
@@ -109,3 +121,13 @@ pub const CAP_PROCESS_INSPECTOR: &str = "process_inspector";
 /// R2: the service answers resource-ownership ("what is using this file")
 /// queries via the Restart Manager (`FindResourceOwners`, PRD §9.5).
 pub const CAP_RESOURCE_OWNERSHIP: &str = "resource_ownership";
+
+/// R2: the service runs the performance rules engine (AtlasRules) — persistent,
+/// reversible, audited priority/affinity/EcoQoS policies over matching
+/// processes, with a pure resolver + dry-run simulation (PRD §9.7). Present only
+/// when the store is available (rule persistence + audit trail).
+pub const CAP_RULES_ENGINE: &str = "rules_engine";
+
+/// R2: the service supports rule profiles — named, activatable bundles of rules
+/// plus a power mode (`SetProfileActive`, PRD §9.7.4).
+pub const CAP_PROFILES: &str = "profiles";
