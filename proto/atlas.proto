@@ -479,6 +479,77 @@ service AtlasQuery {
   rpc ListBoots(ListBootsRequest) returns (ListBootsReply);
   rpc GetBatteryStatus(GetBatteryStatusRequest) returns (GetBatteryStatusReply);
   rpc GetThermal(GetThermalRequest) returns (GetThermalReply);
+  rpc ListPrivacyAlertRules(ListPrivacyAlertRulesRequest) returns (ListPrivacyAlertRulesReply);
+  rpc CreatePrivacyAlertRule(CreatePrivacyAlertRuleRequest) returns (CreatePrivacyAlertRuleReply);
+  rpc UpdatePrivacyAlertRule(UpdatePrivacyAlertRuleRequest) returns (UpdatePrivacyAlertRuleReply);
+  rpc DeletePrivacyAlertRule(DeletePrivacyAlertRuleRequest) returns (DeletePrivacyAlertRuleReply);
+  rpc ListFiredAlerts(ListFiredAlertsRequest) returns (ListFiredAlertsReply);
+}
+
+// ---------------------------------------------------------------------------
+// R2: advanced privacy alerts (PRD §9.10.3). Alert rules over camera/mic/
+// location usage; the service's ConsentStore change-watcher evaluates them and
+// records fired alerts. Never implies malicious behavior — factual only.
+// ---------------------------------------------------------------------------
+
+enum PrivacyAlertCondition {
+  PRIVACY_ALERT_CONDITION_UNSPECIFIED = 0;
+  // Any use of the capability.
+  ALERT_ANY_USE = 1;
+  // Background (non-foreground) use.
+  ALERT_BACKGROUND_USE = 2;
+  // Use while the session is locked.
+  ALERT_WHILE_LOCKED = 3;
+  // Use by an app that is unknown / unsigned.
+  ALERT_UNKNOWN_APP = 4;
+  // Active longer than threshold_seconds.
+  ALERT_LONGER_THAN = 5;
+}
+
+message PrivacyAlertRule {
+  int64 id = 1;
+  string name = 2;
+  bool enabled = 3;
+  // Capability to watch; UNSPECIFIED = all (camera + microphone + location).
+  CapabilityKind capability = 4;
+  PrivacyAlertCondition condition = 5;
+  // Threshold for ALERT_LONGER_THAN.
+  uint32 threshold_seconds = 6;
+  int64 created_ms = 7;
+}
+
+message FiredAlert {
+  int64 id = 1;
+  int64 rule_id = 2;
+  string rule_name = 3;
+  int64 ts_ms = 4;
+  CapabilityKind capability = 5;
+  string app_id = 6;
+  string display_name = 7;
+  // Factual detail ("background use while locked"); never accusatory.
+  string detail = 8;
+}
+
+message ListPrivacyAlertRulesRequest {}
+message ListPrivacyAlertRulesReply { repeated PrivacyAlertRule rules = 1; }
+
+message CreatePrivacyAlertRuleRequest { PrivacyAlertRule rule = 1; } // id ignored
+message CreatePrivacyAlertRuleReply { int64 id = 1; }
+
+message UpdatePrivacyAlertRuleRequest { PrivacyAlertRule rule = 1; }
+message UpdatePrivacyAlertRuleReply { bool ok = 1; }
+
+message DeletePrivacyAlertRuleRequest { int64 id = 1; }
+message DeletePrivacyAlertRuleReply { bool ok = 1; }
+
+message ListFiredAlertsRequest {
+  TimeRange range = 1;
+  uint32 limit = 2;
+}
+
+message ListFiredAlertsReply {
+  repeated FiredAlert alerts = 1;
+  bool truncated = 2;
 }
 
 // ---------------------------------------------------------------------------
