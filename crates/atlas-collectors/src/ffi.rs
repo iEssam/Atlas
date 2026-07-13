@@ -1159,10 +1159,9 @@ extern "system" {
 
     /// Loads a DLL by name (used to resolve the lightly-documented
     /// `PowerSetActiveOverlayScheme` at runtime; it is not in the import lib).
+    /// `GetProcAddress` for symbol resolution is declared once above (shared
+    /// with the Wintrust dynamic-link helpers).
     pub fn LoadLibraryW(lpLibFileName: *const u16) -> HMODULE;
-
-    /// Resolves an exported symbol address in a loaded module (ANSI name).
-    pub fn GetProcAddress(hModule: HMODULE, lpProcName: *const u8) -> *mut c_void;
 
     /// Releases a module handle from `LoadLibraryW`.
     pub fn FreeLibrary(hLibModule: HMODULE) -> BOOL;
