@@ -1,0 +1,81 @@
+name: Perf Gate
+
+# M9 performance gate (tech-stack.md §10, PRD §12). Kept SEPARATE from ci.yml so
+# the fast fmt/clippy/test loop is never blocked on a 30 s+ measurement run.
+#
+# HOSTED vs SELF-HOSTED runners:
+#   GitHub-hosted Windows runners are shared, oversubscribed VMs — their idle-CPU
+#   reading is noisy and not representative of a real machine, so the idle-CPU
+#   budget (< 0.2%) is enforced only as a WARNING here. The authoritative CPU
+#   gate belongs on a self-hosted BARE-METAL runner (tech-stack §10 calls for a
+#   "self-hosted bare-metal runner"); wire one up and flip `cpu` to a hard failure
+#   there. The working-set (RSS) and leak-slope gates are stable enough to enforce
+#   hard on hosted runners and are treated as build-failing below.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  perf:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Kill stray atlas-service
+        shell: pwsh
+        run: Get-Process atlas-service -ErrorAction SilentlyContinue | Stop-Process -Force
+
+      - name: Build release
+        run: cargo build --release -p atlas-service
+
+      - name: Overhead gate (working-set hard; CPU advisory)
+        shell: pwsh
+        env:
+          RUST_LOG: error
+        run: |
+          $exe = "target/release/atlas-service.exe"
+          # Capture stdout; the JSON is a single line starting with '{'. Any stray
+          # log lines are filtered out so parsing is robust.
+          $out = & $exe overhead --json --duration 30
+          $line = $out | Where-Object { $_ -match '^\s*\{' } | Select-Object -Last 1
+          if (-not $line) {
+            Write-Error "overhead --json produced no JSON line. Raw output:`n$out"
+            exit 1
+          }
+          Write-Host "overhead: $line"
+          $o = $line | ConvertFrom-Json
+
+          $ws = [double]$o.own_working_set_mb
+          $wsBudget = [double]$o.budgets.working_set_mb
+          Write-Host ("working set: {0:N1} MB (budget < {1} MB, pass={2})" -f $ws, $wsBudget, $o.pass.working_set)
+
+          # Hard gate: fail if the reported pass flag is false OR RSS >= 100 MB.
+          if ((-not $o.pass.working_set) -or ($ws -ge 100.0)) {
+            Write-Error ("WORKING-SET BUDGET EXCEEDED: {0:N1} MB >= {1} MB" -f $ws, $wsBudget)
+            exit 1
+          }
+
+          # Advisory: idle CPU is noisy on shared hosted runners — warn only.
+          $cpu = [double]$o.own_cpu_avg_pct
+          $cpuBudget = [double]$o.budgets.cpu_avg_pct
+          if (-not $o.pass.cpu) {
+            Write-Host ("::warning::idle CPU {0:N3}% over budget {1}% (advisory on hosted runners; enforce on self-hosted bare-metal)" -f $cpu, $cpuBudget)
+          } else {
+            Write-Host ("idle CPU: {0:N3}% (budget < {1}%)" -f $cpu, $cpuBudget)
+          }
+
+      - name: Soak gate (leak slope + handle growth)
+        shell: pwsh
+        env:
+          RUST_LOG: error
+        run: |
+          $exe = "target/release/atlas-service.exe"
+          # `soak` exits non-zero on a FAIL verdict, which fails this step.
+          & $exe soak --minutes 3
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "soak verdict FAILED (leak slope or handle growth over threshold)"
+            exit 1
+          }
