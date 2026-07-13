@@ -468,6 +468,147 @@ service AtlasQuery {
   rpc ListIncidents(ListIncidentsRequest) returns (ListIncidentsReply);
   rpc Diagnose(DiagnoseRequest) returns (DiagnoseReply);
   rpc GenerateReport(GenerateReportRequest) returns (GenerateReportReply);
+  rpc GetProcessDetail(ProcessDetailRequest) returns (ProcessDetailReply);
+  rpc ListHandles(ListHandlesRequest) returns (ListHandlesReply);
+  rpc ListModules(ListModulesRequest) returns (ListModulesReply);
+  rpc ListThreads(ListThreadsRequest) returns (ListThreadsReply);
+  rpc FindResourceOwners(FindResourceOwnersRequest) returns (FindResourceOwnersReply);
+}
+
+// ---------------------------------------------------------------------------
+// R2: deep process inspector + resource ownership (PRD §9.4, §9.5).
+// All on-demand (unary), read-only. Cross-user handle/module inspection may be
+// limited without elevation — replies carry explicit coverage flags rather
+// than silently returning less (PRD §9.6.7 honesty principle).
+// ---------------------------------------------------------------------------
+
+message ProcessDetailRequest {
+  uint32 pid = 1;
+  // Identity guard against PID reuse; 0 = best-effort by pid.
+  int64 create_time_100ns = 2;
+}
+
+message ProcessDetail {
+  uint32 pid = 1;
+  uint32 parent_pid = 2;
+  int64 create_time_100ns = 3;
+  string image_name = 4;
+  string image_path = 5;
+  string command_line = 6;
+  string working_directory = 7;
+  string user_sid = 8;
+  string user_name = 9;
+  uint32 session_id = 10;
+  // "System" / "High" / "Medium" / "Low" / "AppContainer" / "" if unknown.
+  string integrity_level = 11;
+  bool elevated = 12;
+  // "x64" / "x86" / "Arm64" / "".
+  string architecture = 13;
+  // "Signed (Microsoft)" / "Signed" / "Unsigned" / "Unknown".
+  string signature_status = 14;
+  string publisher = 15;
+  string file_version = 16;
+  string product_name = 17;
+  uint32 thread_count = 18;
+  uint32 handle_count = 19;
+  int64 start_time_ms = 20;
+  // MSIX/AppX package identity; empty for desktop apps.
+  string package_identity = 21;
+  // True when some fields were unavailable (e.g. cross-user without elevation).
+  bool limited = 22;
+}
+
+message ProcessDetailReply {
+  bool available = 1;
+  // "process exited" / "access denied (elevation may help)".
+  string unavailable_reason = 2;
+  ProcessDetail detail = 3;
+}
+
+message ListHandlesRequest {
+  uint32 pid = 1;
+  // e.g. "File", "Key", "Event"; empty = all types.
+  string type_filter = 2;
+  uint32 limit = 3;
+}
+
+message HandleRow {
+  uint64 handle = 1;
+  string type = 2;
+  // Resolved object name; empty when unresolved/unavailable.
+  string name = 3;
+  uint32 granted_access = 4;
+}
+
+message ListHandlesReply {
+  repeated HandleRow handles = 1;
+  bool truncated = 2;
+  // Name resolution was restricted (needs elevation / handle not duplicable).
+  bool names_limited = 3;
+}
+
+message ListModulesRequest {
+  uint32 pid = 1;
+}
+
+message ModuleRow {
+  string name = 1;
+  string path = 2;
+  uint64 base_address = 3;
+  uint64 size = 4;
+  string version = 5;
+  string publisher = 6;
+  bool signed = 7;
+}
+
+message ListModulesReply {
+  bool available = 1;
+  // "access denied (elevation may help)" for cross-user processes.
+  string unavailable_reason = 2;
+  repeated ModuleRow modules = 3;
+}
+
+message ListThreadsRequest {
+  uint32 pid = 1;
+}
+
+message ThreadRow {
+  uint32 tid = 1;
+  uint64 start_address = 2;
+  // "Running" / "Waiting" / "Ready" / "Terminated" / ...
+  string state = 3;
+  string wait_reason = 4;
+  int32 priority = 5;
+  // Recent CPU share if computable, else 0.
+  uint32 cpu_permille = 6;
+  int64 user_time_100ns = 7;
+  int64 kernel_time_100ns = 8;
+  uint32 context_switches = 9;
+}
+
+message ListThreadsReply {
+  repeated ThreadRow threads = 1;
+}
+
+// PRD §9.5 — "find what is using this file". Restart Manager first; the request
+// is a path this milestone (ports/registry/modules can extend it later).
+message FindResourceOwnersRequest {
+  string path = 1;
+}
+
+message ResourceOwner {
+  uint32 pid = 1;
+  string image_name = 2;
+  string image_path = 3;
+  // Restart Manager friendly description / app type.
+  string description = 4;
+  bool is_service = 5;
+}
+
+message FindResourceOwnersReply {
+  bool available = 1;
+  string unavailable_reason = 2;
+  repeated ResourceOwner owners = 3;
 }
 
 // ---------------------------------------------------------------------------

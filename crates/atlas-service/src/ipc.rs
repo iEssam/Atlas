@@ -28,17 +28,22 @@ use atlas_collectors::{
 use atlas_ipc::v0::atlas_query_server::AtlasQuery;
 use atlas_ipc::{
     Bookmark, CapabilitiesReply, CapabilitiesRequest, CapabilityKind, CreateBookmarkReply,
-    CreateBookmarkRequest, DiagnoseReply, DiagnoseRequest, EventRow, GenerateReportReply,
-    GenerateReportRequest, Incident, ListBookmarksReply, ListBookmarksRequest, ListEventsReply,
-    ListEventsRequest, ListIncidentsReply, ListIncidentsRequest, ListPrivacyEventsReply,
-    ListPrivacyEventsRequest, ListPrivacyUsageReply, ListPrivacyUsageRequest, ListServicesReply,
-    ListServicesRequest, ListStartupReply, ListStartupRequest, MetricKind, PrivacyEvent,
-    PrivacyUsage, ProcessHit, ProcessRole, ProcessRow, QueryRangeReply, QueryRangeRequest,
-    RangeBucket, ReportFormat, RingUpdate, RingWriter, RowInput, SearchHit, SearchReply,
-    SearchRequest, ServiceEntry, ServiceStartType, ServiceState, SnapshotReply, SnapshotRequest,
-    StartupEntry, StartupSource, SystemGauges, TimeRange, CAP_DIAGNOSTICS, CAP_FTS5_SEARCH,
-    CAP_HISTORY_QUERIES, CAP_INCIDENT_DETECTION, CAP_PRIVACY_EVENTS, CAP_PROCESS_SNAPSHOTS,
-    CAP_REPORTS, CAP_SAFE_ACTIONS, CAP_SERVICES_INVENTORY, CAP_STARTUP_INVENTORY, RING_ROWS,
+    CreateBookmarkRequest, DiagnoseReply, DiagnoseRequest, EventRow, FindResourceOwnersReply,
+    FindResourceOwnersRequest, GenerateReportReply, GenerateReportRequest, HandleRow, Incident,
+    ListBookmarksReply, ListBookmarksRequest, ListEventsReply, ListEventsRequest, ListHandlesReply,
+    ListHandlesRequest, ListIncidentsReply, ListIncidentsRequest, ListModulesReply,
+    ListModulesRequest, ListPrivacyEventsReply, ListPrivacyEventsRequest, ListPrivacyUsageReply,
+    ListPrivacyUsageRequest, ListServicesReply, ListServicesRequest, ListStartupReply,
+    ListStartupRequest, ListThreadsReply, ListThreadsRequest, MetricKind, ModuleRow, PrivacyEvent,
+    PrivacyUsage, ProcessDetail as ProtoProcessDetail, ProcessDetailReply, ProcessDetailRequest,
+    ProcessHit, ProcessRole, ProcessRow, QueryRangeReply, QueryRangeRequest, RangeBucket,
+    ReportFormat, ResourceOwner as ProtoResourceOwner, RingUpdate, RingWriter, RowInput, SearchHit,
+    SearchReply, SearchRequest, ServiceEntry, ServiceStartType, ServiceState, SnapshotReply,
+    SnapshotRequest, StartupEntry, StartupSource, SystemGauges, ThreadRow, TimeRange,
+    CAP_DIAGNOSTICS, CAP_FTS5_SEARCH, CAP_HISTORY_QUERIES, CAP_INCIDENT_DETECTION,
+    CAP_PRIVACY_EVENTS, CAP_PROCESS_INSPECTOR, CAP_PROCESS_SNAPSHOTS, CAP_REPORTS,
+    CAP_RESOURCE_OWNERSHIP, CAP_SAFE_ACTIONS, CAP_SERVICES_INVENTORY, CAP_STARTUP_INVENTORY,
+    RING_ROWS,
 };
 
 use crate::diagnostics::{self, DiagnoseContext};
@@ -326,6 +331,10 @@ impl AtlasQuery for QueryService {
             flags.push(CAP_PRIVACY_EVENTS.to_string());
             flags.push(CAP_STARTUP_INVENTORY.to_string());
             flags.push(CAP_SERVICES_INVENTORY.to_string());
+            // R2: the on-demand deep inspector + resource-ownership search are
+            // live OS reads (no store), always available on Windows here.
+            flags.push(CAP_PROCESS_INSPECTOR.to_string());
+            flags.push(CAP_RESOURCE_OWNERSHIP.to_string());
         }
         Ok(Response::new(CapabilitiesReply {
             service_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -616,6 +625,165 @@ impl AtlasQuery for QueryService {
             content,
             content_type,
         }))
+    }
+
+    // -----------------------------------------------------------------------
+    // R2: deep process inspector + resource ownership (PRD §9.4/§9.5). All
+    // unary, on-demand, read-only live OS reads. The collectors block (snapshot
+    // syscalls, WinVerifyTrust disk hashing, the handle-name worker threads), so
+    // each runs on a blocking thread to keep the async runtime responsive.
+    // Coverage flags (limited / names_limited / available) pass straight through.
+    // -----------------------------------------------------------------------
+
+    async fn get_process_detail(
+        &self,
+        req: Request<ProcessDetailRequest>,
+    ) -> Result<Response<ProcessDetailReply>, Status> {
+        let r = req.into_inner();
+        let res = tokio::task::spawn_blocking(move || {
+            atlas_collectors::process_detail(r.pid, r.create_time_100ns)
+        })
+        .await
+        .map_err(|e| Status::internal(format!("process_detail task: {e}")))?;
+        Ok(Response::new(ProcessDetailReply {
+            available: res.available,
+            unavailable_reason: res.unavailable_reason,
+            detail: res.detail.map(process_detail_to_proto),
+        }))
+    }
+
+    async fn list_handles(
+        &self,
+        req: Request<ListHandlesRequest>,
+    ) -> Result<Response<ListHandlesReply>, Status> {
+        let r = req.into_inner();
+        let res = tokio::task::spawn_blocking(move || {
+            atlas_collectors::list_handles(r.pid, &r.type_filter, r.limit)
+        })
+        .await
+        .map_err(|e| Status::internal(format!("list_handles task: {e}")))?;
+        Ok(Response::new(ListHandlesReply {
+            handles: res
+                .handles
+                .into_iter()
+                .map(|h| HandleRow {
+                    handle: h.handle,
+                    r#type: h.type_name,
+                    name: h.name,
+                    granted_access: h.granted_access,
+                })
+                .collect(),
+            truncated: res.truncated,
+            names_limited: res.names_limited,
+        }))
+    }
+
+    async fn list_modules(
+        &self,
+        req: Request<ListModulesRequest>,
+    ) -> Result<Response<ListModulesReply>, Status> {
+        let r = req.into_inner();
+        let res = tokio::task::spawn_blocking(move || atlas_collectors::list_modules(r.pid))
+            .await
+            .map_err(|e| Status::internal(format!("list_modules task: {e}")))?;
+        Ok(Response::new(ListModulesReply {
+            available: res.available,
+            unavailable_reason: res.unavailable_reason,
+            modules: res
+                .modules
+                .into_iter()
+                .map(|m| ModuleRow {
+                    name: m.name,
+                    path: m.path,
+                    base_address: m.base_address,
+                    size: m.size,
+                    version: m.version,
+                    publisher: m.publisher,
+                    signed: m.signed,
+                })
+                .collect(),
+        }))
+    }
+
+    async fn list_threads(
+        &self,
+        req: Request<ListThreadsRequest>,
+    ) -> Result<Response<ListThreadsReply>, Status> {
+        let r = req.into_inner();
+        let threads = tokio::task::spawn_blocking(move || atlas_collectors::list_threads(r.pid))
+            .await
+            .map_err(|e| Status::internal(format!("list_threads task: {e}")))?;
+        Ok(Response::new(ListThreadsReply {
+            threads: threads
+                .into_iter()
+                .map(|t| ThreadRow {
+                    tid: t.tid,
+                    start_address: t.start_address,
+                    state: t.state,
+                    wait_reason: t.wait_reason,
+                    priority: t.priority,
+                    cpu_permille: t.cpu_permille,
+                    user_time_100ns: t.user_time_100ns,
+                    kernel_time_100ns: t.kernel_time_100ns,
+                    context_switches: t.context_switches,
+                })
+                .collect(),
+        }))
+    }
+
+    async fn find_resource_owners(
+        &self,
+        req: Request<FindResourceOwnersRequest>,
+    ) -> Result<Response<FindResourceOwnersReply>, Status> {
+        let r = req.into_inner();
+        let res =
+            tokio::task::spawn_blocking(move || atlas_collectors::find_resource_owners(&r.path))
+                .await
+                .map_err(|e| Status::internal(format!("find_resource_owners task: {e}")))?;
+        Ok(Response::new(FindResourceOwnersReply {
+            available: res.available,
+            unavailable_reason: res.unavailable_reason,
+            owners: res
+                .owners
+                .into_iter()
+                .map(|o| ProtoResourceOwner {
+                    pid: o.pid,
+                    image_name: o.image_name,
+                    image_path: o.image_path,
+                    description: o.description,
+                    is_service: o.is_service,
+                })
+                .collect(),
+        }))
+    }
+}
+
+/// Maps a collector [`atlas_collectors::ProcessDetail`] to the proto message
+/// (field-for-field; the coverage `limited` flag rides along).
+fn process_detail_to_proto(d: atlas_collectors::ProcessDetail) -> ProtoProcessDetail {
+    ProtoProcessDetail {
+        pid: d.pid,
+        parent_pid: d.parent_pid,
+        create_time_100ns: d.create_time_100ns,
+        image_name: d.image_name,
+        image_path: d.image_path,
+        command_line: d.command_line,
+        working_directory: d.working_directory,
+        user_sid: d.user_sid,
+        user_name: d.user_name,
+        session_id: d.session_id,
+        integrity_level: d.integrity_level,
+        elevated: d.elevated,
+        architecture: d.architecture,
+        signature_status: d.signature_status,
+        publisher: d.publisher,
+        file_version: d.file_version,
+        product_name: d.product_name,
+        thread_count: d.thread_count,
+        handle_count: d.handle_count,
+        start_time_ms: d.start_time_ms,
+        package_identity: d.package_identity,
+        limited: d.limited,
     }
 }
 

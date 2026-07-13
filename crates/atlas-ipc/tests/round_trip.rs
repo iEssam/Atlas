@@ -251,6 +251,119 @@ impl AtlasQuery for FakeQuery {
             },
         }))
     }
+
+    // R2 inspector/resource-ownership: fixed responses so the transport test
+    // exercises the five new RPCs end-to-end (the real inspection logic is
+    // unit-tested in atlas-collectors against live processes).
+    async fn get_process_detail(
+        &self,
+        req: Request<atlas_ipc::ProcessDetailRequest>,
+    ) -> Result<Response<atlas_ipc::ProcessDetailReply>, Status> {
+        let pid = req.into_inner().pid;
+        Ok(Response::new(atlas_ipc::ProcessDetailReply {
+            available: true,
+            unavailable_reason: String::new(),
+            detail: Some(atlas_ipc::ProcessDetail {
+                pid,
+                parent_pid: 4,
+                create_time_100ns: 132_000_000_000_000_000,
+                image_name: "proc0.exe".into(),
+                image_path: "C:\\proc0.exe".into(),
+                command_line: "proc0.exe --run".into(),
+                working_directory: "C:\\".into(),
+                user_sid: "S-1-5-21-1".into(),
+                user_name: "HOST\\user".into(),
+                session_id: 1,
+                integrity_level: "Medium".into(),
+                elevated: false,
+                architecture: "x64".into(),
+                signature_status: "Signed (Microsoft)".into(),
+                publisher: "Microsoft Corporation".into(),
+                file_version: "10.0.1.1".into(),
+                product_name: "Windows".into(),
+                thread_count: 7,
+                handle_count: 42,
+                start_time_ms: 1_700_000_000_000,
+                package_identity: String::new(),
+                limited: false,
+            }),
+        }))
+    }
+
+    async fn list_handles(
+        &self,
+        req: Request<atlas_ipc::ListHandlesRequest>,
+    ) -> Result<Response<atlas_ipc::ListHandlesReply>, Status> {
+        let _ = req.into_inner();
+        Ok(Response::new(atlas_ipc::ListHandlesReply {
+            handles: vec![atlas_ipc::HandleRow {
+                handle: 0x1a4,
+                r#type: "File".into(),
+                name: "\\Device\\HarddiskVolume3\\Windows".into(),
+                granted_access: 0x0012_0089,
+            }],
+            truncated: false,
+            names_limited: false,
+        }))
+    }
+
+    async fn list_modules(
+        &self,
+        req: Request<atlas_ipc::ListModulesRequest>,
+    ) -> Result<Response<atlas_ipc::ListModulesReply>, Status> {
+        let _ = req.into_inner();
+        Ok(Response::new(atlas_ipc::ListModulesReply {
+            available: true,
+            unavailable_reason: String::new(),
+            modules: vec![atlas_ipc::ModuleRow {
+                name: "ntdll.dll".into(),
+                path: "C:\\Windows\\System32\\ntdll.dll".into(),
+                base_address: 0x7fff_0000_0000,
+                size: 0x20_0000,
+                version: "10.0.22621.1".into(),
+                publisher: "Microsoft Corporation".into(),
+                signed: true,
+            }],
+        }))
+    }
+
+    async fn list_threads(
+        &self,
+        req: Request<atlas_ipc::ListThreadsRequest>,
+    ) -> Result<Response<atlas_ipc::ListThreadsReply>, Status> {
+        let _ = req.into_inner();
+        Ok(Response::new(atlas_ipc::ListThreadsReply {
+            threads: vec![atlas_ipc::ThreadRow {
+                tid: 1000,
+                start_address: 0x7fff_1234_5678,
+                state: "Waiting".into(),
+                wait_reason: "UserRequest".into(),
+                priority: 8,
+                cpu_permille: 0,
+                user_time_100ns: 10_000,
+                kernel_time_100ns: 20_000,
+                context_switches: 55,
+            }],
+        }))
+    }
+
+    async fn find_resource_owners(
+        &self,
+        req: Request<atlas_ipc::FindResourceOwnersRequest>,
+    ) -> Result<Response<atlas_ipc::FindResourceOwnersReply>, Status> {
+        let _ = req.into_inner();
+        Ok(Response::new(atlas_ipc::FindResourceOwnersReply {
+            available: true,
+            unavailable_reason: String::new(),
+            owners: vec![atlas_ipc::ResourceOwner {
+                pid: 4321,
+                image_name: "notepad.exe".into(),
+                image_path: "C:\\Windows\\System32\\notepad.exe".into(),
+                description: "Notepad".into(),
+                is_service: false,
+            }],
+        }))
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -350,6 +463,67 @@ async fn capabilities_and_snapshot_round_trip() {
         .into_inner();
     assert_eq!(report.content_type, "text/html");
     assert!(!report.content.is_empty());
+
+    // R2: GetProcessDetail round-trips the identity + coverage flag.
+    let detail = client
+        .get_process_detail(atlas_ipc::ProcessDetailRequest {
+            pid: 1234,
+            create_time_100ns: 0,
+        })
+        .await
+        .expect("GetProcessDetail")
+        .into_inner();
+    assert!(detail.available);
+    let d = detail.detail.expect("detail present");
+    assert_eq!(d.pid, 1234);
+    assert_eq!(d.architecture, "x64");
+    assert!(!d.limited);
+
+    // R2: ListHandles carries the coverage flags.
+    let handles = client
+        .list_handles(atlas_ipc::ListHandlesRequest {
+            pid: 1234,
+            type_filter: String::new(),
+            limit: 0,
+        })
+        .await
+        .expect("ListHandles")
+        .into_inner();
+    assert_eq!(handles.handles.len(), 1);
+    assert_eq!(handles.handles[0].r#type, "File");
+    assert!(!handles.names_limited);
+
+    // R2: ListModules reports availability + a signed module.
+    let modules = client
+        .list_modules(atlas_ipc::ListModulesRequest { pid: 1234 })
+        .await
+        .expect("ListModules")
+        .into_inner();
+    assert!(modules.available);
+    assert_eq!(modules.modules.len(), 1);
+    assert!(modules.modules[0].signed);
+
+    // R2: ListThreads round-trips a thread row.
+    let threads = client
+        .list_threads(atlas_ipc::ListThreadsRequest { pid: 1234 })
+        .await
+        .expect("ListThreads")
+        .into_inner();
+    assert_eq!(threads.threads.len(), 1);
+    assert_eq!(threads.threads[0].state, "Waiting");
+
+    // R2: FindResourceOwners names the owning process.
+    let owners = client
+        .find_resource_owners(atlas_ipc::FindResourceOwnersRequest {
+            path: "C:\\some\\file.txt".into(),
+        })
+        .await
+        .expect("FindResourceOwners")
+        .into_inner();
+    assert!(owners.available);
+    assert_eq!(owners.owners.len(), 1);
+    assert_eq!(owners.owners[0].pid, 4321);
+    assert!(!owners.owners[0].is_service);
 
     // Shut the server down cleanly.
     let _ = shutdown_tx.send(());
