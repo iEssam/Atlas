@@ -16,6 +16,7 @@ string? who = null;
 uint topN = 15;
 bool watch = false;
 bool probeR2 = false;
+bool probeRules = false;
 uint probePid = 0;
 
 for (int i = 0; i < args.Length; i++)
@@ -40,6 +41,11 @@ for (int i = 0; i < args.Length; i++)
         case "--probe-r2":
             probeR2 = true;
             break;
+        // R2 rules-engine live check: exercise the AtlasRules RPCs and report how
+        // each degrades (Supported vs Unsupported→"server too old").
+        case "--probe-rules":
+            probeRules = true;
+            break;
         case "--pid" when i + 1 < args.Length:
             if (!uint.TryParse(args[++i], out probePid))
             {
@@ -50,7 +56,8 @@ for (int i = 0; i < args.Length; i++)
         case "-h":
         case "--help":
             Console.WriteLine(
-                "usage: atlas-devcli [--pipe <who>] [--top <n>] [--watch] [--probe-r2 [--pid <pid>]]");
+                "usage: atlas-devcli [--pipe <who>] [--top <n>] [--watch] "
+                + "[--probe-r2 [--pid <pid>]] [--probe-rules]");
             return 0;
         default:
             Console.Error.WriteLine($"unknown argument: {args[i]}");
@@ -61,6 +68,11 @@ for (int i = 0; i < args.Length; i++)
 if (probeR2)
 {
     return await ProbeR2Async(who, probePid);
+}
+
+if (probeRules)
+{
+    return await ProbeRulesAsync(who);
 }
 
 var pipePath = AtlasPipe.FullPath(who ?? AtlasPipe.DefaultWho());
@@ -174,4 +186,82 @@ static async Task<int> ProbeR2Async(string? who, uint pid)
         Console.Error.WriteLine($"error: {ex.Message}");
         return 1;
     }
+}
+
+// Exercises the AtlasRules RPCs (rules CRUD + enable + simulate + interventions,
+// and profiles CRUD + activate) and prints, for each, whether the server
+// supported it or degraded to Unsupported. This is the console equivalent of
+// navigating the UI's Rules / Profiles pages: against a server too old to serve
+// AtlasRules (a NEW service that lands after this UI), every call should come
+// back Unsupported (not throw), which is exactly what drives the pages'
+// graceful "unavailable — server too old" states. Read-only calls are exercised
+// first; the mutating probes only fire if the read side is already Supported, so
+// this never writes rules into an older-but-partially-serving service.
+static async Task<int> ProbeRulesAsync(string? who)
+{
+    try
+    {
+        using var atlas = AtlasChannel.Connect(who);
+        Console.WriteLine("Probing AtlasRules RPCs ...");
+        Console.WriteLine();
+
+        var list = await atlas.ListRulesAsync();
+        Console.WriteLine(list.Supported
+            ? $"ListRules          : Supported ({list.Value.Rules.Count} rules)"
+            : $"ListRules          : Unsupported — {list.UnsupportedReason}");
+
+        var interventions = await atlas.ListInterventionsAsync();
+        Console.WriteLine(interventions.Supported
+            ? $"ListInterventions  : Supported ({interventions.Value.Interventions.Count} active)"
+            : $"ListInterventions  : Unsupported — {interventions.UnsupportedReason}");
+
+        // SimulateRule is a pure dry-run — safe to probe with a throwaway rule.
+        var probeRule = new Atlas.V0.Rule
+        {
+            Name = "devcli probe",
+            MatchImage = "explorer.exe",
+            Trigger = Atlas.V0.RuleTrigger.WhileRunning,
+            Action = new Atlas.V0.RuleAction
+            {
+                Priority = Atlas.V0.PriorityClass.PriorityBelowNormal,
+                AffinityMode = Atlas.V0.CoreAffinityMode.PreferECores,
+                EcoQos = true,
+            },
+        };
+        var sim = await atlas.SimulateRuleAsync(probeRule);
+        Console.WriteLine(sim.Supported
+            ? $"SimulateRule       : Supported ({sim.Value.Targets.Count} targets, "
+              + $"{sim.Value.Conflicts.Count} conflicts) — {RulesFormatter.SimulationSummary(sim.Value.Targets.Count, CountBlocked(sim.Value))}"
+            : $"SimulateRule       : Unsupported — {sim.UnsupportedReason}");
+
+        var profiles = await atlas.ListProfilesAsync();
+        Console.WriteLine(profiles.Supported
+            ? $"ListProfiles       : Supported ({profiles.Value.Profiles.Count} profiles)"
+            : $"ListProfiles       : Unsupported — {profiles.UnsupportedReason}");
+
+        Console.WriteLine();
+        Console.WriteLine(list.Supported
+            ? "AtlasRules is served — the Rules/Profiles pages will show live data."
+            : "AtlasRules is not served — the Rules/Profiles pages will show their calm "
+              + "\"unavailable — server too old\" states, and the app stays fully usable.");
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"error: {ex.Message}");
+        return 1;
+    }
+}
+
+static int CountBlocked(Atlas.V0.SimulateRuleReply reply)
+{
+    int blocked = 0;
+    foreach (var t in reply.Targets)
+    {
+        if (t.Blocked)
+        {
+            blocked++;
+        }
+    }
+    return blocked;
 }

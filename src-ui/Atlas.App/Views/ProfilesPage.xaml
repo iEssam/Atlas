@@ -1,0 +1,145 @@
+<Page
+    x:Class="Atlas.App.Views.ProfilesPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vm="using:Atlas.App.ViewModels"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <Grid Padding="24" RowSpacing="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Title + New -->
+        <Grid Grid.Row="0">
+            <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                <TextBlock Text="Profiles" Style="{StaticResource TitleTextBlockStyle}" />
+                <TextBlock VerticalAlignment="Bottom"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                           Text="Activatable bundles of rules" />
+                <Border x:Name="DemoBadge" Visibility="Collapsed"
+                        VerticalAlignment="Center"
+                        Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
+                        CornerRadius="4" Padding="8,2">
+                    <TextBlock Text="Demo data" Style="{StaticResource CaptionTextBlockStyle}" />
+                </Border>
+            </StackPanel>
+            <Button x:Name="NewProfileButton"
+                    HorizontalAlignment="Right"
+                    AutomationProperties.Name="New profile"
+                    Style="{StaticResource AccentButtonStyle}"
+                    Click="NewProfile_Click">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <FontIcon Glyph="&#xE710;" FontSize="14" />
+                    <TextBlock Text="New profile" />
+                </StackPanel>
+            </Button>
+        </Grid>
+
+        <!-- Status -->
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="12">
+            <ProgressRing IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}" Width="16" Height="16" />
+            <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Text="{x:Bind ViewModel.StatusText, Mode=OneWay}" />
+        </StackPanel>
+
+        <!-- Profiles / states -->
+        <Grid Grid.Row="2">
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
+                        Visibility="{x:Bind ViewModel.IsUnavailable, Mode=OneWay}">
+                <FontIcon Glyph="&#xE7BA;" FontSize="28"
+                          Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                          HorizontalAlignment="Center" />
+                <TextBlock Text="Profiles unavailable"
+                           Style="{StaticResource SubtitleTextBlockStyle}"
+                           HorizontalAlignment="Center" />
+                <TextBlock Text="The connected service is too old to manage profiles. Update the Atlas service to use them."
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                           TextWrapping="Wrap" MaxWidth="420"
+                           HorizontalTextAlignment="Center" />
+            </StackPanel>
+
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
+                        Visibility="{x:Bind ViewModel.IsEmpty, Mode=OneWay}">
+                <FontIcon Glyph="&#xE748;" FontSize="28"
+                          Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                          HorizontalAlignment="Center" />
+                <TextBlock Text="No profiles yet"
+                           Style="{StaticResource SubtitleTextBlockStyle}"
+                           HorizontalAlignment="Center" />
+                <TextBlock Text="Bundle a set of rules into a profile — like “Gaming” or “Battery saver” — and switch them all on with one toggle."
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                           TextWrapping="Wrap" MaxWidth="420"
+                           HorizontalTextAlignment="Center" />
+            </StackPanel>
+
+            <ScrollViewer VerticalScrollBarVisibility="Auto"
+                          Visibility="{x:Bind ViewModel.IsUnavailable, Mode=OneWay, Converter={StaticResource InverseBoolToVisibility}}">
+                <ItemsControl ItemsSource="{x:Bind ViewModel.Profiles, Mode=OneWay}"
+                              AutomationProperties.Name="Profiles list">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:ProfileRowViewModel">
+                            <Border Margin="0,0,0,10"
+                                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                    BorderThickness="1" CornerRadius="8" Padding="16,12">
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <StackPanel Grid.Column="0" Spacing="4">
+                                        <StackPanel Orientation="Horizontal" Spacing="10">
+                                            <TextBlock Text="{x:Bind Name}"
+                                                       Style="{StaticResource BodyStrongTextBlockStyle}"
+                                                       VerticalAlignment="Center" />
+                                            <Border Background="{ThemeResource SystemFillColorSuccessBackgroundBrush}"
+                                                    CornerRadius="4" Padding="8,1"
+                                                    VerticalAlignment="Center"
+                                                    Visibility="{x:Bind Active, Mode=OneWay}">
+                                                <TextBlock Text="Active"
+                                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                                           Foreground="{ThemeResource SystemFillColorSuccessBrush}" />
+                                            </Border>
+                                        </StackPanel>
+                                        <TextBlock Text="{x:Bind PowerModeLabel}"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        <TextBlock Text="{x:Bind MemberSummary}"
+                                                   TextWrapping="Wrap" />
+                                    </StackPanel>
+
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4"
+                                                VerticalAlignment="Top">
+                                        <ToggleSwitch VerticalAlignment="Center"
+                                                      MinWidth="0"
+                                                      AutomationProperties.Name="Activate profile"
+                                                      IsOn="{x:Bind Active, Mode=OneWay}"
+                                                      OnContent="" OffContent=""
+                                                      Toggled="ActiveToggle_Toggled" />
+                                        <Button AutomationProperties.Name="Edit profile"
+                                                ToolTipService.ToolTip="Edit"
+                                                Background="Transparent" BorderThickness="0"
+                                                Click="EditProfile_Click">
+                                            <FontIcon Glyph="&#xE70F;" FontSize="15" />
+                                        </Button>
+                                        <Button AutomationProperties.Name="Delete profile"
+                                                ToolTipService.ToolTip="Delete"
+                                                Background="Transparent" BorderThickness="0"
+                                                Click="DeleteProfile_Click">
+                                            <FontIcon Glyph="&#xE74D;" FontSize="15" />
+                                        </Button>
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </Grid>
+    </Grid>
+</Page>

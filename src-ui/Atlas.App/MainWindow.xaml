@@ -52,6 +52,16 @@
                     <FontIcon Glyph="&#xE8E5;" />
                 </NavigationViewItem.Icon>
             </NavigationViewItem>
+            <NavigationViewItem Content="Rules" Tag="rules">
+                <NavigationViewItem.Icon>
+                    <FontIcon Glyph="&#xE9E9;" />
+                </NavigationViewItem.Icon>
+            </NavigationViewItem>
+            <NavigationViewItem Content="Profiles" Tag="profiles">
+                <NavigationViewItem.Icon>
+                    <FontIcon Glyph="&#xE748;" />
+                </NavigationViewItem.Icon>
+            </NavigationViewItem>
             <NavigationViewItem Content="Diagnostics" Tag="diagnostics">
                 <NavigationViewItem.Icon>
                     <FontIcon Glyph="&#xE9D9;" />

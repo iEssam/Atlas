@@ -18,12 +18,14 @@ public sealed class AtlasChannel : IDisposable
     private readonly GrpcChannel _channel;
     private readonly AtlasQuery.AtlasQueryClient _client;
     private readonly AtlasControl.AtlasControlClient _control;
+    private readonly AtlasRules.AtlasRulesClient _rules;
 
     private AtlasChannel(GrpcChannel channel)
     {
         _channel = channel;
         _client = new AtlasQuery.AtlasQueryClient(channel);
         _control = new AtlasControl.AtlasControlClient(channel);
+        _rules = new AtlasRules.AtlasRulesClient(channel);
     }
 
     /// <summary>
@@ -452,6 +454,144 @@ public sealed class AtlasChannel : IDisposable
         CancellationToken cancellationToken = default) =>
         GuardAsync(() => _control.ExecuteActionAsync(
             new ExecuteActionRequest { ConsentToken = consentToken },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    // ----------------------------------------------------------------------
+    // R2: rules engine + profiles (AtlasRules, PRD §9.7). A NEW service — its
+    // own client alongside AtlasQuery/AtlasControl. Enabling a rule IS the
+    // consent; every application is reversible and audited, and
+    // protected-critical processes are never touched (proto R2 header). Same
+    // Unimplemented→Unsupported guard so the Rules and Profiles pages degrade
+    // gracefully against an older service that doesn't serve AtlasRules yet: the
+    // server side lands after the UI (task brief). SimulateRule is a pure
+    // dry-run — it never applies anything.
+    // ----------------------------------------------------------------------
+
+    /// <summary>All configured rules (enabled and disabled), in server order.</summary>
+    public Task<RpcOutcome<ListRulesReply>> ListRulesAsync(
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _rules.ListRulesAsync(
+            new ListRulesRequest(), cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>
+    /// One rule by id. The reply's <c>found</c> flag distinguishes "no such rule"
+    /// from a transport failure; callers check it before reading <c>rule</c>.
+    /// </summary>
+    public Task<RpcOutcome<GetRuleReply>> GetRuleAsync(
+        long id,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _rules.GetRuleAsync(
+            new GetRuleRequest { Id = id }, cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>
+    /// Creates a rule (the <c>id</c> field is ignored server-side). Returns the
+    /// assigned id. A newly created rule is applied only if its <c>enabled</c>
+    /// flag is set — creating a disabled rule changes nothing on the system.
+    /// </summary>
+    public Task<RpcOutcome<CreateRuleReply>> CreateRuleAsync(
+        Rule rule,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _rules.CreateRuleAsync(
+            new CreateRuleRequest { Rule = rule }, cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>
+    /// Updates an existing rule in place (matched by its <c>id</c>). The reply's
+    /// <c>ok</c>/<c>message</c> carry a server-side validation result.
+    /// </summary>
+    public Task<RpcOutcome<UpdateRuleReply>> UpdateRuleAsync(
+        Rule rule,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _rules.UpdateRuleAsync(
+            new UpdateRuleRequest { Rule = rule }, cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>
+    /// Deletes a rule by id. Deleting a rule reverts anything it was applying
+    /// (the engine restores affected processes), so this is safe and reversible in
+    /// effect even though the rule row itself is gone.
+    /// </summary>
+    public Task<RpcOutcome<DeleteRuleReply>> DeleteRuleAsync(
+        long id,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _rules.DeleteRuleAsync(
+            new DeleteRuleRequest { Id = id }, cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>
+    /// Toggles a rule's enabled state. Enabling applies it to matching processes;
+    /// disabling reverts its interventions. This IS the consent gesture for a
+    /// persistent policy (proto R2 header).
+    /// </summary>
+    public Task<RpcOutcome<SetRuleEnabledReply>> SetRuleEnabledAsync(
+        long id,
+        bool enabled,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _rules.SetRuleEnabledAsync(
+            new SetRuleEnabledRequest { Id = id, Enabled = enabled },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>
+    /// Dry-run preview of a rule (PRD §9.7.5) — <b>never applies anything</b>.
+    /// The (possibly unsaved) <paramref name="rule"/> is matched against currently
+    /// running processes; the reply lists each affected target with its current→new
+    /// priority/affinity and eco change, marks protected-critical targets as
+    /// <c>blocked</c>, and reports any conflicts with other enabled rules. This is
+    /// the centerpiece the user sees before committing.
+    /// </summary>
+    public Task<RpcOutcome<SimulateRuleReply>> SimulateRuleAsync(
+        Rule rule,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _rules.SimulateRuleAsync(
+            new SimulateRuleRequest { Rule = rule }, cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>
+    /// The interventions Atlas is currently applying — what, to which process, by
+    /// which rule, and since when (PRD §9.7.3). The transparency surface: the user
+    /// always sees exactly what Atlas is doing to their system.
+    /// </summary>
+    public Task<RpcOutcome<ListInterventionsReply>> ListInterventionsAsync(
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _rules.ListInterventionsAsync(
+            new ListInterventionsRequest(), cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>All profiles (activatable bundles of rules + a power mode).</summary>
+    public Task<RpcOutcome<ListProfilesReply>> ListProfilesAsync(
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _rules.ListProfilesAsync(
+            new ListProfilesRequest(), cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>Creates a profile (the <c>id</c> field is ignored). Returns the assigned id.</summary>
+    public Task<RpcOutcome<CreateProfileReply>> CreateProfileAsync(
+        Profile profile,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _rules.CreateProfileAsync(
+            new CreateProfileRequest { Profile = profile },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>Updates an existing profile in place (matched by its <c>id</c>).</summary>
+    public Task<RpcOutcome<UpdateProfileReply>> UpdateProfileAsync(
+        Profile profile,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _rules.UpdateProfileAsync(
+            new UpdateProfileRequest { Profile = profile },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>Deletes a profile by id (its member rules are left intact).</summary>
+    public Task<RpcOutcome<DeleteProfileReply>> DeleteProfileAsync(
+        long id,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _rules.DeleteProfileAsync(
+            new DeleteProfileRequest { Id = id }, cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>
+    /// Activates or deactivates a profile. Activating enables its member rules (and
+    /// applies its power mode); deactivating disables them. The reply's
+    /// <c>ok</c>/<c>message</c> carry the server-side result.
+    /// </summary>
+    public Task<RpcOutcome<SetProfileActiveReply>> SetProfileActiveAsync(
+        long id,
+        bool active,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _rules.SetProfileActiveAsync(
+            new SetProfileActiveRequest { Id = id, Active = active },
             cancellationToken: cancellationToken).ResponseAsync);
 
     public void Dispose() => _channel.Dispose();

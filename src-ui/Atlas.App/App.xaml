@@ -14,6 +14,7 @@
             <conv:ConfidenceToBrushConverter x:Key="ConfidenceToBrush" />
             <conv:SeverityToBrushConverter x:Key="SeverityToBrush" />
             <conv:TrustTokenToBrushConverter x:Key="TrustTokenToBrush" />
+            <conv:BlockedToBrushConverter x:Key="BlockedToBrush" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>
