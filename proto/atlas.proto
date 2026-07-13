@@ -321,6 +321,137 @@ message ListServicesReply {
   repeated ServiceEntry services = 1;
 }
 
+// ---------------------------------------------------------------------------
+// M8: incident detection, diagnostics, reports (PRD §9.3.7, §9.15, §9.18).
+// All read-only: diagnosis explains recorded data, it never mutates the system.
+// ---------------------------------------------------------------------------
+
+enum IncidentKind {
+  INCIDENT_KIND_UNSPECIFIED = 0;
+  CPU_SATURATION = 1;
+  MEMORY_PRESSURE = 2;
+  DISK_LATENCY = 3;
+}
+
+enum Severity {
+  SEVERITY_UNSPECIFIED = 0;
+  SEVERITY_INFO = 1;
+  SEVERITY_WARNING = 2;
+  SEVERITY_CRITICAL = 3;
+}
+
+message Incident {
+  int64 id = 1;
+  IncidentKind kind = 2;
+  int64 start_ms = 3;
+  // 0 = still ongoing.
+  int64 end_ms = 4;
+  Severity severity = 5;
+  // Peak of the driving metric during the window (e.g. permille or ms).
+  double peak_value = 6;
+  // Plain-language one-liner (PRD §3.2 — no vague "needs attention").
+  string summary = 7;
+}
+
+message ListIncidentsRequest {
+  TimeRange range = 1;
+  uint32 limit = 2;
+}
+
+message ListIncidentsReply {
+  repeated Incident incidents = 1;
+  bool truncated = 2;
+}
+
+// The PRD's fixed confidence ladder (§9.15.2). Temporal overlap alone caps at
+// LOW; strong attribution over most of the window reaches HIGH; CONFIRMED is
+// reserved for measured facts (e.g. a recorded crash).
+enum Confidence {
+  CONFIDENCE_UNSPECIFIED = 0;
+  INSUFFICIENT = 1;
+  LOW = 2;
+  MEDIUM = 3;
+  HIGH = 4;
+  CONFIRMED = 5;
+}
+
+// A measured fact backing the diagnosis — never an inference.
+message EvidenceItem {
+  string text = 1;
+  // 0 when the fact is range-wide rather than a point.
+  int64 ts_ms = 2;
+  string metric = 3;
+  double value = 4;
+}
+
+message ContributingFactor {
+  string description = 1;
+  Confidence confidence = 2;
+  // 0 when not process-specific.
+  uint32 pid = 3;
+  string image_name = 4;
+  // Share of the saturated resource attributed to this factor, 0..=1.
+  double attribution = 5;
+}
+
+message Diagnosis {
+  // Plain-language statement of what happened.
+  string observed = 1;
+  TimeRange range = 2;
+  repeated EvidenceItem evidence = 3;
+  // Ranked most-likely first.
+  repeated ContributingFactor factors = 4;
+  Confidence overall_confidence = 5;
+  // Competing possibilities surfaced when the top factors are close.
+  repeated string alternatives = 6;
+  string recommendation = 7;
+  string risk = 8;
+  string reversibility = 9;
+  string verification_plan = 10;
+}
+
+message DiagnoseRequest {
+  // Diagnose a detected incident by id; 0 = use the ad-hoc range instead.
+  int64 incident_id = 1;
+  TimeRange range = 2;
+}
+
+message DiagnoseReply {
+  bool available = 1;
+  // "insufficient evidence" / "outside retention" / "monitoring was off"
+  // (PRD §9.16.4 — the engine states its limits).
+  string unavailable_reason = 2;
+  Diagnosis diagnosis = 3;
+}
+
+enum ReportFormat {
+  REPORT_FORMAT_UNSPECIFIED = 0;
+  REPORT_HTML = 1;
+  REPORT_CSV = 2;
+  REPORT_JSON = 3;
+  REPORT_TEXT = 4;
+}
+
+message RedactionOptions {
+  bool redact_user_names = 1;
+  bool redact_computer_name = 2;
+  bool redact_paths = 3;
+  bool redact_command_lines = 4;
+}
+
+message GenerateReportRequest {
+  // Report on a detected incident by id; 0 = use the ad-hoc range.
+  int64 incident_id = 1;
+  TimeRange range = 2;
+  ReportFormat format = 3;
+  RedactionOptions redaction = 4;
+}
+
+message GenerateReportReply {
+  string content = 1;
+  string content_type = 2;
+}
+
 service AtlasQuery {
   rpc GetCapabilities(CapabilitiesRequest) returns (CapabilitiesReply);
   rpc GetSnapshot(SnapshotRequest) returns (SnapshotReply);
@@ -334,6 +465,9 @@ service AtlasQuery {
   rpc ListPrivacyEvents(ListPrivacyEventsRequest) returns (ListPrivacyEventsReply);
   rpc ListStartup(ListStartupRequest) returns (ListStartupReply);
   rpc ListServices(ListServicesRequest) returns (ListServicesReply);
+  rpc ListIncidents(ListIncidentsRequest) returns (ListIncidentsReply);
+  rpc Diagnose(DiagnoseRequest) returns (DiagnoseReply);
+  rpc GenerateReport(GenerateReportRequest) returns (GenerateReportReply);
 }
 
 // ---------------------------------------------------------------------------
