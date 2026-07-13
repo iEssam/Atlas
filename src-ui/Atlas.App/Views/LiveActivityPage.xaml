@@ -110,6 +110,19 @@
                 <ListView.ItemTemplate>
                     <DataTemplate x:DataType="vm:ProcessRowViewModel">
                         <Grid ColumnSpacing="8">
+                            <Grid.ContextFlyout>
+                                <MenuFlyout>
+                                    <MenuFlyoutItem Text="Close window" Tag="close"
+                                                    Click="ProcessAction_Click" />
+                                    <MenuFlyoutItem Text="Suspend" Tag="suspend"
+                                                    Click="ProcessAction_Click" />
+                                    <MenuFlyoutItem Text="Resume" Tag="resume"
+                                                    Click="ProcessAction_Click" />
+                                    <MenuFlyoutSeparator />
+                                    <MenuFlyoutItem Text="End process" Tag="terminate"
+                                                    Click="ProcessAction_Click" />
+                                </MenuFlyout>
+                            </Grid.ContextFlyout>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="220" />
                                 <ColumnDefinition Width="80" />

@@ -1,0 +1,145 @@
+<Page
+    x:Class="Atlas.App.Views.TimelinePage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vm="using:Atlas.App.ViewModels"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <Grid Padding="24" RowSpacing="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Title + controls -->
+        <Grid Grid.Row="0" ColumnSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                <TextBlock Text="Timeline" Style="{StaticResource TitleTextBlockStyle}" />
+                <TextBlock VerticalAlignment="Bottom"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                           Text="System CPU" />
+            </StackPanel>
+
+            <ComboBox Grid.Column="1"
+                      x:Name="WindowPicker"
+                      Header="Window"
+                      AutomationProperties.Name="Time window"
+                      MinWidth="160"
+                      ItemsSource="{x:Bind ViewModel.Windows}"
+                      SelectedItem="{x:Bind ViewModel.SelectedWindow, Mode=TwoWay}" />
+
+            <Button Grid.Column="2"
+                    VerticalAlignment="Bottom"
+                    AutomationProperties.Name="Refresh timeline"
+                    Click="Refresh_Click">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <FontIcon Glyph="&#xE72C;" FontSize="14" />
+                    <TextBlock Text="Refresh" />
+                </StackPanel>
+            </Button>
+
+            <Button Grid.Column="3"
+                    VerticalAlignment="Bottom"
+                    AutomationProperties.Name="Bookmark now"
+                    Click="BookmarkNow_Click">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <FontIcon Glyph="&#xE8A4;" FontSize="14" />
+                    <TextBlock Text="Bookmark now" />
+                </StackPanel>
+            </Button>
+        </Grid>
+
+        <!-- Status line -->
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="12">
+            <ProgressRing IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
+                          Width="16" Height="16" />
+            <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Text="{x:Bind ViewModel.StatusText, Mode=OneWay}" />
+        </StackPanel>
+
+        <!-- Chart + event lane -->
+        <Border Grid.Row="2"
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                BorderThickness="1" CornerRadius="8">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*" MinHeight="180" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="140" />
+                </Grid.RowDefinitions>
+
+                <!-- Hand-drawn CPU band + avg line -->
+                <Grid Grid.Row="0">
+                    <Canvas x:Name="ChartCanvas"
+                            AutomationProperties.Name="System CPU chart"
+                            SizeChanged="ChartCanvas_SizeChanged"
+                            Background="Transparent" />
+                    <!-- Inline unavailable placeholder -->
+                    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
+                                Spacing="8"
+                                Visibility="{x:Bind ViewModel.IsUnavailable, Mode=OneWay}">
+                        <FontIcon Glyph="&#xE7BA;" FontSize="28"
+                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                  HorizontalAlignment="Center" />
+                        <TextBlock Text="History unavailable"
+                                   Style="{StaticResource SubtitleTextBlockStyle}"
+                                   HorizontalAlignment="Center" />
+                        <TextBlock Text="The connected service is too old to serve stored samples."
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   TextWrapping="Wrap" MaxWidth="360"
+                                   HorizontalTextAlignment="Center" />
+                    </StackPanel>
+                </Grid>
+
+                <Border Grid.Row="1" Height="1"
+                        Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
+
+                <!-- Event lane -->
+                <Grid Grid.Row="2" Padding="12,8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Text="Process events" FontWeight="SemiBold"
+                               Margin="0,0,0,4" />
+                    <ListView Grid.Row="1"
+                              AutomationProperties.Name="Process event lane"
+                              ItemsSource="{x:Bind ViewModel.Events, Mode=OneWay}"
+                              SelectionMode="None">
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem">
+                                <Setter Property="MinHeight" Value="0" />
+                                <Setter Property="Padding" Value="8,2" />
+                            </Style>
+                        </ListView.ItemContainerStyle>
+                        <ListView.ItemTemplate>
+                            <DataTemplate x:DataType="vm:TimelineEventItem">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <FontIcon FontSize="12" Glyph="{x:Bind IconGlyph}" />
+                                    <TextBlock Text="{x:Bind Text}" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </Grid>
+            </Grid>
+        </Border>
+
+        <!-- Bookmarks legend -->
+        <TextBlock Grid.Row="3"
+                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                   Text="Vertical amber lines mark bookmarks. Gaps in the line are missing data, not zero." />
+    </Grid>
+</Page>

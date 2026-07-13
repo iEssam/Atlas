@@ -1,4 +1,7 @@
+using System;
 using Atlas.App.ViewModels;
+using Atlas.IpcClient;
+using Atlas.V0;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Navigation;
 
@@ -53,5 +56,88 @@ public sealed partial class LiveActivityPage : Page
     {
         base.OnNavigatedFrom(e);
         ViewModel.Stop();
+    }
+
+    /// <summary>
+    /// Right-click context menu on a process row: Close / Suspend / Resume /
+    /// End. Opens the two-phase safe-action dialog (PRD §9.22). The real broker
+    /// call goes over the live channel and degrades to "unavailable" until the
+    /// backend lands; setting <c>ATLAS_FAKE_BROKER=1</c> drives the dialog from a
+    /// <see cref="FakeActionBroker"/> so the allowed→execute UX can be exercised
+    /// without a live broker.
+    /// </summary>
+    private async void ProcessAction_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
+    {
+        if (sender is not MenuFlyoutItem item ||
+            item.DataContext is not ProcessRowViewModel row)
+        {
+            return;
+        }
+
+        var action = (item.Tag as string) switch
+        {
+            "close" => ProcessActionKind.CloseWindows,
+            "suspend" => ProcessActionKind.Suspend,
+            "resume" => ProcessActionKind.Resume,
+            "terminate" => ProcessActionKind.Terminate,
+            _ => ProcessActionKind.ProcessActionUnspecified,
+        };
+        if (action == ProcessActionKind.ProcessActionUnspecified)
+        {
+            return;
+        }
+
+        var who = Environment.GetEnvironmentVariable("ATLAS_PIPE");
+        var useFake = Environment.GetEnvironmentVariable("ATLAS_FAKE_BROKER") == "1";
+
+        IActionBroker broker;
+        AtlasChannel? channel = null;
+        if (useFake)
+        {
+            broker = BuildDemoBroker(action);
+        }
+        else
+        {
+            channel = AtlasChannel.Connect(string.IsNullOrEmpty(who) ? null : who);
+            broker = new ChannelActionBroker(channel);
+        }
+
+        try
+        {
+            var dialog = new SafeActionDialog(
+                broker,
+                row.Pid,
+                row.CreateTime100ns,
+                action,
+                $"{row.ImageName} (pid {row.Pid})")
+            {
+                XamlRoot = XamlRoot,
+            };
+            await dialog.ShowAsync();
+        }
+        finally
+        {
+            channel?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// A design/demo broker so the allowed and denied UX can be seen without the
+    /// backend: Terminate is denied (as if critical), everything else allowed
+    /// with a representative risk picture.
+    /// </summary>
+    private static IActionBroker BuildDemoBroker(ProcessActionKind action)
+    {
+        if (action == ProcessActionKind.Terminate)
+        {
+            return FakeActionBroker.Denying(
+                "This process is on the protected-critical list and cannot be ended.",
+                new ActionRisk { IsCritical = true, IsSystem = true });
+        }
+
+        var risk = new ActionRisk { VisibleWindows = 2, ChildCount = 3 };
+        risk.Notes.Add("Child processes will keep running (they become orphans).");
+        risk.Notes.Add("Unsaved work in visible windows may be lost.");
+        return FakeActionBroker.Allowing(risk, executeMessage: "The action completed.");
     }
 }

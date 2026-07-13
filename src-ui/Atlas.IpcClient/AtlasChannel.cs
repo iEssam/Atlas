@@ -17,11 +17,31 @@ public sealed class AtlasChannel : IDisposable
 {
     private readonly GrpcChannel _channel;
     private readonly AtlasQuery.AtlasQueryClient _client;
+    private readonly AtlasControl.AtlasControlClient _control;
 
     private AtlasChannel(GrpcChannel channel)
     {
         _channel = channel;
         _client = new AtlasQuery.AtlasQueryClient(channel);
+        _control = new AtlasControl.AtlasControlClient(channel);
+    }
+
+    /// <summary>
+    /// Runs a unary call, mapping <c>StatusCode.Unimplemented</c> to a typed
+    /// <see cref="RpcOutcome{T}.Unsupported"/> result so callers can degrade
+    /// gracefully against an older server. Other faults propagate unchanged.
+    /// </summary>
+    private static async Task<RpcOutcome<T>> GuardAsync<T>(Func<Task<T>> call)
+    {
+        try
+        {
+            return RpcOutcome<T>.Ok(await call().ConfigureAwait(false));
+        }
+        catch (RpcException ex) when (ex.StatusCode == StatusCode.Unimplemented)
+        {
+            return RpcOutcome<T>.Unsupported(
+                string.IsNullOrEmpty(ex.Status.Detail) ? "not implemented" : ex.Status.Detail);
+        }
     }
 
     /// <summary>
@@ -122,6 +142,117 @@ public sealed class AtlasChannel : IDisposable
             yield return reply;
         }
     }
+
+    // ----------------------------------------------------------------------
+    // M6: historical queries, search, bookmarks (AtlasQuery). Each wraps the
+    // Unimplemented status into a typed "not supported" outcome so the new
+    // pages degrade gracefully against an older service (task brief).
+    // ----------------------------------------------------------------------
+
+    /// <summary>
+    /// Decimated min/max/avg buckets for one metric over a window. The server
+    /// never returns more than <paramref name="buckets"/> buckets (0 = server
+    /// default); empty buckets are omitted so gaps render as missing data.
+    /// </summary>
+    public Task<RpcOutcome<QueryRangeReply>> QueryRangeAsync(
+        MetricKind metric,
+        long scope,
+        long fromMs,
+        long toMs,
+        uint buckets = 0,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _client.QueryRangeAsync(
+            new QueryRangeRequest
+            {
+                Metric = metric,
+                Scope = scope,
+                Range = new TimeRange { FromMs = fromMs, ToMs = toMs },
+                Buckets = buckets,
+            },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>Process start/stop events in a window (empty kinds = all).</summary>
+    public Task<RpcOutcome<ListEventsReply>> ListEventsAsync(
+        long fromMs,
+        long toMs,
+        uint limit = 0,
+        IEnumerable<uint>? kinds = null,
+        CancellationToken cancellationToken = default)
+    {
+        var req = new ListEventsRequest
+        {
+            Range = new TimeRange { FromMs = fromMs, ToMs = toMs },
+            Limit = limit,
+        };
+        if (kinds is not null)
+        {
+            req.Kinds.AddRange(kinds);
+        }
+        return GuardAsync(() => _client.ListEventsAsync(
+            req, cancellationToken: cancellationToken).ResponseAsync);
+    }
+
+    /// <summary>Global search across processes, events, and bookmarks.</summary>
+    public Task<RpcOutcome<SearchReply>> SearchAsync(
+        string query,
+        uint limit = 0,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _client.SearchAsync(
+            new SearchRequest { Query = query, Limit = limit },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>Creates an incident bookmark at <paramref name="tsMs"/>.</summary>
+    public Task<RpcOutcome<CreateBookmarkReply>> CreateBookmarkAsync(
+        long tsMs,
+        string label,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _client.CreateBookmarkAsync(
+            new CreateBookmarkRequest { TsMs = tsMs, Label = label },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>Bookmarks falling within a window.</summary>
+    public Task<RpcOutcome<ListBookmarksReply>> ListBookmarksAsync(
+        long fromMs,
+        long toMs,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _client.ListBookmarksAsync(
+            new ListBookmarksRequest { Range = new TimeRange { FromMs = fromMs, ToMs = toMs } },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    // ----------------------------------------------------------------------
+    // M6: safe process actions (AtlasControl) — two-phase prepare/execute.
+    // ----------------------------------------------------------------------
+
+    /// <summary>
+    /// Phase 1: asks the broker to assess an action against a process. Returns
+    /// the risk picture plus a short-lived, single-use consent token when
+    /// allowed. PID reuse is guarded by <paramref name="createTime100ns"/>.
+    /// </summary>
+    public Task<RpcOutcome<PrepareActionReply>> PrepareActionAsync(
+        uint pid,
+        long createTime100ns,
+        ProcessActionKind action,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _control.PrepareActionAsync(
+            new PrepareActionRequest
+            {
+                Pid = pid,
+                CreateTime100Ns = createTime100ns,
+                Action = action,
+            },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>
+    /// Phase 2: executes exactly the prepared action, identified by the opaque
+    /// single-use <paramref name="consentToken"/> from
+    /// <see cref="PrepareActionAsync"/>.
+    /// </summary>
+    public Task<RpcOutcome<ExecuteActionReply>> ExecuteActionAsync(
+        string consentToken,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _control.ExecuteActionAsync(
+            new ExecuteActionRequest { ConsentToken = consentToken },
+            cancellationToken: cancellationToken).ResponseAsync);
 
     public void Dispose() => _channel.Dispose();
 }

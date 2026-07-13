@@ -35,6 +35,8 @@ public sealed partial class MainWindow : Window
         {
             "overview" => typeof(OverviewPage),
             "live" => typeof(LiveActivityPage),
+            "timeline" => typeof(TimelinePage),
+            "search" => typeof(SearchPage),
             _ => null,
         };
         if (type is not null && ContentFrame.CurrentSourcePageType != type)

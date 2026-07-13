@@ -22,6 +22,16 @@
                     <FontIcon Glyph="&#xE9D9;" />
                 </NavigationViewItem.Icon>
             </NavigationViewItem>
+            <NavigationViewItem Content="Timeline" Tag="timeline">
+                <NavigationViewItem.Icon>
+                    <FontIcon Glyph="&#xE81C;" />
+                </NavigationViewItem.Icon>
+            </NavigationViewItem>
+            <NavigationViewItem Content="Search" Tag="search">
+                <NavigationViewItem.Icon>
+                    <FontIcon Glyph="&#xE721;" />
+                </NavigationViewItem.Icon>
+            </NavigationViewItem>
         </NavigationView.MenuItems>
 
         <Frame x:Name="ContentFrame" />
