@@ -116,6 +116,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "atlas-mcp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "atlas-ipc",
+ "clap",
+ "serde_json",
+ "tokio",
+ "tonic",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "atlas-service"
 version = "0.1.0"
 dependencies = [
