@@ -19,7 +19,7 @@
 | Main UI | **WinUI 3 (Windows App SDK) + C# / .NET 10**, custom **Win2D** chart renderer | Genuine Windows 11 Fluent look, UIA accessibility for free, high-density custom charts |
 | Emergency UI | **Rust + raw Win32** (single small exe, high priority) | Must work when the system is dying (PRD §12.7) |
 | IPC | **Shared-memory ring buffer** (live metrics) + **gRPC over named pipes** (queries/commands, proto3) | Zero-copy hot path; typed, versioned, cross-language control plane |
-| AI assistant | Separate sandboxed process; **ONNX Runtime GenAI (DirectML)** / **llama.cpp** local models, optional OpenAI/Anthropic-compatible endpoints; strict tool-calling over query APIs | Local-first, isolation per PRD §13.2, grounded citations per PRD §9.16 |
+| Natural-language analysis | **No hosted model.** In-app: deterministic template/playbook matching over the query API (local, always on). External: a read-only **MCP server** (`atlas-mcp`, Rust) exposing grounded query tools to the user's own MCP client (Claude/ChatGPT) | Atlas is the evidence provider; the user's client owns the model + conversation. Isolation per PRD §13.2, citation-ready grounding per PRD §9.16 |
 | Shell integration | **IExplorerCommand** COM + sparse MSIX package | Windows 11 modern context menu ("Find what is using this file") |
 | Kernel driver | **None in v1.** ETW covers events; GPU vendor libraries cover most sensors. Re-evaluate a minimal read-only sensor driver in v2 (PRD §13.6 checklist) | Avoid signing/security/compat cost until proven necessary |
 | Installer / updates | **WiX (v5/v6) MSI** + winget, signed update manifest, staged channels | Service + Win32 app + sparse MSIX in one per-machine install |
@@ -36,8 +36,8 @@ Every stack decision below traces back to hard requirements in the PRD:
 1. **Idle CPU < 0.2%, service RAM < 100 MB, UI RAM < 200 MB (§12).** Rules out Electron outright, makes GC-heavy or JIT-heavy background processes risky, and demands event-driven (ETW) collection instead of polling wherever possible.
 2. **UI visible in 500 ms; usable at 100% CPU (§12.1, §12.7).** Demands a pre-running background service (UI is a thin viewer), compiled/AOT UI startup, a dedicated high-priority control path, and an emergency UI with near-zero dependencies.
 3. **Deep inspection: handles, threads, tokens, modules, ETW events (§9.4).** Requires first-class access to Win32/NT native APIs — this is a native-Windows product; cross-platform abstraction layers (Qt, Flutter, web-first) subtract value.
-4. **Process isolation: UI crash must not stop collection; AI failure must not affect monitoring (§13.2).** Requires a multi-process architecture with well-defined IPC, not a monolith.
-5. **Local-first privacy, no account, optional local AI (§3.6, §15, §9.16).** Requires an embedded local store (no server database) and local inference runtimes.
+4. **Process isolation: UI crash must not stop collection; an MCP-server failure must not affect monitoring (§13.2).** Requires a multi-process architecture with well-defined IPC, not a monolith.
+5. **Local-first privacy, no account, optional read-only MCP integration (§3.6, §15, §9.16).** Requires an embedded local store (no server database); natural-language reasoning is delegated to the user's own MCP client, so Atlas ships no inference runtime.
 6. **Native Windows 11 look, accessibility, keyboard-first, touch, high-DPI (§11).** WinUI 3 provides Fluent materials (Mica), Segoe Fluent iconography, and UI Automation accessibility as platform defaults rather than reimplementations.
 7. **72-hour to 30-day history with second-level precision and low disk amplification (§9.3, §12.4).** Requires a purpose-built tiered time-series layout with batched, compressed writes — neither raw SQLite rows per sample nor a server TSDB fits.
 8. **Safe, reversible, audited actions (§3.3, §14.5).** Requires a single privileged chokepoint (broker) that records before/after state for every mutation.
@@ -59,10 +59,11 @@ Every stack decision below traces back to hard requirements in the PRD:
 │               │  shared-mem ring (read)   │ gRPC/named pipe             │ gRPC/named pipe  │
 │               │  + gRPC/named pipe        │                             │                  │
 │  ┌────────────┴──────────────┐   ┌────────┴─────────┐                                      │
-│  │ Atlas AI Host (Rust)      │   │ Explorer shell   │                                      │
-│  │ sandboxed child, spawned  │   │ ext (IExplorer-  │                                      │
-│  │ on demand; local ONNX /   │   │ Command, sparse  │                                      │
-│  │ llama.cpp or remote API   │   │ MSIX)            │                                      │
+│  │ atlas-mcp (Rust, opt-in)  │   │ Explorer shell   │                                      │
+│  │ read-only MCP server;     │   │ ext (IExplorer-  │                                      │
+│  │ MCP tools → AtlasQuery;   │   │ Command, sparse  │                                      │
+│  │ hosts NO model — the      │   │ MSIX)            │                                      │
+│  │ user's MCP client does    │   │                  │                                      │
 │  └───────────────────────────┘   └──────────────────┘                                      │
 └───────────────┬─────────────────────────────────────────────────────────────────────────── ┘
                 │ authenticated gRPC over named pipe (ACL: interactive user + SYSTEM)
@@ -84,7 +85,7 @@ Key isolation properties (PRD §13.2):
 
 * The **service** owns collection, storage, rules, diagnostics, and privileged actions. It has no UI dependencies and survives UI crashes.
 * The **UI** is a stateless viewer over the service API. Killing it loses nothing.
-* The **AI host** is a separate on-demand child process in a job object with restricted token; a hung or crashed model run cannot block collection or the UI thread.
+* The **MCP server** (`atlas-mcp`) is a separate opt-in process with a read-only capability scope (no `AtlasControl`); it hosts no model, so there is no local inference to crash, and a hung MCP session cannot block collection or the UI thread. It is absent entirely unless the user enables it.
 * The **emergency UI** depends on nothing but win32 + one pipe connection, is statically linked, and requests `HIGH_PRIORITY_CLASS`.
 * The **updater** runs as its own scheduled task; the service never updates itself in place.
 
@@ -98,7 +99,7 @@ Kernel ETW sessions (process, disk, network providers), service control, other-u
 
 ## 3.1 Decision: Rust core + C# WinUI 3 UI
 
-**Rust for the service, engines, broker, emergency UI, AI host, CLI.**
+**Rust for the service, engines, broker, emergency UI, MCP server, CLI.**
 
 * Memory safety without garbage collection — the service must run for weeks with flat RSS and no GC-induced latency spikes; it is also the component parsing untrusted ETW payloads and serving a privileged API, exactly where memory-safety bugs are most costly.
 * Excellent Windows story: the Microsoft-maintained `windows`/`windows-sys` crates expose the entire Win32/NT surface; `ferrisetw` (KrabsETW-inspired) handles ETW session management and event parsing; `tokio` provides named-pipe servers and async timers.
@@ -196,7 +197,7 @@ Kernel ETW sessions (process, disk, network providers), service control, other-u
    * **Compaction & retention:** idle-time job merges chunks, applies tier demotion, enforces the user's size cap; DB size surfaced in Settings (PRD §12.4).
    * **Cardinality control:** series identity = (metric, scope hash); short-lived PIDs roll up into their application identity after exit to avoid unbounded series growth.
 3. **Query façade:** one Rust crate exposing typed queries (range scans, top-N-over-window, event correlation joins) consumed by the gRPC layer; the UI and CLI never see storage details, which lets us swap TSDB internals later without breaking clients. **DuckDB** is deliberately deferred to R3 as an optional analytical sidecar over exported Parquet for the "compare two weeks of sessions" class of query — not in the hot path.
-4. **Redaction pipeline (§9.18, §15):** a single `Redactor` component applied at *export/AI boundary* (usernames, hostnames, paths, IPs, domains, window titles, command lines → stable pseudonyms), never at collection time, so local views stay complete.
+4. **Redaction pipeline (§9.18, §15):** a single `Redactor` component applied at every *egress boundary* — report export and, critically, the MCP tool surface (usernames, hostnames, paths, IPs, domains, window titles, command lines, application names → stable pseudonyms) — never at collection time, so local views stay complete. Redaction defaults ON and stricter for MCP, since those results leave the machine for the client's model provider.
 
 **Why not alternatives:** server TSDBs (Influx, Timescale, QuestDB) violate local-first/footprint; raw SQLite rows per 1 s sample would write ~GBs/day and shred the write-amplification budget; Parquet alone is immutable and awkward for a rolling 1 s head. The Gorilla-tier design is well-trodden (Prometheus, Netdata) and small enough to own (~3–5k LoC).
 
@@ -223,7 +224,7 @@ Kernel ETW sessions (process, disk, network providers), service control, other-u
 * **Caller authentication:** named pipe SDDL restricts connections to SYSTEM + the interactive user's SID; per-connection the service verifies the client PID's session and executable signature (defense-in-depth; the real boundary is the pipe ACL — a local admin can bypass anything, which is out of scope of this threat model).
 * **Consent tokens:** destructive commands require a `consent_token` minted only after the UI has displayed the §9.22 safe-end-task flow (unsaved-work risk via `GetGuiResources`/document-window heuristics, child processes, dependent services, restart prediction). The emergency UI mints its own scoped tokens.
 * **Reversibility ledger (§3.3):** every reversible action pushes an undo record (old startup state, old service start type, old priority…) onto a persisted stack; system-level changes (service disable, driver-adjacent) additionally offer a **restore point** via the `SystemRestore` WMI class before proceeding.
-* **Audit log (§14.5):** append-only SQLite table with hash chaining (each row carries SHA-256 of previous row) for tamper evidence; includes user actions, rule actions, exports, AI egress consents, rollbacks, updates.
+* **Audit log (§14.5):** append-only SQLite table with hash chaining (each row carries SHA-256 of previous row) for tamper evidence; includes user actions, rule actions, exports, MCP enablement + per-tool calls with the returned payload (or hash + field summary), rollbacks, updates.
 * **Handle force-close** (§9.4.3) is implemented via `DuplicateHandle(DUPLICATE_CLOSE_SOURCE)` from the service — gated behind expert mode + strongest warning tier, per PRD.
 
 ## 4.6 Main UI (C# / WinUI 3)
@@ -239,20 +240,24 @@ Kernel ETW sessions (process, disk, network providers), service control, other-u
 
 **Emergency UI (Rust, §12.7):** single statically-linked exe (<3 MB), raw Win32 window + owner-drawn list, `HIGH_PRIORITY_CLASS`, working set pre-touched at spawn; talks to the service pipe, falls back to direct `NtQuerySystemInformation` + `TerminateProcess` if the service itself is starved; launched via tray hotkey (Ctrl+Shift+Esc-style chord) or when the main UI misses its own watchdog heartbeat during launch.
 
-## 4.7 AI / Natural-Language Assistant
+## 4.7 Natural-Language Analysis: local deterministic + read-only MCP
 
-**Process model:** `atlas-ai` host (Rust) spawned on demand by the service, in a job object with memory/CPU caps and a write-restricted token; crash or hang = killed and reported, monitoring unaffected (PRD §13.2).
+**Direction (decision, 2026-07-13):** Atlas does **not** host an AI model or generate conversational answers. It is the *evidence provider*; the *model and the conversation* belong to the user's own MCP-compatible client (Claude, ChatGPT, or any MCP host). This deletes the entire local-model stack (ONNX Runtime GenAI, DirectML/NPU paths, llama.cpp, Phi/GGUF downloads, Ollama/LM Studio detection, remote-endpoint config, grammar-constrained decoding, the `atlas-ai` host process, hallucination test harnesses) in exchange for a thin read-only adapter over the query API that already exists (`AtlasQuery`). Net: far less implementation, packaging, and privacy surface; better alignment with the product's "trusted evidence, not unsupported claims" thesis.
 
-**Backend ladder (user-selectable, PRD §9.16.2):**
+Two tiers remain, neither hosts a model:
 
-1. **No AI** — the assistant box runs template/intent matching (keyword grammar → parameterized playbook queries). Fully offline, deterministic; also serves as the fallback when models misbehave.
-2. **Local model, bundled runtime** — **ONNX Runtime GenAI with DirectML** (vendor-neutral GPU: NVIDIA/AMD/Intel/Qualcomm) running a small instruct model (Phi-4-mini class, 4-bit, ~2–3 GB download-on-opt-in); on Copilot+ hardware, prefer **Windows AI Foundry / Phi Silica** NPU APIs when present.
-3. **Local model, user-supplied** — **llama.cpp** (Vulkan backend) for GGUF models, plus one-click detection of **Ollama / LM Studio / Foundry Local** localhost endpoints (OpenAI-compatible) for users who already run a local server.
-4. **Remote endpoint** — user-configured Anthropic/OpenAI-compatible API. Gated by the PRD §9.16.3 consent sheet: a literal preview of the exact redacted payload (time ranges, process names, paths…) with per-category exclusion toggles wired to the shared `Redactor`.
+**Tier 1 — Deterministic local analysis (in-app, always available, no model, PRD §9.16.2 "No-AI mode").** The Diagnostics "ask a question" box runs template/intent matching (keyword grammar → parameterized playbook queries) entirely offline. This is the in-app natural-language affordance; it produces the same structured, cited output the diagnostics engine already emits. Non-MCP users lose nothing in-app.
 
-**Grounding architecture (§9.16.1) — the critical design:** the model never free-writes facts. It operates in a **tool-calling loop** against a fixed set of typed query tools (`query_timeline`, `top_consumers`, `find_events`, `diff_periods`, `explain_process`, `get_playbook_result`…). Every tool result carries citation handles (time range, event IDs, metric series). The response renderer **only displays claims whose citation handles resolve**; uncited assertions are dropped and the answer is annotated. Local models get grammar-constrained JSON decoding (llama.cpp grammars / ORT structured output) to keep tool calls parseable. Data-boundary honesty (§9.16.4): tools return explicit `data_gap`/`outside_retention`/`sensor_unavailable` markers the templates must surface.
+**Tier 2 — Read-only MCP server (`atlas-mcp`, opt-in, R2).** A separate small Rust process the user registers in their MCP client. It speaks MCP (JSON-RPC 2.0, stdio) to the client and translates each tool call into **read-only** `AtlasQuery` RPCs over the existing named pipe. It hosts no model; the client's model does the reasoning and writes the answer.
 
-**Prompt-injection posture:** process names, window titles, and command lines are untrusted input; they are delimited/escaped in prompts, and the assistant has **zero mutation tools** — recommendations become buttons in the UI that route through the normal consent + broker path. (Optional R3: expose a local read-only MCP server so users' own agent tools can query Atlas.)
+* **Tools** (map ~1:1 onto existing RPCs): `query_timeline`, `top_consumers`, `find_events`, `diff_periods`, `explain_process`, `get_incident`, `get_playbook_result`, `list_system_changes`, `find_crashes`.
+* **Every result is self-describing** — evidence IDs, time range, process identities, relevant metrics/events, confidence level, missing-data markers (`data_gap`/`outside_retention`/`sensor_unavailable`), and retention/sensor limitations as first-class fields, plus a machine-readable `grounding` block with a suggested citation string. This preserves the grounding design; the client renders it.
+* **Isolation (PRD §13.2):** `atlas-mcp` is its own process. It connects with a **read-only capability scope that excludes `AtlasControl`** — a tool call can never suspend/kill a process or change a rule. A crash or hang affects only the MCP session, never collection. Any action a model suggests becomes a button in the Atlas UI routed through the normal human-consent + broker path — never auto-executed.
+* **Prompt-injection posture:** process names, window titles, and command lines are untrusted input carried as data in structured fields, never as instructions; and because the MCP surface is read-only, an injected "kill this process" can't act.
+
+**The honest limitation (§9.16.1, must be documented in the PRD):** Atlas guarantees its MCP tools return *grounded, citation-ready* data. It **cannot** guarantee the external model's final answer contains no unsupported claims — Atlas controls the tool results, the client controls the conversation and the response. The old "removes uncited claims before displaying" promise was only possible with a built-in assistant; under MCP it becomes "provides citation-ready evidence."
+
+**Privacy — the boundary got more important, not less (§9.16.3, §15).** With no local model, in-app analysis never leaves the machine. But an MCP tool result **egresses to the client's model provider** (e.g. Anthropic/OpenAI servers) the moment the client reads it. Therefore, for the MCP surface specifically: disabled by default; explicit user enablement; **redaction default-ON and stricter than local views** (paths, usernames, domains, window titles, command lines, application names — all configurable); read-only tools only; per-tool result-size and time-range caps; a clear warning that returned data leaves Atlas's security boundary; instant revoke. Atlas cannot preview the client's full prompt, but it **audits its own side of the boundary**: every tool call and the exact payload it returned (or a hash + field summary) is logged via the shared `Redactor` + audit table (§14.5).
 
 ## 4.8 Shell & OS Integration
 
@@ -277,7 +282,7 @@ Kernel ETW sessions (process, disk, network providers), service control, other-u
 | Queries | gRPC over **named pipes** | proto3 | Client ↔ service | Timeline ranges, inspector detail, search, reports |
 | Event push | gRPC server-streaming | proto3 | Service → UI | Incidents, alerts, rule activations, privacy events (drives toasts + live event lanes) |
 | Commands | gRPC unary + consent tokens | proto3 | UI/CLI → broker | All mutations (§4.5) |
-| AI host | stdio + gRPC child channel | proto3 | Service ↔ atlas-ai | Prompt/tool-call/citation loop |
+| MCP (opt-in) | JSON-RPC 2.0 over stdio (client ↔ `atlas-mcp`); read-only gRPC over the pipe (`atlas-mcp` ↔ service) | MCP / proto3 | User's MCP client → `atlas-mcp` → service | Grounded read-only query tools; no `AtlasControl` in scope |
 
 Implementation notes:
 
@@ -362,7 +367,7 @@ system-atlas/
 │  ├─ atlas-tsdb/            # time-series store
 │  ├─ atlas-store/           # sqlite layer, migrations (refinery)
 │  ├─ atlas-rules/ atlas-diag/ atlas-redact/
-│  ├─ atlas-ai-host/ atlas-emergency-ui/ atlas-cli/
+│  ├─ atlas-mcp/ atlas-emergency-ui/ atlas-cli/   # atlas-mcp: read-only MCP server (R2)
 │  └─ atlas-ipc/             # tonic named-pipe glue, shared-mem ring
 ├─ src-ui/
 │  ├─ Atlas.App/             # WinUI 3 shell, views
@@ -415,7 +420,7 @@ CI: GitHub Actions — hosted Windows runners for build/unit, self-hosted for pe
 
 **MVP (§18.1):** service + collectors for process/CPU/memory/disk/network/GPU basics, ConsentStore privacy events, SCM + startup basics; SQLite + T0/T1 TSDB (72 h); grouping heuristics; WinUI shell with Overview, Live Activity, Timeline (view/zoom/bookmark), process detail, safe end-task flow, search (FTS5); incident bookmarks + basic detectors; template-based diagnostic summaries (no LLM required to ship); HTML/PDF/CSV incident report with redaction; MSI + winget; perf gates live from week one.
 
-**R2 (§18.2):** deep inspector (handles/modules/threads via on-demand snapshots), Restart-Manager file locks + Explorer sparse-MSIX integration, rules engine + profiles + simulation, boot analysis (event 100 + autologger), scheduled tasks, full network inspector (DNS ETW + per-process flows), battery/thermal analytics + vendor GPU libs, experiments, local AI (ONNX Runtime GenAI ladder), advanced privacy alerts.
+**R2 (§18.2):** deep inspector (handles/modules/threads via on-demand snapshots), Restart-Manager file locks + Explorer sparse-MSIX integration, rules engine + profiles + simulation, boot analysis (event 100 + autologger), scheduled tasks, full network inspector (DNS ETW + per-process flows), battery/thermal analytics + vendor GPU libs, experiments, **read-only MCP server** (`atlas-mcp`: grounded query tools for the user's own MCP client — replaces the abandoned local-AI ladder; now one of the *cheaper* R2 items since the query API already exists), advanced privacy alerts.
 
 **R3 (§18.3):** dynamic responsiveness protection, extended retention tiers + optional DuckDB/Parquet analytics, crash correlation depth, system-change tracking completeness, CLI + PowerShell module, out-of-proc signed plugin framework (gRPC surface, capability-scoped), support bundle, driver decision gate (§4.9).
 
@@ -430,7 +435,7 @@ CI: GitHub Actions — hosted Windows runners for build/unit, self-hosted for pe
 | Storage | InfluxDB/QuestDB/Timescale (servers), raw-SQLite samples (write amplification), Parquet-only (no rolling head), OSQuery (query model, not a recorder) | Embedded Gorilla-tier TSDB + SQLite is the fit |
 | IPC | COM out-of-proc (works, but weak typing/versioning ergonomics), raw TCP localhost (opens ports — unacceptable for this product), WCF-era tech | gRPC/named-pipes + shared memory |
 | Sensors | Ship WinRing0-style driver in v1 | Documented CVE history in this exact category; earn the driver, don't start with it |
-| AI | Cloud-only assistant; embedding a giant local model | Violates local-first; ladder architecture serves both no-AI and BYO-model users |
+| AI | Hosting any model in Atlas — local (ONNX Runtime GenAI / llama.cpp / Phi) or a built-in cloud-endpoint selector | Made Atlas own the *answer* (the hard, trust-eroding part) and bloated packaging with inference runtimes. Replaced by: deterministic local playbook matching (in-app) + a read-only MCP server that hands grounded evidence to the user's own client, which owns the model |
 
 ---
 
@@ -445,7 +450,7 @@ Ordered, each ≤ 1 week, each de-risks a load-bearing assumption:
 5. **ConsentStore + SRUM probes** across 23H2/24H2/25H2 — stability of the undocumented surfaces we lean on; wire canary tests.
 6. **D3DKMT/GPU counters on ARM64 + hybrid iGPU/dGPU** — attribution correctness where Task Manager itself struggles.
 7. **PresentMon library embedding** — license review + frame-time capture overhead during a real game session.
-8. **Local model grounding loop** — Phi-class model + grammar-constrained tool calls against recorded incident data; measure hallucination rate with citations enforced (drives whether MVP+1 ships local AI on by default or behind a flag).
+8. **MCP server spike (R2)** — stand up `atlas-mcp` (JSON-RPC/stdio) exposing 2–3 read-only tools over the existing `AtlasQuery` pipe; register it in a real MCP client (Claude Desktop) and confirm grounded results render with confidence + missing-data markers, that redaction is applied to tool output, and that no `AtlasControl` surface is reachable.
 
 ---
 
@@ -460,8 +465,7 @@ Ordered, each ≤ 1 week, each de-risks a load-bearing assumption:
 | Windows App SDK / WinUI 3 | UI framework | MIT (SDK components) |
 | `Microsoft.Graphics.Win2D` | chart rendering | MIT |
 | `CommunityToolkit.*` | MVVM, controls | MIT |
-| ONNX Runtime (+ GenAI, DirectML) | local inference | MIT |
-| llama.cpp | GGUF model support | MIT |
+| MCP Rust SDK (or hand-rolled JSON-RPC 2.0 over stdio) | `atlas-mcp` server transport (R2) | verify at adoption; no model runtime shipped |
 | Intel PresentMon (library) | frame-time ETW consumption | MIT — re-verify |
 | NVML / ADLX / IGCL | GPU vendor telemetry | vendor SDK terms — legal review |
 | FlaUI | UI automation tests | MIT |
@@ -470,4 +474,4 @@ Ordered, each ≤ 1 week, each de-risks a load-bearing assumption:
 
 # Appendix B — Decision Records to Maintain
 
-Adopt lightweight ADRs in `docs/adr/`; the decisions in this document seed ADR-001…015 (language split, LocalSystem service, no-driver-v1, TSDB-over-SQLite-samples, gRPC/named-pipes, WinUI 3, NativeAOT, consent-token broker, evidence-graph diagnostics, AI grounding loop, sparse-MSIX shell integration, WiX MSI, staged updates, perf-gates-in-CI, ARM64-day-one). Revisit each only with new evidence — especially the driver gate and the DuckDB deferral.
+Adopt lightweight ADRs in `docs/adr/`; the decisions in this document seed ADR-001…015 (language split, LocalSystem service, no-driver-v1, TSDB-over-SQLite-samples, gRPC/named-pipes, WinUI 3, NativeAOT, consent-token broker, evidence-graph diagnostics, **read-only MCP integration instead of a hosted model** (2026-07-13), sparse-MSIX shell integration, WiX MSI, staged updates, perf-gates-in-CI, ARM64-day-one). Revisit each only with new evidence — especially the driver gate and the DuckDB deferral.

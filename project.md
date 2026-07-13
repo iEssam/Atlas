@@ -195,7 +195,7 @@ No account should be required for core functionality.
 
 No system history should be uploaded by default.
 
-Artificial intelligence features should support local models and should clearly disclose what data will be shared before any external model is used.
+The product should not host or upload to any artificial-intelligence model. In-app natural-language analysis is deterministic and fully local. Integration with an external model is provided only through an optional, off-by-default, read-only MCP server; when a user enables it and their MCP client calls a tool, the product must clearly disclose that the returned data leaves the device for that client's model provider, and must apply redaction to that data by default.
 
 ## 3.7 Fast interaction
 
@@ -371,7 +371,7 @@ A complete troubleshooting product should compare:
 11. Start quickly and remain responsive under system stress.
 12. Provide a modern and visually coherent Windows 11 interface.
 13. Respect privacy through local processing and explicit permission boundaries.
-14. Provide natural-language analysis without making unsupported claims.
+14. Provide deterministic in-app natural-language analysis without making unsupported claims, and expose grounded, citation-ready evidence to the user's own AI client through an optional read-only MCP server.
 15. Serve general users and experts through progressive disclosure rather than separate products.
 
 ## 5.2 Secondary goals
@@ -1877,11 +1877,11 @@ The product should avoid declaring success based on insufficient data.
 
 ---
 
-# 9.16 Natural-Language Assistant
+# 9.16 Natural-Language Analysis and MCP Integration
 
-The assistant should allow users to query the system using natural language.
+> **Direction (2026-07-13):** System Atlas does **not** host an artificial-intelligence model or generate conversational answers. It collects, analyzes, and exposes system *evidence*. Natural-language reasoning is provided two ways: (1) an in-app deterministic assistant that answers a fixed repertoire of questions from templates and playbooks, with no model; and (2) an optional, read-only **Model Context Protocol (MCP) server** that exposes grounded query tools to the user's own MCP-compatible client (such as Claude or ChatGPT), which supplies the model and the conversation. Atlas is the trusted evidence provider; the user chooses the AI client.
 
-Examples:
+Users should be able to ask questions such as:
 
 * What caused the processor spike at 7:30 PM?
 * Which applications used the most memory yesterday?
@@ -1896,56 +1896,63 @@ Examples:
 * Which process repeatedly crashes?
 * What would happen if I stop this service?
 
-## 9.16.1 Grounded responses
+The in-app deterministic assistant answers the supported question types directly from recorded evidence and the diagnostics playbooks. Broader or open-ended conversation is handled by the user's MCP client through the MCP tools below.
 
-The assistant must cite internal evidence.
+## 9.16.1 Grounded, citation-ready evidence
 
-Every claim should link to:
+Every result Atlas returns — from the in-app assistant and from the MCP tools — must be structured and carry the evidence needed to cite it:
 
 * Timeline range.
-* Process.
+* Process identity.
 * Event.
 * Metric.
 * Change.
 * Rule.
 * Configuration item.
+* Confidence level.
+* Missing-data markers.
+* Retention or sensor limitations.
 
-## 9.16.2 Local model support
+The in-app assistant displays only claims backed by this evidence. For the MCP path, Atlas guarantees that its tools return **citation-ready** evidence with these fields. Atlas **cannot** guarantee that the external model's final answer contains no unsupported claims: Atlas controls the tool results, but the MCP client controls the conversation and the final response. The product must present this honestly — it provides citation-ready evidence, not a guarantee that every external answer is cited.
 
-The product should support:
+## 9.16.2 MCP server (read-only)
 
-* No artificial intelligence mode.
-* Rule-based local analysis.
-* Local language model integration.
-* User-configured external model.
-* Enterprise-controlled model endpoint.
+The optional MCP server should expose controlled, read-only tools such as:
+
+* `query_timeline`
+* `top_consumers`
+* `find_events`
+* `diff_periods`
+* `explain_process`
+* `get_incident`
+* `get_playbook_result`
+* `list_system_changes`
+* `find_crashes`
+
+Requirements:
+
+* The MCP server exposes **read-only** tools only. It must never be able to terminate, suspend, or reconfigure anything; any action a model suggests becomes a recommendation the user confirms through the normal in-app consent and broker flow.
+* It hosts no model and performs no inference. The user's MCP client provides the model.
+* Each tool result is self-describing (the §9.16.1 fields).
 
 ## 9.16.3 Explicit data boundaries
 
-Before sending any data to an external model, the product should show:
+When an MCP client calls a tool, the returned system data may be sent to that client's model provider. The product must treat the MCP surface as an external boundary:
 
-* What data will be sent.
-* Time range.
-* Process names.
-* File paths.
-* Network endpoints.
-* User names.
-* Whether sensitive details will be redacted.
+* MCP is disabled by default and requires explicit user enablement.
+* Read-only tools only.
+* Sensitive fields excluded by default; redaction defaults on for MCP and is stricter than for local in-app views.
+* Configurable redaction for file paths, user names, domains, window titles, command lines, and application names.
+* Result-size and time-range limits per tool.
+* A clear warning that returned information leaves Atlas's security boundary.
+* Tool-call auditing that records exactly what each tool returned (or a hash plus field summary).
+* The ability to revoke MCP access immediately.
 
-Users should be able to exclude:
+Atlas may not be able to preview the client's complete final prompt, but it can show and log exactly what each MCP tool returned.
 
-* File paths.
-* Window titles.
-* Domains.
-* User account names.
-* Application names.
-* Command lines.
-* Environment variables.
-* Specific applications.
+## 9.16.4 Stated limitations
 
-## 9.16.4 Assistant limitations
-
-The assistant must state when:
+Both the in-app assistant and the evidence returned to MCP clients must state when:
 
 * Data is missing.
 * Monitoring was disabled.
@@ -2540,11 +2547,11 @@ The privileged component should expose the minimum required surface.
 
 ## 13.2 Process isolation
 
-The user interface, collection service, privileged broker, artificial intelligence integration, and update mechanism should be isolated.
+The user interface, collection service, privileged broker, MCP server, and update mechanism should be isolated.
 
 A user-interface crash must not stop historical collection.
 
-An artificial intelligence integration failure must not affect monitoring.
+An MCP-server failure must not affect monitoring. The MCP server is an optional, read-only process and is absent entirely unless the user enables it.
 
 ## 13.3 Data model
 
@@ -2660,7 +2667,7 @@ Record:
 * Privileged operations.
 * Settings changes.
 * Data exports.
-* External artificial intelligence requests.
+* MCP enablement and each MCP tool call, including exactly what the tool returned (or a hash plus field summary).
 * Rollbacks.
 * Update operations.
 
@@ -2744,7 +2751,7 @@ Onboarding should clearly explain:
 * How much storage may be used.
 * Which capabilities require elevation.
 * Whether a driver is installed.
-* Whether artificial intelligence is enabled.
+* Whether the read-only MCP server is enabled, and that when it is, data returned to an MCP client leaves Atlas's security boundary for that client's model provider.
 
 ---
 
@@ -2854,7 +2861,7 @@ Add:
 * Detailed network inspector.
 * Battery and thermal analysis.
 * Before-and-after experiments.
-* Local artificial intelligence integration.
+* Read-only MCP server exposing grounded query tools to user-configured MCP clients.
 * Advanced privacy alerts.
 
 ## 18.3 Third release
@@ -2908,7 +2915,7 @@ Add:
 ## 19.4 User trust
 
 * Percentage of recommendations with viewed evidence.
-* Percentage of users who disable external artificial intelligence.
+* Percentage of MCP tool calls whose returned evidence carried complete grounding fields (confidence, evidence IDs, missing-data markers).
 * Privacy-alert false-positive rate.
 * Destructive-action cancellation rate.
 * User-reported confidence in explanations.
