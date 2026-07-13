@@ -1,0 +1,376 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ============================================================================
+  System Atlas - M9 per-machine MSI (WiX v5 / v6 authoring)
+  ============================================================================
+  Milestone: M9 (docs/phases.md), Packaging design: tech-stack.md sec 8.
+
+  This is MODERN WiX v4/v5 authoring:
+    - the v4 schema namespace (http://wixtoolset.org/schemas/v4/wxs)
+    - the <Package> element (NOT the legacy <Product>/<Module>)
+    - <StandardDirectory> instead of hand-declared TARGETDIR/ProgramFilesFolder
+    - the <Files> auto-harvest element for the WinUI publish tree (replaces heat)
+
+  What it installs (tech-stack sec 8 "Service + Win32 app + ... in one
+  per-machine install"):
+    1. atlas-service.exe  -> %ProgramFiles%\System Atlas\, registered as the
+       "SystemAtlas" Windows service (auto-start, LocalSystem, crash-restart).
+    2. Atlas.App.exe (+ its self-contained WinUI/WindowsAppSDK publish output)
+       -> same directory, with an all-users Start Menu shortcut.
+    3. %ProgramData%\System Atlas\  data directory, ACL'd per tech-stack sec 7.
+
+  Components that DO NOT EXIST YET (scaffolded as clearly-commented stubs so a
+  maintainer can drop the binaries in without re-architecting the package):
+    - Emergency UI  (atlas-emergency-ui.exe, Rust/Win32 - tech-stack sec 4.6)
+    - Tray helper   (atlas-tray.exe        - tech-stack sec 4.6)
+    - CLI           (atlas.exe             - tech-stack sec 4.8, R3)
+    - Sparse MSIX shell-extension identity (tech-stack sec 4.8)
+  See the "FUTURE COMPONENTS" feature block near the bottom.
+
+  BUILD: driven by installer/build.ps1, which passes these preprocessor vars:
+    -d ProductVersion=<x.y.z.b>
+    -d ServiceExe=<path to atlas-service.exe>
+    -d AppPublishDir=<dir containing Atlas.App.exe + deps>
+    -d Platform=x64            (see the ARM64 note at the bottom)
+  ============================================================================
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+
+  <!--
+    ProductVersion is supplied by build.ps1 (-d ProductVersion=...). Fallback
+    keeps the source standalone-compilable for review. MSI compares only the
+    first three fields of the version for upgrade decisions; keep the 4th
+    (build) monotonic but know it is ignored by MajorUpgrade.
+  -->
+  <?ifndef ProductVersion ?>
+  <?define ProductVersion = "0.1.0.0" ?>
+  <?endif?>
+
+  <!--
+    UpgradeCode: STABLE for the life of the product+platform. NEVER change it
+    or upgrades break. This is the x64 UpgradeCode. The ARM64 build uses its
+    own distinct UpgradeCode (see the ARM64 note) so the two architectures are
+    independent products that never try to "upgrade" across arch.
+  -->
+  <Package
+      Name="System Atlas"
+      Manufacturer="System Atlas Project"
+      Version="$(var.ProductVersion)"
+      UpgradeCode="4E70F468-4F53-4E57-B67D-40A1B08D0C7A"
+      Scope="perMachine"
+      Compressed="yes"
+      Language="1033"
+      Codepage="1252">
+
+    <!--
+      Per-machine: elevation required. The MSI UI/exec sequence runs the
+      service registration as the local SYSTEM/admin context. tech-stack sec 8:
+      "per-machine install".
+    -->
+    <SummaryInformation
+        Description="System Atlas - Windows system intelligence and control"
+        Keywords="System Atlas, monitoring, diagnostics, Windows service"
+        Manufacturer="System Atlas Project" />
+
+    <!--
+      MajorUpgrade: schedule the removal of the old version early
+      (afterInstallInitialize) so files are swapped cleanly. Block downgrades
+      with a friendly message. AllowSameVersionUpgrades lets a rebuild with the
+      same 3-part version reinstall over itself (handy for CI/canary rings).
+    -->
+    <MajorUpgrade
+        Schedule="afterInstallInitialize"
+        AllowSameVersionUpgrades="yes"
+        DowngradeErrorMessage="A newer version of System Atlas is already installed. Setup will now exit." />
+
+    <!-- Embed everything into a single compressed cab inside the MSI. -->
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Grab the Util extension well-known SID properties (WIX_ACCOUNT_*). -->
+    <util:QueryWindowsWellKnownSIDs />
+
+    <!-- Minimum OS: Windows 10 1809 / Server 2019 (WindowsAppSDK floor). -->
+    <Launch
+        Condition="Installed OR (VersionNT &gt;= 603)"
+        Message="System Atlas requires Windows 10 version 1809 or later." />
+
+    <!--
+      ==================================================================
+      DIRECTORY LAYOUT
+      ==================================================================
+      %ProgramFiles%\System Atlas\        <- binaries (INSTALLFOLDER)
+      %ProgramData%\System Atlas\         <- data dir (DATAFOLDER, sec 7 ACL)
+      Start Menu\Programs\System Atlas\   <- shortcut folder
+    -->
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="System Atlas" />
+    </StandardDirectory>
+
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="DATAFOLDER" Name="System Atlas" />
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="AppShortcutFolder" Name="System Atlas" />
+    </StandardDirectory>
+
+    <!--
+      ==================================================================
+      COMPONENT 1 - COLLECTION SERVICE  (tech-stack sec 4.1, sec 8)
+      ==================================================================
+      Installs atlas-service.exe and registers it as the "SystemAtlas"
+      Windows service.
+
+      SERVICE NAME COORDINATION (assumption): the service short name is
+      "SystemAtlas". The Rust service agent that adds SCM support (M9,
+      docs/phases.md "Windows service mode") MUST register under this exact
+      name so install/uninstall here controls the same service. This is a
+      by-convention contract only - we deliberately do not read the other
+      agent's worktree. If the Rust side picks a different name, change the
+      three "Name=" attributes below (ServiceInstall, ServiceControl, and
+      util:ServiceConfig) to match.
+
+      SERVICE ENTRY POINT (assumption): atlas-service.exe today is a console
+      dev binary (subcommands: top/record/serve/...). It does NOT yet
+      implement the SCM StartServiceCtrlDispatcher entry point. We pass the
+      argument "run-service" as the SCM invocation; the Rust agent must add a
+      matching subcommand/branch that talks to the Service Control Manager.
+      Until that lands, ServiceControl "Start=install" will fail at install
+      time (the exe won't check in with SCM) - this is expected and is the
+      single coordination point between this installer and the service agent.
+    -->
+    <Component Id="cmpAtlasService" Directory="INSTALLFOLDER" Bitness="always64">
+      <File Id="filAtlasServiceExe"
+            Name="atlas-service.exe"
+            Source="$(var.ServiceExe)"
+            KeyPath="yes" />
+
+      <!--
+        Auto-start, LocalSystem, own process. tech-stack sec 2.2: the service
+        runs as LocalSystem (ETW kernel sessions, SCM, cross-user inspection);
+        it strips unneeded privileges from its own token at startup (that is a
+        runtime concern, not an installer one).
+      -->
+      <ServiceInstall
+          Id="siAtlasService"
+          Name="SystemAtlas"
+          DisplayName="System Atlas Collection Service"
+          Description="Collects system telemetry (ETW, SCM, sensors), stores history, runs rules and diagnostics, and brokers privileged actions for System Atlas."
+          Type="ownProcess"
+          Start="auto"
+          ErrorControl="normal"
+          Account="LocalSystem"
+          Arguments="run-service"
+          Vital="yes">
+        <!--
+          Crash-restart recovery (tech-stack sec 8 "recovery/restart config",
+          phases.md M9 "crash-restart recovery"): restart on the first two
+          failures, reset the failure count daily.
+        -->
+        <util:ServiceConfig
+            FirstFailureActionType="restart"
+            SecondFailureActionType="restart"
+            ThirdFailureActionType="none"
+            RestartServiceDelayInSeconds="5"
+            ResetPeriodInDays="1" />
+      </ServiceInstall>
+
+      <!--
+        Start on install; stop AND remove on uninstall. Wait for the SCM to
+        confirm each transition so uninstall does not race a running service.
+      -->
+      <ServiceControl
+          Id="scAtlasService"
+          Name="SystemAtlas"
+          Start="install"
+          Stop="both"
+          Remove="uninstall"
+          Wait="yes" />
+    </Component>
+
+    <!--
+      ==================================================================
+      COMPONENT GROUP 2 - WINUI APP PAYLOAD  (tech-stack sec 4.6)
+      ==================================================================
+      The WinUI app is published self-contained (SelfContained +
+      WindowsAppSDKSelfContained in Atlas.App.csproj), so the publish dir holds
+      Atlas.App.exe PLUS a few hundred runtime files (WindowsAppSDK, .NET
+      runtime, WinUI, resources.pri, native DLLs).
+
+      HARVESTING: we use the WiX v5 <Files> element to auto-harvest the whole
+      publish tree at build time. This is the modern replacement for heat.exe.
+      Each file becomes its own component with a stable, path-derived GUID, so
+      the component set tracks the publish output automatically on every build.
+      See installer/harvest.md for the rationale and the manual-ComponentGroup
+      alternative.
+
+      The Atlas.App.exe file itself is harvested here too; the Start Menu
+      shortcut (Component 3) targets it by path ([INSTALLFOLDER]Atlas.App.exe)
+      rather than by File Id, which keeps the shortcut independent of the
+      harvested component ids.
+    -->
+    <ComponentGroup Id="cgAppPayload" Directory="INSTALLFOLDER">
+      <Files Include="$(var.AppPublishDir)\**">
+        <!--
+          Exclude any stray pdb/xml doc files from the shipped payload.
+          (Remove these excludes if you want symbols in the MSI.)
+        -->
+        <Exclude Files="$(var.AppPublishDir)\**\*.pdb" />
+        <Exclude Files="$(var.AppPublishDir)\**\*.xml" />
+      </Files>
+    </ComponentGroup>
+
+    <!--
+      ==================================================================
+      COMPONENT 3 - START MENU SHORTCUT
+      ==================================================================
+      Non-advertised shortcut to the WinUI app. Per-machine install, so it
+      lives under the all-users Start Menu. KeyPath is an HKLM registry value
+      (required: a shortcut component needs a non-file keypath under HKLM for a
+      per-machine install), and RemoveFolder cleans the shortcut subfolder on
+      uninstall.
+    -->
+    <Component Id="cmpAppShortcut" Directory="AppShortcutFolder"
+               Guid="99E24F46-776F-4F04-AE50-4B68447E0624">
+      <Shortcut Id="scutAtlasApp"
+                Name="System Atlas"
+                Description="Open the System Atlas dashboard"
+                Target="[INSTALLFOLDER]Atlas.App.exe"
+                WorkingDirectory="INSTALLFOLDER" />
+      <RemoveFolder Id="rmAppShortcutFolder" On="uninstall" />
+      <RegistryValue Root="HKLM"
+                     Key="Software\System Atlas\Shortcuts"
+                     Name="StartMenu"
+                     Type="integer"
+                     Value="1"
+                     KeyPath="yes" />
+    </Component>
+
+    <!--
+      ==================================================================
+      COMPONENT 4 - DATA DIRECTORY + ACL  (tech-stack sec 7 "Data protection")
+      ==================================================================
+      Creates %ProgramData%\System Atlas\ and sets its ACL.
+
+      tech-stack sec 7 / sec 14.4: "database directory ACL'd to SYSTEM + the
+      owning user; per-user data separation keyed by SID". Because this is a
+      per-machine install running as SYSTEM, there is no single "owning user"
+      at install time - the DATA ROOT is created with a machine-wide ACL here,
+      and the SERVICE creates per-user SID-keyed subfolders at runtime with the
+      tightened per-user DACL. That runtime tightening is intentionally NOT the
+      installer's job (the installer cannot know which users will exist).
+
+      DACL applied here (via util:PermissionEx over CreateFolder):
+        - LocalSystem   : full control   (the service runs as SYSTEM)
+        - Administrators : full control   (management/uninstall)
+        - Users          : read + execute + traverse (list/enter only)
+      Standard users get NO write at the root; the service grants each user
+      write only inside that user's own SID subfolder at runtime.
+
+      ACL-REPLACEMENT NOTE / TODO: util:PermissionEx here ADDS explicit ACEs but
+      does not by itself strip inherited ACEs from %ProgramData%. To get a
+      hardened "SYSTEM + owning user ONLY" DACL with inheritance disabled, the
+      service should re-apply a protected DACL (SetNamedSecurityInfo with
+      PROTECTED_DACL_SECURITY_INFORMATION) at first run per SID subfolder. This
+      installer establishes the safe machine-wide baseline; the per-SID lockdown
+      is a documented runtime TODO for the service (tech-stack sec 14.4
+      "per-user data separation keyed by SID").
+    -->
+    <Component Id="cmpDataFolder" Directory="DATAFOLDER"
+               Guid="0757C764-D3DF-4D63-8C0E-B3DFECC12DEE" Bitness="always64">
+      <CreateFolder>
+        <util:PermissionEx User="[WIX_ACCOUNT_LOCALSYSTEM]" GenericAll="yes" />
+        <util:PermissionEx User="[WIX_ACCOUNT_ADMINISTRATORS]" GenericAll="yes" />
+        <util:PermissionEx User="[WIX_ACCOUNT_USERS]"
+                           GenericRead="yes"
+                           GenericExecute="yes"
+                           Traverse="yes" />
+      </CreateFolder>
+      <!-- Non-file keypath so the empty-folder component is deterministic. -->
+      <RegistryValue Root="HKLM"
+                     Key="Software\System Atlas\Data"
+                     Name="Root"
+                     Type="string"
+                     Value="[DATAFOLDER]"
+                     KeyPath="yes" />
+    </Component>
+
+    <!--
+      ==================================================================
+      COMPONENT 5..8 - FUTURE COMPONENTS (STUBS - binaries do not exist yet)
+      ==================================================================
+      Emergency UI, tray helper, CLI, and sparse-MSIX shell identity are named
+      in tech-stack sec 4.6 / sec 4.8 / sec 8 but are NOT built yet (they are
+      not in the M8 tree). They are intentionally left as commented scaffolding
+      so a maintainer only has to: (a) produce the binary, (b) point a
+      preprocessor var at it, (c) uncomment the component + its FeatureRef.
+
+      <Component Id="cmpEmergencyUi" Directory="INSTALLFOLDER" Bitness="always64">
+        <File Id="filEmergencyUi" Name="atlas-emergency-ui.exe"
+              Source="$(var.EmergencyUiExe)" KeyPath="yes" />
+      </Component>
+
+      <Component Id="cmpTrayHelper" Directory="INSTALLFOLDER" Bitness="always64">
+        <File Id="filTrayHelper" Name="atlas-tray.exe"
+              Source="$(var.TrayExe)" KeyPath="yes" />
+        Run-key / StartupTask registration for the tray helper goes here
+        (tech-stack sec 4.8 "tray helper via Run key").
+      </Component>
+
+      <Component Id="cmpCli" Directory="INSTALLFOLDER" Bitness="always64">
+        <File Id="filCli" Name="atlas.exe" Source="$(var.CliExe)" KeyPath="yes" />
+        Optionally append INSTALLFOLDER to the machine PATH via
+        util:PathEntry so "atlas ..." works from any shell (R3).
+      </Component>
+
+      Sparse MSIX (IExplorerCommand shell identity, tech-stack sec 4.8):
+      shipped as a separate .msix registered post-install (Add-AppxPackage /
+      stager custom action), NOT as MSI file components - the modern context
+      menu requires package identity the MSI cannot grant. Tracked in
+      installer/README.md under "Shell extension".
+    -->
+
+    <!--
+      ==================================================================
+      FEATURE TREE
+      ==================================================================
+      One top-level feature with child features so an enterprise admin can
+      deselect the app UI (headless service-only fleet install) via
+      ADDLOCAL/REMOVE. The service + data dir are the non-optional core.
+    -->
+    <Feature Id="ProductCore"
+             Title="System Atlas"
+             Description="Core collection service and data store."
+             Level="1"
+             AllowAbsent="no"
+             Display="expand">
+
+      <ComponentRef Id="cmpAtlasService" />
+      <ComponentRef Id="cmpDataFolder" />
+
+      <Feature Id="DesktopApp"
+               Title="Desktop application"
+               Description="WinUI dashboard, timeline, inspector, and Start Menu shortcut."
+               Level="1"
+               AllowAbsent="yes">
+        <ComponentGroupRef Id="cgAppPayload" />
+        <ComponentRef Id="cmpAppShortcut" />
+      </Feature>
+
+      <!--
+        Uncomment as the stub binaries land:
+        <Feature Id="EmergencyUi" Title="Emergency UI" Level="1">
+          <ComponentRef Id="cmpEmergencyUi" />
+        </Feature>
+        <Feature Id="TrayHelper" Title="Tray helper" Level="1">
+          <ComponentRef Id="cmpTrayHelper" />
+        </Feature>
+        <Feature Id="CommandLine" Title="CLI (atlas)" Level="1">
+          <ComponentRef Id="cmpCli" />
+        </Feature>
+      -->
+    </Feature>
+
+  </Package>
+</Wix>

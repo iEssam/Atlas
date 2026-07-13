@@ -1,0 +1,6 @@
+# Installer build outputs (produced by build.ps1) — never commit binaries/MSIs.
+out/
+stage/
+*.msi
+*.wixpdb
+*.cab
