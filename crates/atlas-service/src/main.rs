@@ -13,6 +13,8 @@ mod diagnostics;
 #[cfg(windows)]
 mod ipc;
 mod report;
+mod service_ctl;
+mod soak;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -239,6 +241,10 @@ enum Cmd {
         /// Aggregation/flush window in seconds (matches `record`).
         #[arg(long, default_value_t = 15)]
         flush_secs: u64,
+        /// Emit a single machine-readable JSON line instead of the human report
+        /// (the CI perf gate parses this; field names are stable — M9).
+        #[arg(long)]
+        json: bool,
     },
     /// List detected incidents over a look-back window (M8).
     ///
@@ -298,6 +304,60 @@ enum Cmd {
         #[arg(long)]
         redact_command_lines: bool,
     },
+    /// Manage the Windows service host (M9): install | uninstall | run | status.
+    ///
+    /// `install`/`uninstall` need an elevated terminal (they touch the SCM); an
+    /// unprivileged run prints a clear "run elevated" message and exits with a
+    /// distinct code, exactly like the ETW path. `run` is the SCM entry point and
+    /// is meant to be launched by the Service Control Manager, not by hand.
+    Service {
+        #[command(subcommand)]
+        cmd: ServiceCmd,
+    },
+    /// Leak-detection soak: run the record pipeline for N minutes, fit an RSS
+    /// slope + peak handle growth on its own metrics, print PASS/FAIL (M9).
+    ///
+    /// Designed to run short in CI (a few minutes) and long (72 h) manually. The
+    /// verdict fails if extrapolated RSS growth exceeds the slope threshold or
+    /// handle growth exceeds its threshold (PRD §12.2 — the tool watches itself).
+    Soak {
+        /// Duration in minutes.
+        #[arg(long, default_value_t = 3)]
+        minutes: u64,
+        /// Self-sampling period in seconds (how often own RSS/handles are read).
+        #[arg(long, default_value_t = 10)]
+        sample_secs: u64,
+        /// Sampling interval floor for the underlying record pipeline.
+        #[arg(long, default_value_t = 1.0)]
+        interval: f64,
+        /// Flush window for the underlying record pipeline.
+        #[arg(long, default_value_t = 15)]
+        flush_secs: u64,
+        /// RSS-slope failure threshold, MB/hour (extrapolated).
+        #[arg(long, default_value_t = soak::DEFAULT_SLOPE_THRESHOLD_MB_PER_HOUR)]
+        slope_threshold: f64,
+        /// Peak handle-growth failure threshold.
+        #[arg(long, default_value_t = soak::DEFAULT_HANDLE_GROWTH_THRESHOLD)]
+        handle_threshold: i64,
+        /// Warmup window (seconds) excluded from the slope fit, so the one-time
+        /// startup RSS ramp is not mistaken for a leak.
+        #[arg(long, default_value_t = soak::DEFAULT_WARMUP_SECS)]
+        warmup_secs: f64,
+    },
+}
+
+#[derive(Subcommand)]
+enum ServiceCmd {
+    /// Register the service (auto-start, runs `service run`) with crash-restart
+    /// failure actions. Needs elevation.
+    Install,
+    /// Stop and delete the service. Needs elevation.
+    Uninstall,
+    /// The SCM entry point — connects to the Service Control Manager and runs the
+    /// collection + serve loop. Launched by the SCM, not by hand.
+    Run,
+    /// Query and print the service's current state.
+    Status,
 }
 
 #[derive(Subcommand)]
@@ -382,7 +442,26 @@ fn main() -> Result<()> {
             duration,
             interval,
             flush_secs,
-        } => cmd_overhead(duration, interval, flush_secs),
+            json,
+        } => cmd_overhead(duration, interval, flush_secs, json),
+        Cmd::Service { cmd } => cmd_service(cmd),
+        Cmd::Soak {
+            minutes,
+            sample_secs,
+            interval,
+            flush_secs,
+            slope_threshold,
+            handle_threshold,
+            warmup_secs,
+        } => cmd_soak(
+            minutes,
+            sample_secs,
+            interval,
+            flush_secs,
+            slope_threshold,
+            handle_threshold,
+            warmup_secs,
+        ),
         Cmd::Incidents { db, minutes, limit } => {
             cmd_incidents(db.unwrap_or_else(default_db_path), minutes, limit)
         }
@@ -785,6 +864,20 @@ fn cmd_record(
     duration: Option<u64>,
 ) -> Result<()> {
     let stop = install_ctrlc();
+    record_loop(db_path, interval, flush_secs, duration, stop)
+}
+
+/// The record pipeline core, driven by an externally owned `stop` flag so it can
+/// be hosted both by the `record` CLI command (Ctrl+C flag) and by the Windows
+/// service body (SCM STOP/SHUTDOWN flag). Runs until `stop` flips or `duration`
+/// elapses, then drains the writer cleanly.
+fn record_loop(
+    db_path: PathBuf,
+    interval: f64,
+    flush_secs: u64,
+    duration: Option<u64>,
+    stop: Arc<AtomicBool>,
+) -> Result<()> {
     // The store lives entirely on the writer thread; the sampling loop never
     // touches SQLite (M2). A small bound (4) gives the writer slack without
     // letting a stall balloon memory: past that we drop batches and record a
@@ -1423,6 +1516,15 @@ fn ring_discriminator(pipe: Option<String>) -> String {
 /// `serve`: host AtlasQuery + AtlasControl over the named pipe until Ctrl+C.
 #[cfg(windows)]
 fn cmd_serve(pipe: Option<String>, db: PathBuf) -> Result<()> {
+    let stop = install_ctrlc();
+    serve_loop(pipe, db, stop)
+}
+
+/// The serve core, driven by an externally owned `stop` flag so it can be hosted
+/// both by the `serve` CLI command (Ctrl+C flag) and by the Windows service body
+/// (SCM STOP/SHUTDOWN flag). Blocks until `stop` flips, then drains cleanly.
+#[cfg(windows)]
+fn serve_loop(pipe: Option<String>, db: PathBuf, stop: Arc<AtomicBool>) -> Result<()> {
     use atlas_ipc::{AtlasControlServer, AtlasQueryServer};
 
     let pipe_disc = pipe.clone();
@@ -1444,11 +1546,15 @@ fn cmd_serve(pipe: Option<String>, db: PathBuf) -> Result<()> {
             .add_service(AtlasQueryServer::from_arc(handle.clone()))
             .add_service(AtlasControlServer::from_arc(broker));
 
-        tracing::info!(pipe = %name, "AtlasQuery + AtlasControl serving (Ctrl+C to stop)");
-        println!("Serving AtlasQuery + AtlasControl on {name} (Ctrl+C to stop)");
+        tracing::info!(pipe = %name, "AtlasQuery + AtlasControl serving");
+        println!("Serving AtlasQuery + AtlasControl on {name}");
 
-        let shutdown = async {
-            let _ = tokio::signal::ctrl_c().await;
+        // Shut down when the shared stop flag flips (Ctrl+C in the CLI path, or
+        // the SCM STOP/SHUTDOWN control in the service path). Poll at ~10 Hz.
+        let shutdown = async move {
+            while !stop.load(Ordering::SeqCst) {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
         };
         let result = atlas_ipc::serve(&name, router, shutdown).await;
         handle.shutdown();
@@ -1716,7 +1822,7 @@ const BUDGET_WS_BYTES: u64 = 100 * 1024 * 1024; // < 100 MB service standard mod
 /// `duration` seconds and report own cost against the PRD budgets. Always
 /// returns Ok(()) so the process exits 0 — informational until M9 makes it a
 /// gate. The temp database is deleted on the way out.
-fn cmd_overhead(duration: u64, interval: f64, flush_secs: u64) -> Result<()> {
+fn cmd_overhead(duration: u64, interval: f64, flush_secs: u64, json: bool) -> Result<()> {
     let stop = install_ctrlc();
 
     // A unique temp DB so parallel runs never collide; deleted in all exit
@@ -1748,10 +1854,12 @@ fn cmd_overhead(duration: u64, interval: f64, flush_secs: u64) -> Result<()> {
     let own_pid = std::process::id();
     let mut cadence = CadenceController::new();
 
-    println!(
-        "Running overhead harness for {duration}s (temp db: {}) ...",
-        db_path.display()
-    );
+    if !json {
+        println!(
+            "Running overhead harness for {duration}s (temp db: {}) ...",
+            db_path.display()
+        );
+    }
 
     let started = Instant::now();
     let flush_every = Duration::from_secs(flush_secs.max(2));
@@ -1891,19 +1999,352 @@ fn cmd_overhead(duration: u64, interval: f64, flush_secs: u64) -> Result<()> {
         Some((bytes, samples))
     });
 
-    print_overhead_report(
-        &metrics,
-        elapsed,
-        flush_windows,
-        db_bytes,
-        block_stats,
-        etw_live,
-        interval,
-        flush_secs,
-    );
+    if json {
+        print_overhead_json(
+            &metrics,
+            elapsed,
+            flush_windows,
+            db_bytes,
+            block_stats,
+            etw_live,
+        );
+    } else {
+        print_overhead_report(
+            &metrics,
+            elapsed,
+            flush_windows,
+            db_bytes,
+            block_stats,
+            etw_live,
+            interval,
+            flush_secs,
+        );
+    }
 
     // `_guard` deletes the temp db here on drop.
     Ok(())
+}
+
+/// Emits the single machine-readable overhead line the CI perf gate parses
+/// (M9). Field names are STABLE — the gate keys off them; do not rename without
+/// updating `.github/workflows/perf.yml`. Percentages are derived from permille
+/// (÷10); working set + steady-state disk come from the same figures the human
+/// report prints.
+fn print_overhead_json(
+    m: &OverheadMetrics,
+    elapsed: Duration,
+    flush_windows: u64,
+    db_bytes: u64,
+    block_stats: Option<(u64, u64)>,
+    etw_live: bool,
+) {
+    let secs = elapsed.as_secs_f64().max(1e-3);
+    let cpu_avg_pct = m.cpu_avg_permille() / 10.0;
+    let cpu_max_pct = m.cpu_permille_max as f64 / 10.0;
+    let ws = m.working_set_max.max(m.working_set_last);
+    let ws_mb = mb(ws);
+
+    let (bytes_per_sample, mb_per_day_steadystate) = match block_stats {
+        Some((payload_bytes, samples)) if samples > 0 => {
+            let bps = payload_bytes as f64 / samples as f64;
+            let samples_per_s = samples as f64 / secs;
+            let mb_per_day = bps * samples_per_s * 86_400.0 / (1024.0 * 1024.0);
+            (bps, mb_per_day)
+        }
+        _ => (0.0, 0.0),
+    };
+
+    let cpu_budget_pct = BUDGET_CPU_PERMILLE / 10.0;
+    let ws_budget_mb = (BUDGET_WS_BYTES / (1024 * 1024)) as f64;
+    // The working-set gate is authoritative; the CPU pass is advisory on shared
+    // CI (documented in perf.yml). Report both so the gate can choose.
+    let pass_cpu = m.cpu_weight_s > 0.0 && m.cpu_avg_permille() < BUDGET_CPU_PERMILLE;
+    let pass_ws = ws > 0 && ws < BUDGET_WS_BYTES;
+
+    let line = serde_json::json!({
+        "duration_s": (secs * 10.0).round() / 10.0,
+        "own_cpu_avg_pct": round3(cpu_avg_pct),
+        "own_cpu_max_pct": round3(cpu_max_pct),
+        "own_working_set_mb": round3(ws_mb),
+        "tick_avg_ms": round3(m.tick_us_avg() as f64 / 1000.0),
+        "tick_max_ms": round3(m.tick_us_max as f64 / 1000.0),
+        "flush_windows": flush_windows,
+        "db_bytes": db_bytes,
+        "mb_per_day_steadystate": round3(mb_per_day_steadystate),
+        "bytes_per_sample": round3(bytes_per_sample),
+        "etw": if etw_live { "live" } else { "degraded" },
+        "budgets": {
+            "cpu_avg_pct": cpu_budget_pct,
+            "working_set_mb": ws_budget_mb,
+        },
+        "pass": {
+            "cpu": pass_cpu,
+            "working_set": pass_ws,
+        },
+    });
+    println!("{line}");
+}
+
+/// Rounds to 3 decimals for stable, compact JSON output.
+fn round3(x: f64) -> f64 {
+    (x * 1000.0).round() / 1000.0
+}
+
+/// The Windows service name (SCM key) and display name.
+const SERVICE_NAME: &str = "AtlasService";
+const SERVICE_DISPLAY_NAME: &str = "System Atlas Collection Service";
+
+/// Production store path for the service body: `%ProgramData%\SystemAtlas\atlas.db`
+/// (tech-stack §7 — the service runs as LocalSystem, so per-user LOCALAPPDATA is
+/// wrong). Falls back to the dev path if PROGRAMDATA is unset.
+fn default_service_db_path() -> PathBuf {
+    match std::env::var_os("PROGRAMDATA") {
+        Some(pd) => PathBuf::from(pd).join("SystemAtlas").join("atlas.db"),
+        None => default_db_path(),
+    }
+}
+
+/// `service`: install / uninstall / run / status the Windows service host (M9).
+#[cfg(windows)]
+fn cmd_service(cmd: ServiceCmd) -> Result<()> {
+    use service_ctl::{InstallOutcome, QueryOutcome, RunOutcome, UninstallOutcome};
+
+    match cmd {
+        ServiceCmd::Install => match service_ctl::install(SERVICE_NAME, SERVICE_DISPLAY_NAME)? {
+            InstallOutcome::Created => {
+                println!(
+                    "Installed service '{SERVICE_NAME}' (auto-start, crash-restart: restart after 5 s, 3 attempts, reset window 1 day)."
+                );
+                Ok(())
+            }
+            InstallOutcome::AlreadyExists => {
+                println!("Service '{SERVICE_NAME}' is already installed.");
+                Ok(())
+            }
+            InstallOutcome::AccessDenied => {
+                eprintln!(
+                    "Installing a service requires administrator rights. \
+                     Rerun `service install` from an elevated (Run as administrator) terminal."
+                );
+                std::process::exit(EXIT_ELEVATION_REQUIRED);
+            }
+        },
+        ServiceCmd::Uninstall => match service_ctl::uninstall(SERVICE_NAME)? {
+            UninstallOutcome::Deleted => {
+                println!("Uninstalled service '{SERVICE_NAME}'.");
+                Ok(())
+            }
+            UninstallOutcome::NotInstalled => {
+                println!("Service '{SERVICE_NAME}' is not installed.");
+                Ok(())
+            }
+            UninstallOutcome::AccessDenied => {
+                eprintln!(
+                    "Uninstalling a service requires administrator rights. \
+                     Rerun `service uninstall` from an elevated terminal."
+                );
+                std::process::exit(EXIT_ELEVATION_REQUIRED);
+            }
+        },
+        ServiceCmd::Status => {
+            match service_ctl::query_status(SERVICE_NAME)? {
+                QueryOutcome::Status(s) => {
+                    println!(
+                        "Service '{SERVICE_NAME}': {} (pid {}, exit code {})",
+                        service_ctl::state_label(s.current_state),
+                        s.pid,
+                        s.win32_exit_code
+                    );
+                    Ok(())
+                }
+                QueryOutcome::NotInstalled => {
+                    println!("Service '{SERVICE_NAME}' is not installed. Run `service install` (elevated).");
+                    Ok(())
+                }
+                QueryOutcome::AccessDenied => {
+                    eprintln!("Querying the service requires more access than this token has.");
+                    std::process::exit(EXIT_ELEVATION_REQUIRED);
+                }
+            }
+        }
+        ServiceCmd::Run => match service_ctl::run_service(SERVICE_NAME, hosted_service_workload)? {
+            RunOutcome::Completed => {
+                tracing::info!("service dispatcher returned; process exiting");
+                Ok(())
+            }
+            RunOutcome::NotUnderScm => {
+                eprintln!(
+                    "`service run` must be launched by the Service Control Manager, not from a \
+                     console. Use `service install` (elevated) then start it via services.msc / \
+                     `sc start {SERVICE_NAME}`. For a foreground collection run, use `record` or `serve`."
+                );
+                std::process::exit(EXIT_SERVICE_NOT_UNDER_SCM);
+            }
+        },
+    }
+}
+
+#[cfg(not(windows))]
+fn cmd_service(_cmd: ServiceCmd) -> Result<()> {
+    anyhow::bail!("the Windows service host is only available on Windows");
+}
+
+/// Exit code when `service run` is launched outside the SCM (console run).
+const EXIT_SERVICE_NOT_UNDER_SCM: i32 = 3;
+
+/// The service body: run the collection pipeline (`record`) on a background
+/// thread and host the gRPC/ring `serve` on this thread, both keyed to the SCM
+/// stop flag. When the SCM signals STOP/SHUTDOWN the flag flips, `serve` drains,
+/// and the record writer is joined so the last window lands (tech-stack §4.1).
+#[cfg(windows)]
+fn hosted_service_workload(stop: Arc<AtomicBool>) -> Result<()> {
+    let db = default_service_db_path();
+    if let Some(parent) = db.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    tracing::info!(db = %db.display(), "service workload starting (collection + serve)");
+
+    // Collection on a background thread (runs until `stop` flips).
+    let rec_stop = stop.clone();
+    let rec_db = db.clone();
+    let rec = std::thread::Builder::new()
+        .name("atlas-svc-record".into())
+        .spawn(move || record_loop(rec_db, 1.0, 15, None, rec_stop))?;
+
+    // Serve on this thread until `stop` flips.
+    let serve_res = serve_loop(None, db, stop.clone());
+
+    // Make sure the collection thread is told to stop, then join it.
+    stop.store(true, Ordering::SeqCst);
+    let rec_res = rec
+        .join()
+        .map_err(|_| anyhow::anyhow!("record thread panicked"))?;
+
+    serve_res.and(rec_res)
+}
+
+/// `soak`: run the real record pipeline for N minutes while periodically
+/// observing this process's OWN working set + handle count, then fit an RSS
+/// slope and peak handle growth and print a PASS/FAIL verdict (M9, PRD §12.2).
+///
+/// The record pipeline runs in-process on a background thread, so this process's
+/// footprint *is* the collection footprint being watched. A short run (a few
+/// minutes) suits CI; a long run (e.g. `--minutes 4320` for 72 h) is the manual
+/// leak soak. Returns a non-zero exit (via `Err`) on a FAIL verdict so CI gates.
+fn cmd_soak(
+    minutes: u64,
+    sample_secs: u64,
+    interval: f64,
+    flush_secs: u64,
+    slope_threshold: f64,
+    handle_threshold: i64,
+    warmup_secs: f64,
+) -> Result<()> {
+    let stop = install_ctrlc();
+    let duration_s = (minutes.max(1)) * 60;
+    let period = Duration::from_secs(sample_secs.max(1));
+
+    // Real record pipeline against a temp db, deleted on the way out.
+    let db_path =
+        std::env::temp_dir().join(format!("atlas-soak-{}-{}.db", std::process::id(), now_ms()));
+    let _guard = TempDbGuard(db_path.clone());
+
+    let rec_stop = stop.clone();
+    let rec_db = db_path.clone();
+    let rec = std::thread::Builder::new()
+        .name("atlas-soak-record".into())
+        .spawn(move || record_loop(rec_db, interval, flush_secs, Some(duration_s), rec_stop))?;
+
+    println!(
+        "Soak: running the record pipeline for {minutes} min, sampling own RSS/handles every {}s ...",
+        period.as_secs()
+    );
+
+    // Self-observation loop: a lightweight Sampler read every `period`, extracting
+    // this process's own working set + handle count.
+    let own_pid = std::process::id();
+    let mut sampler = Sampler::new()?;
+    let _ = sampler.sample(); // prime (first read seeds CPU deltas; ws/handles valid)
+    let started = Instant::now();
+    let mut samples: Vec<soak::SoakSample> = Vec::new();
+    let mut next = Instant::now();
+
+    while !stop.load(Ordering::SeqCst) && started.elapsed() < Duration::from_secs(duration_s) {
+        std::thread::sleep(Duration::from_millis(200));
+        if Instant::now() < next {
+            continue;
+        }
+        next = Instant::now() + period;
+        let set = sampler.sample()?;
+        if let Some(p) = set.processes.iter().find(|p| p.key.pid == own_pid) {
+            samples.push(soak::SoakSample {
+                t_s: started.elapsed().as_secs_f64(),
+                rss_bytes: p.working_set,
+                handles: p.handle_count,
+            });
+        }
+    }
+
+    // Wind down the collection thread and join it.
+    stop.store(true, Ordering::SeqCst);
+    rec.join()
+        .map_err(|_| anyhow::anyhow!("record thread panicked"))??;
+
+    let verdict = soak::analyze(&samples, warmup_secs, slope_threshold, handle_threshold);
+    print_soak_verdict(&verdict, minutes);
+
+    if !verdict.pass {
+        anyhow::bail!(
+            "soak FAILED: RSS slope {:.2} MB/hr (threshold {:.2}), peak handle growth {} (threshold {})",
+            verdict.rss_slope_mb_per_hour,
+            verdict.slope_threshold_mb_per_hour,
+            verdict.peak_handle_growth,
+            verdict.handle_growth_threshold
+        );
+    }
+    Ok(())
+}
+
+/// Renders the soak verdict block.
+fn print_soak_verdict(v: &soak::SoakVerdict, minutes: u64) {
+    let verdict = if v.insufficient {
+        "INSUFFICIENT"
+    } else if v.pass {
+        "PASS"
+    } else {
+        "FAIL"
+    };
+    println!();
+    println!("======== Atlas soak report ========");
+    println!(
+        "run length      {minutes} min ({} self-samples, {} after {:.0}s warmup)",
+        v.samples, v.analyzed_samples, v.warmup_s
+    );
+    println!(
+        "RSS             first {:.1} MB   peak {:.1} MB   (post-warmup window)",
+        v.rss_first_mb, v.rss_peak_mb
+    );
+    println!(
+        "RSS slope       {:.3} MB/hour   [threshold {:.2} MB/hour]",
+        v.rss_slope_mb_per_hour, v.slope_threshold_mb_per_hour
+    );
+    println!(
+        "fitted rise     {:.2} MB over the window   [materiality floor {:.1} MB]",
+        v.fitted_rise_mb,
+        soak::DEFAULT_MIN_RSS_RISE_MB
+    );
+    println!(
+        "handles         first {}   peak {}   growth {}   [threshold {}]",
+        v.handles_first, v.handles_peak, v.peak_handle_growth, v.handle_growth_threshold
+    );
+    if v.insufficient {
+        println!(
+            "verdict         INSUFFICIENT (need >= 2 post-warmup samples; lengthen the run or lower --warmup-secs)"
+        );
+    } else {
+        println!("verdict         {verdict}");
+    }
+    println!("===================================");
 }
 
 /// Deletes the temp database (and its `-wal`/`-shm` sidecars) on drop, so every
