@@ -23,8 +23,8 @@ use atlas_collectors::{
     enumerate_tasks, list_connections, list_listening_ports, thermal_status, BatteryReading,
     BootRecord as CollectorBootRecord, Capability, CollectorServiceState, CollectorStartupSource,
     Connection as CollectorConnection, ListeningPort as CollectorListeningPort, NetL4Protocol,
-    NetTcpState, ScheduledTask as CollectorScheduledTask, ServiceStartType as CollectorStartType,
-    ThermalReading,
+    NetTcpState, PrivacyTransition, PrivacyWatcher, ScheduledTask as CollectorScheduledTask,
+    ServiceStartType as CollectorStartType, ThermalReading,
 };
 use atlas_collectors::{
     group_processes, GroupInput, ProcessRole as CollectorRole, SampleSet, Sampler,
@@ -33,28 +33,32 @@ use atlas_ipc::v0::atlas_query_server::AtlasQuery;
 use atlas_ipc::{
     BatteryStatus as ProtoBatteryStatus, Bookmark, BootRecord as ProtoBootRecord,
     CapabilitiesReply, CapabilitiesRequest, CapabilityKind, Connection as ProtoConnection,
-    CreateBookmarkReply, CreateBookmarkRequest, DiagnoseReply, DiagnoseRequest, EventRow,
-    FindResourceOwnersReply, FindResourceOwnersRequest, GenerateReportReply, GenerateReportRequest,
-    GetBatteryStatusReply, GetBatteryStatusRequest, GetThermalReply, GetThermalRequest, HandleRow,
-    Incident, L4Protocol, ListBookmarksReply, ListBookmarksRequest, ListBootsReply,
-    ListBootsRequest, ListConnectionsReply, ListConnectionsRequest, ListEventsReply,
-    ListEventsRequest, ListHandlesReply, ListHandlesRequest, ListIncidentsReply,
-    ListIncidentsRequest, ListListeningPortsReply, ListListeningPortsRequest, ListModulesReply,
-    ListModulesRequest, ListPrivacyEventsReply, ListPrivacyEventsRequest, ListPrivacyUsageReply,
+    CreateBookmarkReply, CreateBookmarkRequest, CreatePrivacyAlertRuleReply,
+    CreatePrivacyAlertRuleRequest, DeletePrivacyAlertRuleReply, DeletePrivacyAlertRuleRequest,
+    DiagnoseReply, DiagnoseRequest, EventRow, FindResourceOwnersReply, FindResourceOwnersRequest,
+    FiredAlert, GenerateReportReply, GenerateReportRequest, GetBatteryStatusReply,
+    GetBatteryStatusRequest, GetThermalReply, GetThermalRequest, HandleRow, Incident, L4Protocol,
+    ListBookmarksReply, ListBookmarksRequest, ListBootsReply, ListBootsRequest,
+    ListConnectionsReply, ListConnectionsRequest, ListEventsReply, ListEventsRequest,
+    ListFiredAlertsReply, ListFiredAlertsRequest, ListHandlesReply, ListHandlesRequest,
+    ListIncidentsReply, ListIncidentsRequest, ListListeningPortsReply, ListListeningPortsRequest,
+    ListModulesReply, ListModulesRequest, ListPrivacyAlertRulesReply, ListPrivacyAlertRulesRequest,
+    ListPrivacyEventsReply, ListPrivacyEventsRequest, ListPrivacyUsageReply,
     ListPrivacyUsageRequest, ListScheduledTasksReply, ListScheduledTasksRequest, ListServicesReply,
     ListServicesRequest, ListStartupReply, ListStartupRequest, ListThreadsReply,
-    ListThreadsRequest, ListeningPort as ProtoListeningPort, MetricKind, ModuleRow, PrivacyEvent,
-    PrivacyUsage, ProcessDetail as ProtoProcessDetail, ProcessDetailReply, ProcessDetailRequest,
-    ProcessHit, ProcessRole, ProcessRow, QueryRangeReply, QueryRangeRequest, RangeBucket,
-    ReportFormat, ResourceOwner as ProtoResourceOwner, RingUpdate, RingWriter, RowInput,
-    ScheduledTask as ProtoScheduledTask, SearchHit, SearchReply, SearchRequest, ServiceEntry,
-    ServiceStartType, ServiceState, SnapshotReply, SnapshotRequest, StartupEntry, StartupSource,
-    SystemGauges, TcpState, ThermalSensor as ProtoThermalSensor, ThreadRow, TimeRange,
+    ListThreadsRequest, ListeningPort as ProtoListeningPort, MetricKind, ModuleRow,
+    PrivacyAlertRule, PrivacyEvent, PrivacyUsage, ProcessDetail as ProtoProcessDetail,
+    ProcessDetailReply, ProcessDetailRequest, ProcessHit, ProcessRole, ProcessRow, QueryRangeReply,
+    QueryRangeRequest, RangeBucket, ReportFormat, ResourceOwner as ProtoResourceOwner, RingUpdate,
+    RingWriter, RowInput, ScheduledTask as ProtoScheduledTask, SearchHit, SearchReply,
+    SearchRequest, ServiceEntry, ServiceStartType, ServiceState, SnapshotReply, SnapshotRequest,
+    StartupEntry, StartupSource, SystemGauges, TcpState, ThermalSensor as ProtoThermalSensor,
+    ThreadRow, TimeRange, UpdatePrivacyAlertRuleReply, UpdatePrivacyAlertRuleRequest,
     CAP_BATTERY_STATUS, CAP_BOOT_ANALYSIS, CAP_DIAGNOSTICS, CAP_FTS5_SEARCH, CAP_HISTORY_QUERIES,
-    CAP_INCIDENT_DETECTION, CAP_NETWORK_INSPECTOR, CAP_PRIVACY_EVENTS, CAP_PROCESS_INSPECTOR,
-    CAP_PROCESS_SNAPSHOTS, CAP_PROFILES, CAP_REPORTS, CAP_RESOURCE_OWNERSHIP, CAP_RULES_ENGINE,
-    CAP_SAFE_ACTIONS, CAP_SCHEDULED_TASKS, CAP_SERVICES_INVENTORY, CAP_STARTUP_INVENTORY,
-    CAP_THERMAL_SENSORS, RING_ROWS,
+    CAP_INCIDENT_DETECTION, CAP_NETWORK_INSPECTOR, CAP_PRIVACY_ALERTS, CAP_PRIVACY_EVENTS,
+    CAP_PROCESS_INSPECTOR, CAP_PROCESS_SNAPSHOTS, CAP_PROFILES, CAP_REPORTS,
+    CAP_RESOURCE_OWNERSHIP, CAP_RULES_ENGINE, CAP_SAFE_ACTIONS, CAP_SCHEDULED_TASKS,
+    CAP_SERVICES_INVENTORY, CAP_STARTUP_INVENTORY, CAP_THERMAL_SENSORS, RING_ROWS,
 };
 
 use crate::diagnostics::{self, DiagnoseContext};
@@ -182,6 +186,12 @@ pub struct QueryService {
     /// The sampler thread handle, so a clean shutdown can join it and guarantee
     /// the rules engine's restore-all has finished before the process exits.
     sampler: Mutex<Option<std::thread::JoinHandle<()>>>,
+    /// The R2 privacy change-watcher + alert-evaluator thread handles. The
+    /// watcher arms `RegNotifyChangeKeyValue` on the ConsentStore and emits
+    /// transitions; the evaluator scores them against enabled alert rules and
+    /// records fired alerts + privacy-event history. Both stop on the shared flag.
+    privacy_watch: Mutex<Option<std::thread::JoinHandle<()>>>,
+    privacy_eval: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
 impl QueryService {
@@ -246,6 +256,18 @@ impl QueryService {
                 sampler_loop(thread_slot, thread_tx, thread_stop, ring, thread_engine)
             })?;
 
+        // R2 advanced privacy alerts: the ConsentStore change-watcher feeds
+        // transitions to the evaluator over a channel; the evaluator scores them
+        // against enabled alert rules and records fired alerts + privacy history.
+        // Both threads stop on the shared flag (flipped by `shutdown`).
+        let (ptx, prx) = std::sync::mpsc::channel::<PrivacyTransition>();
+        let privacy_watch = PrivacyWatcher::spawn(stop.clone(), ptx);
+        let eval_store = store.clone();
+        let eval_stop = stop.clone();
+        let privacy_eval = std::thread::Builder::new()
+            .name("atlas-privacy-eval".into())
+            .spawn(move || crate::privacy_alerts::Evaluator::new(eval_store).run(prx, eval_stop))?;
+
         Ok(Self {
             slot,
             tx,
@@ -254,6 +276,8 @@ impl QueryService {
             has_fts5,
             engine,
             sampler: Mutex::new(Some(sampler)),
+            privacy_watch: Mutex::new(Some(privacy_watch)),
+            privacy_eval: Mutex::new(Some(privacy_eval)),
         })
     }
 
@@ -270,6 +294,19 @@ impl QueryService {
         if let Some(h) = handle {
             if h.join().is_err() {
                 tracing::warn!("ipc sampler thread panicked during shutdown");
+            }
+        }
+        // Join the privacy watcher + evaluator too so their store handles are
+        // released before the process exits. Both observe the same stop flag.
+        for (slot, label) in [
+            (&self.privacy_watch, "privacy-watch"),
+            (&self.privacy_eval, "privacy-eval"),
+        ] {
+            let handle = slot.lock().ok().and_then(|mut g| g.take());
+            if let Some(h) = handle {
+                if h.join().is_err() {
+                    tracing::warn!("{label} thread panicked during shutdown");
+                }
             }
         }
     }
@@ -393,6 +430,10 @@ impl AtlasQuery for QueryService {
             // backed persistence + audit; the applier runs on the sampler thread.
             flags.push(CAP_RULES_ENGINE.to_string());
             flags.push(CAP_PROFILES.to_string());
+            // R2: advanced privacy alerts — the ConsentStore change-watcher +
+            // evaluator run on their own threads; rule CRUD + fired-alert history
+            // are store-backed and always available on Windows here.
+            flags.push(CAP_PRIVACY_ALERTS.to_string());
             // R2 monitors. Network inspection and scheduled-task enumeration are
             // supported live reads (always advertised). The three hardware/log-
             // dependent monitors are advertised only when they actually resolve
@@ -636,6 +677,86 @@ impl AtlasQuery for QueryService {
                     started: e.started,
                 })
                 .collect(),
+            truncated,
+        }))
+    }
+
+    // -----------------------------------------------------------------------
+    // R2: advanced privacy alerts (PRD §9.10.3). Alert-rule CRUD + fired-alert
+    // history, all store-backed. The ConsentStore change-watcher + evaluator
+    // (background threads) produce the fired alerts these read back.
+    // -----------------------------------------------------------------------
+
+    async fn list_privacy_alert_rules(
+        &self,
+        _req: Request<ListPrivacyAlertRulesRequest>,
+    ) -> Result<Response<ListPrivacyAlertRulesReply>, Status> {
+        let store = self.store.lock().map_err(|_| poisoned())?;
+        let rows = store
+            .list_privacy_alert_rules()
+            .map_err(|e| Status::internal(format!("list_privacy_alert_rules: {e}")))?;
+        Ok(Response::new(ListPrivacyAlertRulesReply {
+            rules: rows.iter().map(alert_rule_row_to_proto).collect(),
+        }))
+    }
+
+    async fn create_privacy_alert_rule(
+        &self,
+        req: Request<CreatePrivacyAlertRuleRequest>,
+    ) -> Result<Response<CreatePrivacyAlertRuleReply>, Status> {
+        let rule = req
+            .into_inner()
+            .rule
+            .ok_or_else(|| Status::invalid_argument("rule is required"))?;
+        let row = alert_rule_proto_to_row(&rule);
+        let store = self.store.lock().map_err(|_| poisoned())?;
+        let id = store
+            .create_privacy_alert_rule(&row)
+            .map_err(|e| Status::internal(format!("create_privacy_alert_rule: {e}")))?;
+        Ok(Response::new(CreatePrivacyAlertRuleReply { id }))
+    }
+
+    async fn update_privacy_alert_rule(
+        &self,
+        req: Request<UpdatePrivacyAlertRuleRequest>,
+    ) -> Result<Response<UpdatePrivacyAlertRuleReply>, Status> {
+        let rule = req
+            .into_inner()
+            .rule
+            .ok_or_else(|| Status::invalid_argument("rule is required"))?;
+        let row = alert_rule_proto_to_row(&rule);
+        let store = self.store.lock().map_err(|_| poisoned())?;
+        let ok = store
+            .update_privacy_alert_rule(&row)
+            .map_err(|e| Status::internal(format!("update_privacy_alert_rule: {e}")))?;
+        Ok(Response::new(UpdatePrivacyAlertRuleReply { ok }))
+    }
+
+    async fn delete_privacy_alert_rule(
+        &self,
+        req: Request<DeletePrivacyAlertRuleRequest>,
+    ) -> Result<Response<DeletePrivacyAlertRuleReply>, Status> {
+        let id = req.into_inner().id;
+        let store = self.store.lock().map_err(|_| poisoned())?;
+        let ok = store
+            .delete_privacy_alert_rule(id)
+            .map_err(|e| Status::internal(format!("delete_privacy_alert_rule: {e}")))?;
+        Ok(Response::new(DeletePrivacyAlertRuleReply { ok }))
+    }
+
+    async fn list_fired_alerts(
+        &self,
+        req: Request<ListFiredAlertsRequest>,
+    ) -> Result<Response<ListFiredAlertsReply>, Status> {
+        let r = req.into_inner();
+        let (from_ms, to_ms) = range_bounds(&r.range);
+        let limit = if r.limit == 0 { 1000 } else { r.limit };
+        let store = self.store.lock().map_err(|_| poisoned())?;
+        let (rows, truncated) = store
+            .list_fired_alerts(from_ms, to_ms, limit)
+            .map_err(|e| Status::internal(format!("list_fired_alerts: {e}")))?;
+        Ok(Response::new(ListFiredAlertsReply {
+            alerts: rows.iter().map(fired_alert_row_to_proto).collect(),
             truncated,
         }))
     }
@@ -1107,6 +1228,49 @@ fn list_privacy_usage_impl(capabilities: &[i32]) -> Vec<PrivacyUsage> {
 #[cfg(not(windows))]
 fn list_privacy_usage_impl(_capabilities: &[i32]) -> Vec<PrivacyUsage> {
     Vec::new()
+}
+
+/// Maps a store [`atlas_store::PrivacyAlertRuleRow`] to the proto
+/// [`PrivacyAlertRule`]. The store keeps the capability/condition as their proto
+/// discriminants, so the mapping is a straight field copy.
+fn alert_rule_row_to_proto(r: &atlas_store::PrivacyAlertRuleRow) -> PrivacyAlertRule {
+    PrivacyAlertRule {
+        id: r.id,
+        name: r.name.clone(),
+        enabled: r.enabled,
+        capability: r.capability,
+        condition: r.condition,
+        threshold_seconds: r.threshold_seconds,
+        created_ms: r.created_ms,
+    }
+}
+
+/// Maps a proto [`PrivacyAlertRule`] to a store row (id/created_ms honored as
+/// given; create/update stamp them as needed).
+fn alert_rule_proto_to_row(r: &PrivacyAlertRule) -> atlas_store::PrivacyAlertRuleRow {
+    atlas_store::PrivacyAlertRuleRow {
+        id: r.id,
+        name: r.name.clone(),
+        enabled: r.enabled,
+        capability: r.capability,
+        condition: r.condition,
+        threshold_seconds: r.threshold_seconds,
+        created_ms: r.created_ms,
+    }
+}
+
+/// Maps a store [`atlas_store::FiredAlertRow`] to the proto [`FiredAlert`].
+fn fired_alert_row_to_proto(a: &atlas_store::FiredAlertRow) -> FiredAlert {
+    FiredAlert {
+        id: a.id,
+        rule_id: a.rule_id,
+        rule_name: a.rule_name.clone(),
+        ts_ms: a.ts_ms,
+        capability: a.capability,
+        app_id: a.app_id.clone(),
+        display_name: a.display_name.clone(),
+        detail: a.detail.clone(),
+    }
 }
 
 /// The proto discriminant for a collector [`CollectorStartupSource`].

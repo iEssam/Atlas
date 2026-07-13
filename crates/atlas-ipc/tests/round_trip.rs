@@ -171,6 +171,73 @@ impl AtlasQuery for FakeQuery {
         }))
     }
 
+    // R2 advanced privacy alerts: fixed responses so the transport test exercises
+    // the five new RPCs end-to-end (the real watcher/evaluator logic is
+    // unit-tested in atlas-service + atlas-collectors).
+    async fn list_privacy_alert_rules(
+        &self,
+        _req: Request<atlas_ipc::ListPrivacyAlertRulesRequest>,
+    ) -> Result<Response<atlas_ipc::ListPrivacyAlertRulesReply>, Status> {
+        Ok(Response::new(atlas_ipc::ListPrivacyAlertRulesReply {
+            rules: vec![atlas_ipc::PrivacyAlertRule {
+                id: 1,
+                name: "mic any-use".into(),
+                enabled: true,
+                capability: atlas_ipc::CapabilityKind::Microphone as i32,
+                condition: atlas_ipc::PrivacyAlertCondition::AlertAnyUse as i32,
+                threshold_seconds: 0,
+                created_ms: 1_700_000_000_000,
+            }],
+        }))
+    }
+
+    async fn create_privacy_alert_rule(
+        &self,
+        req: Request<atlas_ipc::CreatePrivacyAlertRuleRequest>,
+    ) -> Result<Response<atlas_ipc::CreatePrivacyAlertRuleReply>, Status> {
+        let _ = req.into_inner().rule; // id ignored
+        Ok(Response::new(atlas_ipc::CreatePrivacyAlertRuleReply {
+            id: 99,
+        }))
+    }
+
+    async fn update_privacy_alert_rule(
+        &self,
+        _req: Request<atlas_ipc::UpdatePrivacyAlertRuleRequest>,
+    ) -> Result<Response<atlas_ipc::UpdatePrivacyAlertRuleReply>, Status> {
+        Ok(Response::new(atlas_ipc::UpdatePrivacyAlertRuleReply {
+            ok: true,
+        }))
+    }
+
+    async fn delete_privacy_alert_rule(
+        &self,
+        _req: Request<atlas_ipc::DeletePrivacyAlertRuleRequest>,
+    ) -> Result<Response<atlas_ipc::DeletePrivacyAlertRuleReply>, Status> {
+        Ok(Response::new(atlas_ipc::DeletePrivacyAlertRuleReply {
+            ok: true,
+        }))
+    }
+
+    async fn list_fired_alerts(
+        &self,
+        _req: Request<atlas_ipc::ListFiredAlertsRequest>,
+    ) -> Result<Response<atlas_ipc::ListFiredAlertsReply>, Status> {
+        Ok(Response::new(atlas_ipc::ListFiredAlertsReply {
+            alerts: vec![atlas_ipc::FiredAlert {
+                id: 7,
+                rule_id: 1,
+                rule_name: "mic any-use".into(),
+                ts_ms: 1_700_000_000_500,
+                capability: atlas_ipc::CapabilityKind::Microphone as i32,
+                app_id: "C:#app.exe".into(),
+                display_name: "app.exe".into(),
+                detail: "microphone used by app.exe while not in the foreground".into(),
+            }],
+            truncated: false,
+        }))
+    }
+
     async fn list_services(
         &self,
         _req: Request<atlas_ipc::ListServicesRequest>,
@@ -974,6 +1041,65 @@ async fn capabilities_and_snapshot_round_trip() {
     assert!(thermal.available);
     assert_eq!(thermal.sensors.len(), 1);
     assert!((thermal.sensors[0].celsius - 42.5).abs() < 0.001);
+
+    // R2: advanced privacy alerts. CreatePrivacyAlertRule echoes an id;
+    // ListPrivacyAlertRules returns the rule; ListFiredAlerts reads a factual
+    // fired-alert row.
+    let created_alert = client
+        .create_privacy_alert_rule(atlas_ipc::CreatePrivacyAlertRuleRequest {
+            rule: Some(atlas_ipc::PrivacyAlertRule {
+                id: 0,
+                name: "mic any-use".into(),
+                enabled: true,
+                capability: atlas_ipc::CapabilityKind::Microphone as i32,
+                condition: atlas_ipc::PrivacyAlertCondition::AlertAnyUse as i32,
+                threshold_seconds: 0,
+                created_ms: 0,
+            }),
+        })
+        .await
+        .expect("CreatePrivacyAlertRule")
+        .into_inner();
+    assert_eq!(created_alert.id, 99);
+
+    let alert_rules = client
+        .list_privacy_alert_rules(atlas_ipc::ListPrivacyAlertRulesRequest {})
+        .await
+        .expect("ListPrivacyAlertRules")
+        .into_inner();
+    assert_eq!(alert_rules.rules.len(), 1);
+    assert_eq!(
+        alert_rules.rules[0].condition,
+        atlas_ipc::PrivacyAlertCondition::AlertAnyUse as i32
+    );
+
+    let updated_alert = client
+        .update_privacy_alert_rule(atlas_ipc::UpdatePrivacyAlertRuleRequest {
+            rule: Some(alert_rules.rules[0].clone()),
+        })
+        .await
+        .expect("UpdatePrivacyAlertRule")
+        .into_inner();
+    assert!(updated_alert.ok);
+
+    let fired = client
+        .list_fired_alerts(atlas_ipc::ListFiredAlertsRequest {
+            range: None,
+            limit: 0,
+        })
+        .await
+        .expect("ListFiredAlerts")
+        .into_inner();
+    assert_eq!(fired.alerts.len(), 1);
+    assert_eq!(fired.alerts[0].rule_name, "mic any-use");
+    assert!(fired.alerts[0].detail.contains("microphone"));
+
+    let deleted_alert = client
+        .delete_privacy_alert_rule(atlas_ipc::DeletePrivacyAlertRuleRequest { id: 1 })
+        .await
+        .expect("DeletePrivacyAlertRule")
+        .into_inner();
+    assert!(deleted_alert.ok);
 
     // Shut the server down cleanly.
     let _ = shutdown_tx.send(());

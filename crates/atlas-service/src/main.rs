@@ -12,6 +12,7 @@ mod detectors;
 mod diagnostics;
 #[cfg(windows)]
 mod ipc;
+mod privacy_alerts;
 mod report;
 mod rules;
 #[cfg(windows)]
@@ -469,6 +470,63 @@ enum Cmd {
         #[arg(long)]
         pid: u32,
     },
+    /// Manage advanced privacy-alert rules (R2, PRD §9.10.3): add/list/rm.
+    ///
+    /// Rules persist in the store; a running `serve` evaluates them against
+    /// ConsentStore camera/mic/location transitions and records fired alerts.
+    PrivacyAlert {
+        #[arg(long)]
+        db: Option<PathBuf>,
+        #[command(subcommand)]
+        cmd: PrivacyAlertCmd,
+    },
+    /// Print recorded fired privacy alerts (R2, PRD §9.10.3).
+    ///
+    /// Reads the store's `fired_alert` table — the alerts a running `serve`'s
+    /// evaluator recorded. The same data `ListFiredAlerts` serves.
+    FiredAlerts {
+        #[arg(long)]
+        db: Option<PathBuf>,
+        /// Look-back window in minutes (default: 24 h).
+        #[arg(long, default_value_t = 1440)]
+        minutes: u64,
+        #[arg(long, default_value_t = 50)]
+        limit: u32,
+    },
+    /// Watch live privacy-capability transitions from the ConsentStore (R2).
+    ///
+    /// Arms the `RegNotifyChangeKeyValue` change-watcher and prints each
+    /// camera/mic/location start/stop (with foreground + session-locked hints)
+    /// until Ctrl+C. The direct verification path for the watcher — no `serve`
+    /// needed. Trigger one by starting/stopping a mic or camera app.
+    PrivacyWatch,
+}
+
+#[derive(Subcommand)]
+enum PrivacyAlertCmd {
+    /// Add an alert rule (enabled unless --disabled).
+    Add {
+        /// Capability: camera | microphone | location | all (default all).
+        #[arg(long)]
+        capability: Option<String>,
+        /// Condition: any-use | background | while-locked | unknown-app |
+        /// longer-than (longer-than needs --threshold).
+        #[arg(long)]
+        condition: String,
+        /// Threshold in seconds for `longer-than`.
+        #[arg(long)]
+        threshold: Option<u32>,
+        /// Friendly rule name (defaults to "<capability> <condition>").
+        #[arg(long)]
+        name: Option<String>,
+        /// Create the rule disabled.
+        #[arg(long)]
+        disabled: bool,
+    },
+    /// List all alert rules.
+    List,
+    /// Delete an alert rule by id.
+    Rm { id: i64 },
 }
 
 /// Shared rule-authoring arguments for `rule add` and `rule simulate`. All
@@ -689,6 +747,11 @@ fn main() -> Result<()> {
         Cmd::Interventions { pipe } => cmd_interventions(pipe),
         Cmd::Profile { db, cmd } => cmd_profile(db.unwrap_or_else(default_db_path), cmd),
         Cmd::Policy { pid } => cmd_policy(pid),
+        Cmd::PrivacyAlert { db, cmd } => cmd_privacy_alert(db.unwrap_or_else(default_db_path), cmd),
+        Cmd::FiredAlerts { db, minutes, limit } => {
+            cmd_fired_alerts(db.unwrap_or_else(default_db_path), minutes, limit)
+        }
+        Cmd::PrivacyWatch => cmd_privacy_watch(),
         Cmd::Incidents { db, minutes, limit } => {
             cmd_incidents(db.unwrap_or_else(default_db_path), minutes, limit)
         }
@@ -2943,6 +3006,210 @@ fn cmd_privacy() -> Result<()> {
 #[cfg(not(windows))]
 fn cmd_privacy() -> Result<()> {
     anyhow::bail!("the `privacy` command requires Windows (ConsentStore registry)");
+}
+
+/// Proto `CapabilityKind` label for CLI output.
+fn capability_label(cap: i32) -> &'static str {
+    match cap {
+        0 => "all",
+        1 => "camera",
+        2 => "microphone",
+        3 => "location",
+        _ => "?",
+    }
+}
+
+/// Proto `PrivacyAlertCondition` label for CLI output.
+fn condition_label(cond: i32) -> &'static str {
+    match cond {
+        1 => "any-use",
+        2 => "background",
+        3 => "while-locked",
+        4 => "unknown-app",
+        5 => "longer-than",
+        _ => "?",
+    }
+}
+
+/// Parses a capability name into the proto `CapabilityKind` discriminant (0 = all).
+fn parse_capability_filter(s: &str) -> Result<i32> {
+    let v = match s.trim().to_ascii_lowercase().as_str() {
+        "" | "all" => 0,
+        "camera" | "cam" | "webcam" => 1,
+        "microphone" | "mic" => 2,
+        "location" | "loc" | "gps" => 3,
+        other => anyhow::bail!("unknown capability '{other}' (camera|microphone|location|all)"),
+    };
+    Ok(v)
+}
+
+/// Parses a condition name into the proto `PrivacyAlertCondition` discriminant.
+fn parse_alert_condition(s: &str) -> Result<i32> {
+    let v = match s.trim().to_ascii_lowercase().as_str() {
+        "any" | "any-use" | "anyuse" => 1,
+        "background" | "bg" | "background-use" => 2,
+        "locked" | "while-locked" | "whilelocked" => 3,
+        "unknown" | "unknown-app" | "unsigned" => 4,
+        "longer-than" | "longer" | "duration" => 5,
+        other => anyhow::bail!(
+            "unknown condition '{other}' (any-use|background|while-locked|unknown-app|longer-than)"
+        ),
+    };
+    Ok(v)
+}
+
+/// `privacy-alert add|list|rm`: CRUD over the store's `privacy_alert_rule` table
+/// (R2, PRD §9.10.3). Windows-only (the alert engine is a Windows feature).
+#[cfg(windows)]
+fn cmd_privacy_alert(db_path: PathBuf, cmd: PrivacyAlertCmd) -> Result<()> {
+    use atlas_store::PrivacyAlertRuleRow;
+    match cmd {
+        PrivacyAlertCmd::Add {
+            capability,
+            condition,
+            threshold,
+            name,
+            disabled,
+        } => {
+            let cap = parse_capability_filter(capability.as_deref().unwrap_or("all"))?;
+            let cond = parse_alert_condition(&condition)?;
+            let threshold_seconds = threshold.unwrap_or(0);
+            if cond == 5 && threshold_seconds == 0 {
+                anyhow::bail!(
+                    "condition longer-than needs --threshold <seconds> (a positive value)"
+                );
+            }
+            let rule_name = name
+                .unwrap_or_else(|| format!("{} {}", capability_label(cap), condition_label(cond)));
+            let store = Store::open(&db_path)?;
+            let id = store.create_privacy_alert_rule(&PrivacyAlertRuleRow {
+                id: 0,
+                name: rule_name.clone(),
+                enabled: !disabled,
+                capability: cap,
+                condition: cond,
+                threshold_seconds,
+                created_ms: 0,
+            })?;
+            println!(
+                "added privacy-alert rule #{id} ({}): capability={} condition={} threshold={}s name='{}'",
+                if disabled { "disabled" } else { "enabled" },
+                capability_label(cap),
+                condition_label(cond),
+                threshold_seconds,
+                rule_name,
+            );
+        }
+        PrivacyAlertCmd::List => {
+            let store = Store::open(&db_path)?;
+            let rules = store.list_privacy_alert_rules()?;
+            if rules.is_empty() {
+                println!(
+                    "No privacy-alert rules. Add one with `privacy-alert add --capability microphone --condition any-use`."
+                );
+            } else {
+                for r in rules {
+                    println!(
+                        "#{:<4} {:<8} capability={:<10} condition={:<12} threshold={:<4}s name='{}'",
+                        r.id,
+                        if r.enabled { "ENABLED" } else { "disabled" },
+                        capability_label(r.capability),
+                        condition_label(r.condition),
+                        r.threshold_seconds,
+                        r.name,
+                    );
+                }
+            }
+        }
+        PrivacyAlertCmd::Rm { id } => {
+            let store = Store::open(&db_path)?;
+            if store.delete_privacy_alert_rule(id)? {
+                println!("deleted privacy-alert rule #{id}");
+            } else {
+                println!("no privacy-alert rule #{id}");
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn cmd_privacy_alert(_db_path: PathBuf, _cmd: PrivacyAlertCmd) -> Result<()> {
+    anyhow::bail!("the `privacy-alert` command requires Windows");
+}
+
+/// `fired-alerts`: print recorded fired privacy alerts from the store (R2).
+fn cmd_fired_alerts(db_path: PathBuf, minutes: u64, limit: u32) -> Result<()> {
+    let store = Store::open(&db_path)?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let from_ms = now - (minutes as i64) * 60_000;
+    let (alerts, truncated) = store.list_fired_alerts(from_ms, now, limit)?;
+    if alerts.is_empty() {
+        println!("No fired privacy alerts in the last {minutes} minute(s).");
+        return Ok(());
+    }
+    println!(
+        "{} fired alert(s){}:",
+        alerts.len(),
+        if truncated { " (truncated)" } else { "" }
+    );
+    for a in &alerts {
+        println!(
+            "[{}] {:<10} rule='{}' app={} :: {}",
+            format_ts(a.ts_ms),
+            capability_label(a.capability),
+            a.rule_name,
+            truncate(&a.display_name, 30),
+            a.detail,
+        );
+    }
+    Ok(())
+}
+
+/// `privacy-watch`: arm the ConsentStore change-watcher and print live
+/// transitions until Ctrl+C (R2 verification path). Windows-only.
+#[cfg(windows)]
+fn cmd_privacy_watch() -> Result<()> {
+    use atlas_collectors::PrivacyWatcher;
+    let stop = install_ctrlc();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let handle = PrivacyWatcher::spawn(stop.clone(), tx);
+    println!("Watching ConsentStore camera/mic/location transitions (Ctrl+C to stop)...");
+    println!("Trigger one by starting or stopping a mic/camera app.");
+    while !stop.load(Ordering::SeqCst) {
+        match rx.recv_timeout(Duration::from_millis(500)) {
+            Ok(t) => {
+                let cap = match t.capability {
+                    atlas_collectors::Capability::Camera => "camera",
+                    atlas_collectors::Capability::Microphone => "microphone",
+                    atlas_collectors::Capability::Location => "location",
+                };
+                println!(
+                    "[{}] {:<5} {:<10} {} (foreground={} locked={} active={}s)",
+                    format_ts(t.ts_ms),
+                    if t.started { "START" } else { "STOP" },
+                    cap,
+                    truncate(&t.display_name, 40),
+                    t.foreground,
+                    t.session_locked,
+                    t.active_seconds,
+                );
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    let _ = handle.join();
+    println!("privacy-watch stopped.");
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn cmd_privacy_watch() -> Result<()> {
+    anyhow::bail!("the `privacy-watch` command requires Windows (ConsentStore registry)");
 }
 
 /// `startup`: print the startup inventory grouped by source (M7). Windows-only.

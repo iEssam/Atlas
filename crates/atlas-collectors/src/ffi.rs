@@ -275,6 +275,94 @@ extern "system" {
 
     /// Closes a key handle opened by `RegOpenKeyExW`.
     pub fn RegCloseKey(hKey: HKEY) -> LSTATUS;
+
+    /// Arms a change notification on `hKey`. With `fAsynchronous` = TRUE the call
+    /// returns immediately and `hEvent` is signaled when a change matching
+    /// `dwNotifyFilter` occurs (one-shot: re-arm after each signal). Backs the
+    /// ConsentStore change-watcher (R2 advanced privacy alerts). Read-only —
+    /// watching a key never modifies it.
+    pub fn RegNotifyChangeKeyValue(
+        hKey: HKEY,
+        bWatchSubtree: BOOL,
+        dwNotifyFilter: DWORD,
+        hEvent: HANDLE,
+        fAsynchronous: BOOL,
+    ) -> LSTATUS;
+}
+
+/// `RegNotifyChangeKeyValue` filter bits. NAME catches subkeys added/removed (a
+/// new app appearing under a capability); LAST_SET catches value writes (the
+/// `LastUsedTimeStart`/`Stop` FILETIMEs flipping in-use ↔ idle).
+pub const REG_NOTIFY_CHANGE_NAME: DWORD = 0x0000_0001;
+pub const REG_NOTIFY_CHANGE_LAST_SET: DWORD = 0x0000_0004;
+/// Deliver notifications even after the registering thread exits (the watcher
+/// re-arms from a pooled thread, so make the registration thread-agnostic).
+pub const REG_NOTIFY_THREAD_AGNOSTIC: DWORD = 0x1000_0000;
+
+// ---------------------------------------------------------------------------
+// Event + wait FFI (kernel32) for the ConsentStore change-watcher: an auto-reset
+// event per watched key, waited on with a timeout so the watcher stays
+// responsive to its stop flag. Hand-written, no windows-sys dependency.
+// ---------------------------------------------------------------------------
+
+#[link(name = "kernel32")]
+extern "system" {
+    /// Creates an event object. `bManualReset` FALSE = auto-reset (the wait that
+    /// consumes it resets it); `bInitialState` FALSE = non-signaled. `lpName`
+    /// NULL = unnamed. Returns NULL on failure.
+    pub fn CreateEventW(
+        lpEventAttributes: PVOID,
+        bManualReset: BOOL,
+        bInitialState: BOOL,
+        lpName: LPCWSTR,
+    ) -> HANDLE;
+
+    /// Waits until any (`bWaitAll` FALSE) or all (`TRUE`) of `nCount` handles are
+    /// signaled, or `dwMilliseconds` elapses. Returns `WAIT_OBJECT_0 + i` for the
+    /// signaled index, `WAIT_TIMEOUT` on timeout, or `WAIT_FAILED` on error.
+    pub fn WaitForMultipleObjects(
+        nCount: DWORD,
+        lpHandles: *const HANDLE,
+        bWaitAll: BOOL,
+        dwMilliseconds: DWORD,
+    ) -> DWORD;
+}
+
+/// `WaitForMultipleObjects` return codes.
+pub const WAIT_OBJECT_0: DWORD = 0x0000_0000;
+pub const WAIT_TIMEOUT: DWORD = 0x0000_0102;
+pub const WAIT_FAILED: DWORD = 0xFFFF_FFFF;
+
+// ---------------------------------------------------------------------------
+// Interactive-desktop FFI (user32) for the session-locked hint. When the
+// workstation is locked the input desktop switches to the secure "Winlogon"
+// desktop; `OpenInputDesktop` + `GetUserObjectInformationW(UOI_NAME)` reads the
+// current input desktop's name ("Default" = unlocked). Unprivileged, read-only.
+// ---------------------------------------------------------------------------
+
+/// `HDESK` — an open desktop handle.
+pub type HDESK = *mut c_void;
+
+/// `GetUserObjectInformationW` index: the object's name.
+pub const UOI_NAME: i32 = 2;
+
+#[link(name = "user32")]
+extern "system" {
+    /// Opens the desktop currently receiving user input. Returns NULL when the
+    /// caller cannot access it (e.g. the secure desktop while locked).
+    pub fn OpenInputDesktop(dwFlags: DWORD, fInherit: BOOL, dwDesiredAccess: DWORD) -> HDESK;
+
+    /// Reads information (here the name, `UOI_NAME`) about a user object handle.
+    pub fn GetUserObjectInformationW(
+        hObj: HANDLE,
+        nIndex: i32,
+        pvInfo: PVOID,
+        nLength: DWORD,
+        lpnLengthNeeded: *mut DWORD,
+    ) -> BOOL;
+
+    /// Closes a desktop handle from `OpenInputDesktop`.
+    pub fn CloseDesktop(hDesktop: HDESK) -> BOOL;
 }
 
 // ---------------------------------------------------------------------------
