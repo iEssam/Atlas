@@ -39,12 +39,16 @@ pub use v0::atlas_control_server::{AtlasControl, AtlasControlServer};
 pub use v0::atlas_query_client::AtlasQueryClient;
 pub use v0::atlas_query_server::{AtlasQuery, AtlasQueryServer};
 pub use v0::{
-    ActionRisk, Bookmark, CapabilitiesReply, CapabilitiesRequest, CreateBookmarkReply,
-    CreateBookmarkRequest, EventRow, ExecuteActionReply, ExecuteActionRequest, ListBookmarksReply,
-    ListBookmarksRequest, ListEventsReply, ListEventsRequest, MetricKind, PrepareActionReply,
-    PrepareActionRequest, ProcessActionKind, ProcessHit, ProcessRole, ProcessRow, QueryRangeReply,
-    QueryRangeRequest, RangeBucket, SearchHit, SearchReply, SearchRequest, SnapshotReply,
-    SnapshotRequest, SystemGauges, TimeRange,
+    ActionRisk, Bookmark, CapabilitiesReply, CapabilitiesRequest, CapabilityKind,
+    CreateBookmarkReply, CreateBookmarkRequest, EventRow, ExecuteActionReply, ExecuteActionRequest,
+    ListBookmarksReply, ListBookmarksRequest, ListEventsReply, ListEventsRequest,
+    ListPrivacyEventsReply, ListPrivacyEventsRequest, ListPrivacyUsageReply,
+    ListPrivacyUsageRequest, ListServicesReply, ListServicesRequest, ListStartupReply,
+    ListStartupRequest, MetricKind, PrepareActionReply, PrepareActionRequest, PrivacyEvent,
+    PrivacyUsage, ProcessActionKind, ProcessHit, ProcessRole, ProcessRow, QueryRangeReply,
+    QueryRangeRequest, RangeBucket, SearchHit, SearchReply, SearchRequest, ServiceEntry,
+    ServiceStartType, ServiceState, SnapshotReply, SnapshotRequest, StartupEntry, StartupSource,
+    SystemGauges, TimeRange,
 };
 
 /// Capability flag advertised by [`v0::CapabilitiesReply`] when the service can
@@ -64,3 +68,16 @@ pub const CAP_SAFE_ACTIONS: &str = "safe_actions";
 /// M6: full-text search is backed by SQLite FTS5 (prefix matching). When absent
 /// the service still answers Search via a LIKE substring scan.
 pub const CAP_FTS5_SEARCH: &str = "fts5_search";
+
+/// M7: the service records + serves camera/mic/location usage history from the
+/// CapabilityAccessManager ConsentStore (`ListPrivacyUsage` is the live snapshot;
+/// `ListPrivacyEvents` reads recorded transitions, PRD §9.10).
+pub const CAP_PRIVACY_EVENTS: &str = "privacy_events";
+
+/// M7: the service enumerates the startup inventory (Run keys, Startup folders,
+/// StartupApproved) live from the OS (`ListStartup`, PRD §9.8.1).
+pub const CAP_STARTUP_INVENTORY: &str = "startup_inventory";
+
+/// M7: the service enumerates the Win32 services inventory via the SCM live from
+/// the OS (`ListServices`, PRD §9.9.1).
+pub const CAP_SERVICES_INVENTORY: &str = "services_inventory";

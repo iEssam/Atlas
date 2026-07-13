@@ -17,17 +17,26 @@ use std::time::Duration;
 
 use tonic::{Request, Response, Status};
 
+#[cfg(windows)]
+use atlas_collectors::{
+    enumerate_privacy_usage, enumerate_services, enumerate_startup, Capability,
+    CollectorServiceState, CollectorStartupSource, ServiceStartType as CollectorStartType,
+};
 use atlas_collectors::{
     group_processes, GroupInput, ProcessRole as CollectorRole, SampleSet, Sampler,
 };
 use atlas_ipc::v0::atlas_query_server::AtlasQuery;
 use atlas_ipc::{
-    Bookmark, CapabilitiesReply, CapabilitiesRequest, CreateBookmarkReply, CreateBookmarkRequest,
-    EventRow, ListBookmarksReply, ListBookmarksRequest, ListEventsReply, ListEventsRequest,
-    MetricKind, ProcessHit, ProcessRole, ProcessRow, QueryRangeReply, QueryRangeRequest,
-    RangeBucket, RingUpdate, RingWriter, RowInput, SearchHit, SearchReply, SearchRequest,
-    SnapshotReply, SnapshotRequest, SystemGauges, TimeRange, CAP_FTS5_SEARCH, CAP_HISTORY_QUERIES,
-    CAP_PROCESS_SNAPSHOTS, CAP_SAFE_ACTIONS, RING_ROWS,
+    Bookmark, CapabilitiesReply, CapabilitiesRequest, CapabilityKind, CreateBookmarkReply,
+    CreateBookmarkRequest, EventRow, ListBookmarksReply, ListBookmarksRequest, ListEventsReply,
+    ListEventsRequest, ListPrivacyEventsReply, ListPrivacyEventsRequest, ListPrivacyUsageReply,
+    ListPrivacyUsageRequest, ListServicesReply, ListServicesRequest, ListStartupReply,
+    ListStartupRequest, MetricKind, PrivacyEvent, PrivacyUsage, ProcessHit, ProcessRole,
+    ProcessRow, QueryRangeReply, QueryRangeRequest, RangeBucket, RingUpdate, RingWriter, RowInput,
+    SearchHit, SearchReply, SearchRequest, ServiceEntry, ServiceStartType, ServiceState,
+    SnapshotReply, SnapshotRequest, StartupEntry, StartupSource, SystemGauges, TimeRange,
+    CAP_FTS5_SEARCH, CAP_HISTORY_QUERIES, CAP_PRIVACY_EVENTS, CAP_PROCESS_SNAPSHOTS,
+    CAP_SAFE_ACTIONS, CAP_SERVICES_INVENTORY, CAP_STARTUP_INVENTORY, RING_ROWS,
 };
 use atlas_store::Store;
 use atlas_tsdb::Metric;
@@ -299,6 +308,14 @@ impl AtlasQuery for QueryService {
         if self.has_fts5 {
             flags.push(CAP_FTS5_SEARCH.to_string());
         }
+        // M7 inventories are live OS reads (startup/services) and store-backed
+        // history (privacy). On Windows all three are always available here.
+        #[cfg(windows)]
+        {
+            flags.push(CAP_PRIVACY_EVENTS.to_string());
+            flags.push(CAP_STARTUP_INVENTORY.to_string());
+            flags.push(CAP_SERVICES_INVENTORY.to_string());
+        }
         Ok(Response::new(CapabilitiesReply {
             service_version: env!("CARGO_PKG_VERSION").to_string(),
             capability_flags: flags,
@@ -479,6 +496,206 @@ impl AtlasQuery for QueryService {
                 .collect(),
         }))
     }
+
+    async fn list_privacy_usage(
+        &self,
+        req: Request<ListPrivacyUsageRequest>,
+    ) -> Result<Response<ListPrivacyUsageReply>, Status> {
+        let r = req.into_inner();
+        // Live point-in-time read of the ConsentStore (PRD §9.10). The optional
+        // capability filter maps the proto enum onto the collector's set.
+        let usages = list_privacy_usage_impl(&r.capabilities);
+        Ok(Response::new(ListPrivacyUsageReply { usages }))
+    }
+
+    async fn list_privacy_events(
+        &self,
+        req: Request<ListPrivacyEventsRequest>,
+    ) -> Result<Response<ListPrivacyEventsReply>, Status> {
+        let r = req.into_inner();
+        let (from_ms, to_ms) = range_bounds(&r.range);
+        let limit = if r.limit == 0 { 1000 } else { r.limit };
+        let store = self.store.lock().map_err(|_| poisoned())?;
+        let (rows, truncated) = store
+            .list_privacy_events(from_ms, to_ms, limit)
+            .map_err(|e| Status::internal(format!("list_privacy_events: {e}")))?;
+        Ok(Response::new(ListPrivacyEventsReply {
+            events: rows
+                .into_iter()
+                .map(|e| PrivacyEvent {
+                    ts_ms: e.ts_ms,
+                    capability: e.capability,
+                    app_id: e.app_id,
+                    display_name: e.display_name,
+                    started: e.started,
+                })
+                .collect(),
+            truncated,
+        }))
+    }
+
+    async fn list_startup(
+        &self,
+        _req: Request<ListStartupRequest>,
+    ) -> Result<Response<ListStartupReply>, Status> {
+        // Live OS read (Run keys, Startup folders, StartupApproved). Not stored:
+        // this is current-state, not history.
+        let entries = list_startup_impl();
+        Ok(Response::new(ListStartupReply { entries }))
+    }
+
+    async fn list_services(
+        &self,
+        req: Request<ListServicesRequest>,
+    ) -> Result<Response<ListServicesReply>, Status> {
+        let r = req.into_inner();
+        // Live SCM enumeration, filtered by name/display substring. Not stored.
+        let services = list_services_impl(&r.filter);
+        Ok(Response::new(ListServicesReply { services }))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// M7 collector → proto mapping. The `impl` fns are `#[cfg(windows)]` (the
+// collectors are Windows-only); a non-Windows stub returns empty so the crate
+// still builds on other targets (the RPCs are unreachable there anyway — the
+// pipe transport is Windows-only).
+// ---------------------------------------------------------------------------
+
+/// Maps the proto [`CapabilityKind`] discriminant to the collector [`Capability`].
+/// Returns `None` for UNSPECIFIED / unknown.
+#[cfg(windows)]
+fn map_capability(kind: i32) -> Option<Capability> {
+    match CapabilityKind::try_from(kind).ok()? {
+        CapabilityKind::Unspecified => None,
+        CapabilityKind::Camera => Some(Capability::Camera),
+        CapabilityKind::Microphone => Some(Capability::Microphone),
+        CapabilityKind::Location => Some(Capability::Location),
+    }
+}
+
+/// The proto discriminant for a collector [`Capability`].
+#[cfg(windows)]
+fn capability_to_proto(cap: Capability) -> i32 {
+    let k = match cap {
+        Capability::Camera => CapabilityKind::Camera,
+        Capability::Microphone => CapabilityKind::Microphone,
+        Capability::Location => CapabilityKind::Location,
+    };
+    k as i32
+}
+
+#[cfg(windows)]
+fn list_privacy_usage_impl(capabilities: &[i32]) -> Vec<PrivacyUsage> {
+    let wanted: Vec<Capability> = capabilities
+        .iter()
+        .filter_map(|&k| map_capability(k))
+        .collect();
+    enumerate_privacy_usage(&wanted)
+        .into_iter()
+        .map(|u| PrivacyUsage {
+            capability: capability_to_proto(u.capability),
+            app_id: u.app_id,
+            display_name: u.display_name,
+            packaged: u.packaged,
+            last_start_ms: u.last_start_ms,
+            last_stop_ms: u.last_stop_ms,
+            in_use: u.in_use,
+        })
+        .collect()
+}
+
+#[cfg(not(windows))]
+fn list_privacy_usage_impl(_capabilities: &[i32]) -> Vec<PrivacyUsage> {
+    Vec::new()
+}
+
+/// The proto discriminant for a collector [`CollectorStartupSource`].
+#[cfg(windows)]
+fn startup_source_to_proto(source: CollectorStartupSource) -> i32 {
+    let s = match source {
+        CollectorStartupSource::RunKeyMachine => StartupSource::RunKeyMachine,
+        CollectorStartupSource::RunKeyUser => StartupSource::RunKeyUser,
+        CollectorStartupSource::StartupFolderMachine => StartupSource::StartupFolderMachine,
+        CollectorStartupSource::StartupFolderUser => StartupSource::StartupFolderUser,
+        CollectorStartupSource::ScheduledTask => StartupSource::ScheduledTask,
+        CollectorStartupSource::Service => StartupSource::Service,
+        CollectorStartupSource::PackagedTask => StartupSource::PackagedTask,
+    };
+    s as i32
+}
+
+#[cfg(windows)]
+fn list_startup_impl() -> Vec<StartupEntry> {
+    enumerate_startup()
+        .into_iter()
+        .map(|e| StartupEntry {
+            name: e.name,
+            source: startup_source_to_proto(e.source),
+            command: e.command,
+            publisher: e.publisher,
+            enabled: e.enabled,
+            scope: e.scope.as_str().to_string(),
+        })
+        .collect()
+}
+
+#[cfg(not(windows))]
+fn list_startup_impl() -> Vec<StartupEntry> {
+    Vec::new()
+}
+
+/// The proto discriminant for a collector [`CollectorServiceState`].
+#[cfg(windows)]
+fn service_state_to_proto(state: CollectorServiceState) -> i32 {
+    let s = match state {
+        CollectorServiceState::Stopped => ServiceState::ServiceStopped,
+        CollectorServiceState::StartPending => ServiceState::ServiceStartPending,
+        CollectorServiceState::StopPending => ServiceState::ServiceStopPending,
+        CollectorServiceState::Running => ServiceState::ServiceRunning,
+        CollectorServiceState::ContinuePending => ServiceState::ServiceContinuePending,
+        CollectorServiceState::PausePending => ServiceState::ServicePausePending,
+        CollectorServiceState::Paused => ServiceState::ServicePaused,
+        CollectorServiceState::Unspecified => ServiceState::Unspecified,
+    };
+    s as i32
+}
+
+/// The proto discriminant for a collector [`CollectorStartType`].
+#[cfg(windows)]
+fn service_start_type_to_proto(start: CollectorStartType) -> i32 {
+    let s = match start {
+        CollectorStartType::Boot => ServiceStartType::StartBoot,
+        CollectorStartType::System => ServiceStartType::StartSystem,
+        CollectorStartType::Auto => ServiceStartType::StartAuto,
+        CollectorStartType::Manual => ServiceStartType::StartManual,
+        CollectorStartType::Disabled => ServiceStartType::StartDisabled,
+        CollectorStartType::Unspecified => ServiceStartType::Unspecified,
+    };
+    s as i32
+}
+
+#[cfg(windows)]
+fn list_services_impl(filter: &str) -> Vec<ServiceEntry> {
+    enumerate_services(filter)
+        .into_iter()
+        .map(|s| ServiceEntry {
+            name: s.name,
+            display_name: s.display_name,
+            description: s.description,
+            state: service_state_to_proto(s.state),
+            start_type: service_start_type_to_proto(s.start_type),
+            pid: s.pid,
+            account: s.account,
+            binary_path: s.binary_path,
+            delayed_auto_start: s.delayed_auto_start,
+        })
+        .collect()
+}
+
+#[cfg(not(windows))]
+fn list_services_impl(_filter: &str) -> Vec<ServiceEntry> {
+    Vec::new()
 }
 
 /// A poisoned-store-mutex status (a prior handler panicked mid-query).
