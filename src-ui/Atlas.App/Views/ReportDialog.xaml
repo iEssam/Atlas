@@ -1,0 +1,91 @@
+<ContentDialog
+    x:Class="Atlas.App.Views.ReportDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    Title="Export report"
+    CloseButtonText="Close"
+    DefaultButton="None">
+
+    <ScrollViewer VerticalScrollMode="Auto" VerticalScrollBarVisibility="Auto"
+                  MaxHeight="560">
+        <StackPanel Spacing="16" Width="460">
+
+            <!-- Format -->
+            <StackPanel Spacing="6">
+                <TextBlock Text="Format" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                <ComboBox x:Name="FormatCombo"
+                          AutomationProperties.Name="Report format"
+                          HorizontalAlignment="Stretch"
+                          SelectionChanged="OnFormatChanged">
+                    <ComboBoxItem Content="HTML" Tag="html" IsSelected="True" />
+                    <ComboBoxItem Content="Plain text" Tag="text" />
+                    <ComboBoxItem Content="JSON" Tag="json" />
+                    <ComboBoxItem Content="CSV" Tag="csv" />
+                </ComboBox>
+            </StackPanel>
+
+            <!-- Redaction -->
+            <StackPanel Spacing="6">
+                <TextBlock Text="Redaction" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                <TextBlock Text="Choose what to strip before the report is generated. Redaction happens on the service; nothing here leaves your machine."
+                           TextWrapping="Wrap"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <CheckBox x:Name="RedactUserNames" Content="User names"
+                          AutomationProperties.Name="Redact user names"
+                          Checked="OnRedactionChanged" Unchecked="OnRedactionChanged" />
+                <CheckBox x:Name="RedactComputerName" Content="Computer name"
+                          AutomationProperties.Name="Redact computer name"
+                          Checked="OnRedactionChanged" Unchecked="OnRedactionChanged" />
+                <CheckBox x:Name="RedactPaths" Content="File paths"
+                          AutomationProperties.Name="Redact file paths"
+                          Checked="OnRedactionChanged" Unchecked="OnRedactionChanged" />
+                <CheckBox x:Name="RedactCommandLines" Content="Command lines"
+                          AutomationProperties.Name="Redact command lines"
+                          Checked="OnRedactionChanged" Unchecked="OnRedactionChanged" />
+                <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                        CornerRadius="6" Padding="12,8">
+                    <TextBlock x:Name="RedactionSummaryText"
+                               TextWrapping="Wrap"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                </Border>
+            </StackPanel>
+
+            <!-- Generate -->
+            <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                <Button x:Name="GenerateButton" Content="Generate"
+                        AutomationProperties.Name="Generate report"
+                        Style="{StaticResource AccentButtonStyle}"
+                        Click="OnGenerateClick" />
+                <ProgressRing x:Name="BusyRing" IsActive="False" Width="16" Height="16" />
+            </StackPanel>
+
+            <!-- Status / unavailable -->
+            <InfoBar x:Name="StatusBar" IsOpen="False" IsClosable="False" />
+
+            <!-- Preview + actions -->
+            <StackPanel x:Name="PreviewPanel" Spacing="8" Visibility="Collapsed">
+                <TextBlock Text="Preview" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                <TextBox x:Name="PreviewBox"
+                         AutomationProperties.Name="Report preview"
+                         IsReadOnly="True"
+                         AcceptsReturn="True"
+                         TextWrapping="NoWrap"
+                         FontFamily="Consolas"
+                         Height="200"
+                         ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                         ScrollViewer.VerticalScrollBarVisibility="Auto" />
+                <StackPanel Orientation="Horizontal" Spacing="12">
+                    <Button x:Name="SaveButton" Content="Save to file…"
+                            AutomationProperties.Name="Save report to file"
+                            Click="OnSaveClick" />
+                    <Button x:Name="CopyButton" Content="Copy"
+                            AutomationProperties.Name="Copy report to clipboard"
+                            Click="OnCopyClick" />
+                </StackPanel>
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+</ContentDialog>

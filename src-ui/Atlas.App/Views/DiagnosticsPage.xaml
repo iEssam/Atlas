@@ -1,0 +1,451 @@
+<Page
+    x:Class="Atlas.App.Views.DiagnosticsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vm="using:Atlas.App.ViewModels"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <Grid Padding="24" RowSpacing="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Title -->
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="12">
+            <TextBlock Text="Diagnostics" Style="{StaticResource TitleTextBlockStyle}" />
+            <TextBlock VerticalAlignment="Bottom"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Text="Explains recorded incidents — read-only, never invented" />
+        </StackPanel>
+
+        <!-- Controls: window + ad-hoc diagnose -->
+        <Grid Grid.Row="1" ColumnSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <ComboBox Grid.Column="0"
+                      AutomationProperties.Name="Diagnostics window"
+                      MinWidth="160"
+                      ItemsSource="{x:Bind ViewModel.Windows}"
+                      SelectedItem="{x:Bind ViewModel.SelectedWindow, Mode=TwoWay}" />
+
+            <Button Grid.Column="1"
+                    x:Name="DiagnoseWindowButton"
+                    AutomationProperties.Name="Diagnose the current window"
+                    Content="Diagnose current window"
+                    Click="OnDiagnoseWindowClick" />
+
+            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                <ProgressRing IsActive="{x:Bind ViewModel.IsLoadingIncidents, Mode=OneWay}"
+                              Width="16" Height="16" />
+                <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                           VerticalAlignment="Center"
+                           Text="{x:Bind ViewModel.IncidentsStatus, Mode=OneWay}" />
+            </StackPanel>
+
+            <Button Grid.Column="3"
+                    x:Name="RefreshButton"
+                    AutomationProperties.Name="Refresh incidents"
+                    Click="OnRefreshClick">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <FontIcon Glyph="&#xE72C;" FontSize="14" />
+                    <TextBlock Text="Refresh" />
+                </StackPanel>
+            </Button>
+        </Grid>
+
+        <!-- Body: incident list (left) + diagnosis (right) -->
+        <Grid Grid.Row="2" ColumnSpacing="16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="340" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <!-- Incident list -->
+            <Border Grid.Column="0"
+                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1" CornerRadius="8">
+                <Grid>
+                    <!-- Unavailable -->
+                    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
+                                Padding="16"
+                                Visibility="{x:Bind ViewModel.IncidentsUnavailable, Mode=OneWay}">
+                        <FontIcon Glyph="&#xE7BA;" FontSize="24"
+                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                  HorizontalAlignment="Center" />
+                        <TextBlock Text="Diagnostics unavailable"
+                                   Style="{StaticResource BodyStrongTextBlockStyle}"
+                                   HorizontalAlignment="Center" />
+                        <TextBlock Text="The connected service is too old to detect incidents."
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   TextWrapping="Wrap" HorizontalTextAlignment="Center" />
+                    </StackPanel>
+
+                    <!-- Empty -->
+                    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
+                                Padding="16"
+                                Visibility="{x:Bind ViewModel.IncidentsEmpty, Mode=OneWay}">
+                        <FontIcon Glyph="&#xE73E;" FontSize="24"
+                                  Foreground="{ThemeResource SystemFillColorSuccessBrush}"
+                                  HorizontalAlignment="Center" />
+                        <TextBlock Text="No incidents"
+                                   Style="{StaticResource BodyStrongTextBlockStyle}"
+                                   HorizontalAlignment="Center" />
+                        <TextBlock Text="Nothing notable was detected in this window."
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   TextWrapping="Wrap" HorizontalTextAlignment="Center" />
+                    </StackPanel>
+
+                    <!-- List -->
+                    <ListView AutomationProperties.Name="Detected incidents"
+                              ItemsSource="{x:Bind ViewModel.Incidents, Mode=OneWay}"
+                              SelectedItem="{x:Bind ViewModel.SelectedIncident, Mode=TwoWay}"
+                              SelectionMode="Single">
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem">
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                <Setter Property="Padding" Value="12,10" />
+                            </Style>
+                        </ListView.ItemContainerStyle>
+                        <ListView.ItemTemplate>
+                            <DataTemplate x:DataType="vm:IncidentRowViewModel">
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <FontIcon Grid.Column="0" VerticalAlignment="Top" Margin="0,2,0,0"
+                                              Glyph="{x:Bind KindGlyph}" FontSize="18"
+                                              Foreground="{x:Bind SeverityToken, Converter={StaticResource SeverityToBrush}}" />
+                                    <StackPanel Grid.Column="1" Spacing="2">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <TextBlock Text="{x:Bind KindLabel}"
+                                                       Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                            <Border VerticalAlignment="Center"
+                                                    Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                                                    CornerRadius="4" Padding="6,1">
+                                                <TextBlock Text="{x:Bind SeverityLabel}"
+                                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                                           Foreground="{x:Bind SeverityToken, Converter={StaticResource SeverityToBrush}}" />
+                                            </Border>
+                                        </StackPanel>
+                                        <TextBlock Text="{x:Bind Summary}" TextWrapping="Wrap" />
+                                        <TextBlock Text="{x:Bind TimeText}"
+                                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </Grid>
+            </Border>
+
+            <!-- Diagnosis panel -->
+            <Grid Grid.Column="1">
+                <!-- Idle -->
+                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
+                            MaxWidth="420"
+                            Visibility="{x:Bind ViewModel.DiagnosisIdle, Mode=OneWay}">
+                    <FontIcon Glyph="&#xE9D9;" FontSize="28"
+                              Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                              HorizontalAlignment="Center" />
+                    <TextBlock Text="Select an incident to diagnose"
+                               Style="{StaticResource SubtitleTextBlockStyle}"
+                               HorizontalTextAlignment="Center" />
+                    <TextBlock Text="Pick an incident on the left, or diagnose the whole window. Atlas explains what was measured and how sure it is — it never guesses."
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               TextWrapping="Wrap" HorizontalTextAlignment="Center" />
+                </StackPanel>
+
+                <!-- Busy -->
+                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="12"
+                            Visibility="{x:Bind ViewModel.IsDiagnosing, Mode=OneWay}">
+                    <ProgressRing IsActive="{x:Bind ViewModel.IsDiagnosing, Mode=OneWay}"
+                                  Width="32" Height="32" />
+                    <TextBlock Text="Diagnosing…"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                </StackPanel>
+
+                <!-- Unsupported (server too old) -->
+                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
+                            MaxWidth="420"
+                            Visibility="{x:Bind ViewModel.DiagnosisUnsupported, Mode=OneWay}">
+                    <FontIcon Glyph="&#xE7BA;" FontSize="28"
+                              Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                              HorizontalAlignment="Center" />
+                    <TextBlock Text="Diagnostics unavailable"
+                               Style="{StaticResource SubtitleTextBlockStyle}"
+                               HorizontalTextAlignment="Center" />
+                    <TextBlock Text="{x:Bind ViewModel.DiagnosisMessage, Mode=OneWay}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               TextWrapping="Wrap" HorizontalTextAlignment="Center" />
+                </StackPanel>
+
+                <!-- Insufficient evidence — a FIRST-CLASS honest state -->
+                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="10"
+                            MaxWidth="440"
+                            Visibility="{x:Bind ViewModel.DiagnosisInsufficient, Mode=OneWay}">
+                    <FontIcon Glyph="&#xE946;" FontSize="28"
+                              Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                              HorizontalAlignment="Center" />
+                    <TextBlock Text="Not enough evidence to diagnose"
+                               Style="{StaticResource SubtitleTextBlockStyle}"
+                               HorizontalTextAlignment="Center" />
+                    <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                            CornerRadius="6" Padding="14,10">
+                        <TextBlock Text="{x:Bind ViewModel.DiagnosisMessage, Mode=OneWay}"
+                                   TextWrapping="Wrap" HorizontalTextAlignment="Center" />
+                    </Border>
+                    <TextBlock Text="Atlas won't invent an explanation it can't support. Try a wider window, or check that monitoring was on."
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               TextWrapping="Wrap" HorizontalTextAlignment="Center"
+                               Style="{StaticResource CaptionTextBlockStyle}" />
+                </StackPanel>
+
+                <!-- Diagnosis -->
+                <ScrollViewer Visibility="{x:Bind ViewModel.HasDiagnosis, Mode=OneWay}"
+                              VerticalScrollBarVisibility="Auto">
+                    <StackPanel Spacing="18" Padding="0,0,8,0">
+
+                        <!-- Header: observed + confidence + window + export -->
+                        <StackPanel Spacing="8">
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0"
+                                           Text="{x:Bind ViewModel.Diagnosis.Observed, Mode=OneWay}"
+                                           Style="{StaticResource SubtitleTextBlockStyle}"
+                                           TextWrapping="Wrap" />
+                                <Button Grid.Column="1" VerticalAlignment="Top"
+                                        x:Name="ExportButton"
+                                        AutomationProperties.Name="Export report"
+                                        Click="OnExportClick">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <FontIcon Glyph="&#xEDE1;" FontSize="14" />
+                                        <TextBlock Text="Export report" />
+                                    </StackPanel>
+                                </Button>
+                            </Grid>
+
+                            <StackPanel Orientation="Horizontal" Spacing="12">
+                                <!-- Overall confidence badge (calm) -->
+                                <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                                        CornerRadius="12" Padding="10,3">
+                                    <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                        <Ellipse Width="8" Height="8"
+                                                 Fill="{x:Bind ViewModel.Diagnosis.OverallConfidenceToken, Mode=OneWay, Converter={StaticResource ConfidenceToBrush}}" />
+                                        <TextBlock Text="{x:Bind ViewModel.Diagnosis.OverallConfidenceLabel, Mode=OneWay}"
+                                                   Style="{StaticResource CaptionTextBlockStyle}" />
+                                    </StackPanel>
+                                </Border>
+                                <TextBlock Text="{x:Bind ViewModel.Diagnosis.WindowText, Mode=OneWay}"
+                                           VerticalAlignment="Center"
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            </StackPanel>
+                        </StackPanel>
+
+                        <!-- Evidence -->
+                        <StackPanel Spacing="8"
+                                    Visibility="{x:Bind ViewModel.Diagnosis.HasEvidence, Mode=OneWay}">
+                            <TextBlock Text="Evidence" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                            <TextBlock Text="Measured facts backing this diagnosis."
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            <ItemsControl ItemsSource="{x:Bind ViewModel.Diagnosis.Evidence, Mode=OneWay}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:EvidenceRowViewModel">
+                                        <Grid ColumnSpacing="10" Margin="0,3">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <FontIcon Grid.Column="0" Glyph="&#xE73E;" FontSize="12"
+                                                      VerticalAlignment="Top" Margin="0,4,0,0"
+                                                      Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                            <TextBlock Grid.Column="1" Text="{x:Bind Text}" TextWrapping="Wrap" />
+                                            <Border Grid.Column="2"
+                                                    Visibility="{x:Bind HasMetric}"
+                                                    Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                                                    CornerRadius="4" Padding="6,1" VerticalAlignment="Top">
+                                                <TextBlock Text="{x:Bind MetricText}"
+                                                           FontFamily="Consolas"
+                                                           Style="{StaticResource CaptionTextBlockStyle}" />
+                                            </Border>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+
+                        <!-- Contributing factors -->
+                        <StackPanel Spacing="8"
+                                    Visibility="{x:Bind ViewModel.Diagnosis.HasFactors, Mode=OneWay}">
+                            <TextBlock Text="Likely contributing factors"
+                                       Style="{StaticResource BodyStrongTextBlockStyle}" />
+                            <TextBlock Text="Ranked most likely first. Each shows how confident Atlas is."
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            <ItemsControl ItemsSource="{x:Bind ViewModel.Diagnosis.Factors, Mode=OneWay}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:FactorRowViewModel">
+                                        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                                BorderThickness="1" CornerRadius="8"
+                                                Padding="14,10" Margin="0,3">
+                                            <Grid ColumnSpacing="12">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Grid.Column="0" Text="{x:Bind RankText}"
+                                                           VerticalAlignment="Top"
+                                                           Style="{StaticResource BodyStrongTextBlockStyle}"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                <StackPanel Grid.Column="1" Spacing="4">
+                                                    <TextBlock Text="{x:Bind Description}" TextWrapping="Wrap" />
+                                                    <StackPanel Orientation="Horizontal" Spacing="12">
+                                                        <TextBlock Visibility="{x:Bind HasProcess}"
+                                                                   Text="{x:Bind ProcessText}"
+                                                                   FontFamily="Consolas"
+                                                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                        <TextBlock Visibility="{x:Bind HasAttribution}"
+                                                                   Text="{x:Bind AttributionText}"
+                                                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                    </StackPanel>
+                                                </StackPanel>
+                                                <!-- Confidence badge (calm color token) -->
+                                                <Border Grid.Column="2" VerticalAlignment="Top"
+                                                        Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                                                        CornerRadius="12" Padding="10,3">
+                                                    <StackPanel Orientation="Horizontal" Spacing="6"
+                                                                VerticalAlignment="Center">
+                                                        <Ellipse Width="8" Height="8"
+                                                                 Fill="{x:Bind ConfidenceToken, Converter={StaticResource ConfidenceToBrush}}" />
+                                                        <TextBlock Text="{x:Bind ConfidenceLabel}"
+                                                                   Style="{StaticResource CaptionTextBlockStyle}" />
+                                                    </StackPanel>
+                                                </Border>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+
+                        <!-- Alternative explanations -->
+                        <StackPanel Spacing="8"
+                                    Visibility="{x:Bind ViewModel.Diagnosis.HasAlternatives, Mode=OneWay}">
+                            <TextBlock Text="Alternative explanations"
+                                       Style="{StaticResource BodyStrongTextBlockStyle}" />
+                            <ItemsControl ItemsSource="{x:Bind ViewModel.Diagnosis.Alternatives, Mode=OneWay}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="x:String">
+                                        <Grid ColumnSpacing="10" Margin="0,2">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <FontIcon Grid.Column="0" Glyph="&#xE8B9;" FontSize="12"
+                                                      VerticalAlignment="Top" Margin="0,4,0,0"
+                                                      Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                            <TextBlock Grid.Column="1" Text="{x:Bind}" TextWrapping="Wrap" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+
+                        <!-- Action plan: recommendation / risk / reversibility / verification -->
+                        <StackPanel Spacing="10">
+                            <TextBlock Text="What to do" Style="{StaticResource BodyStrongTextBlockStyle}" />
+
+                            <Border Visibility="{x:Bind ViewModel.Diagnosis.HasRecommendation, Mode=OneWay}"
+                                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                    BorderThickness="1" CornerRadius="8" Padding="14,10">
+                                <StackPanel Spacing="4">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <FontIcon Glyph="&#xE9F5;" FontSize="14"
+                                                  Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                                        <TextBlock Text="Recommended action"
+                                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    </StackPanel>
+                                    <TextBlock Text="{x:Bind ViewModel.Diagnosis.Recommendation, Mode=OneWay}"
+                                               TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+
+                            <Grid ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Border Grid.Column="0"
+                                        Visibility="{x:Bind ViewModel.Diagnosis.HasRisk, Mode=OneWay}"
+                                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                        BorderThickness="1" CornerRadius="8" Padding="14,10">
+                                    <StackPanel Spacing="4">
+                                        <TextBlock Text="Risk"
+                                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        <TextBlock Text="{x:Bind ViewModel.Diagnosis.Risk, Mode=OneWay}"
+                                                   TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Grid.Column="1"
+                                        Visibility="{x:Bind ViewModel.Diagnosis.HasReversibility, Mode=OneWay}"
+                                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                        BorderThickness="1" CornerRadius="8" Padding="14,10">
+                                    <StackPanel Spacing="4">
+                                        <TextBlock Text="Reversibility"
+                                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        <TextBlock Text="{x:Bind ViewModel.Diagnosis.Reversibility, Mode=OneWay}"
+                                                   TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+
+                            <Border Visibility="{x:Bind ViewModel.Diagnosis.HasVerificationPlan, Mode=OneWay}"
+                                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                    BorderThickness="1" CornerRadius="8" Padding="14,10">
+                                <StackPanel Spacing="4">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <FontIcon Glyph="&#xE73E;" FontSize="14"
+                                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        <TextBlock Text="How to verify"
+                                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    </StackPanel>
+                                    <TextBlock Text="{x:Bind ViewModel.Diagnosis.VerificationPlan, Mode=OneWay}"
+                                               TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+        </Grid>
+    </Grid>
+</Page>

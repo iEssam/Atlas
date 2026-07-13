@@ -40,6 +40,7 @@ public sealed partial class MainWindow : Window
             "privacy" => typeof(PrivacyPage),
             "startup" => typeof(StartupPage),
             "services" => typeof(ServicesPage),
+            "diagnostics" => typeof(DiagnosticsPage),
             _ => null,
         };
         if (type is not null && ContentFrame.CurrentSourcePageType != type)

@@ -11,6 +11,8 @@
             <conv:InverseBoolToVisibilityConverter x:Key="InverseBoolToVisibility" />
             <conv:CountToInverseVisibilityConverter x:Key="CountToInverseVisibility" />
             <conv:ServiceSeverityToBrushConverter x:Key="ServiceSeverityToBrush" />
+            <conv:ConfidenceToBrushConverter x:Key="ConfidenceToBrush" />
+            <conv:SeverityToBrushConverter x:Key="SeverityToBrush" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>

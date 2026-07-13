@@ -274,6 +274,73 @@ public sealed class AtlasChannel : IDisposable
             cancellationToken: cancellationToken).ResponseAsync);
 
     // ----------------------------------------------------------------------
+    // M8: incident detection, diagnostics, reports (AtlasQuery, PRD §9.15,
+    // §9.18). Same Unimplemented→Unsupported guard so the Diagnostics page
+    // degrades gracefully against an older service that serves these RPCs as
+    // Unimplemented (task brief — the server side lands after the UI).
+    // ----------------------------------------------------------------------
+
+    /// <summary>
+    /// Detected incidents overlapping a window, most-relevant first (server
+    /// order). <paramref name="limit"/> of 0 uses the server default. The reply's
+    /// <c>truncated</c> flag says whether more were elided.
+    /// </summary>
+    public Task<RpcOutcome<ListIncidentsReply>> ListIncidentsAsync(
+        long fromMs,
+        long toMs,
+        uint limit = 0,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _client.ListIncidentsAsync(
+            new ListIncidentsRequest
+            {
+                Range = new TimeRange { FromMs = fromMs, ToMs = toMs },
+                Limit = limit,
+            },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>
+    /// Diagnoses a detected incident by id, or — when <paramref name="incidentId"/>
+    /// is 0 — the ad-hoc [<paramref name="fromMs"/>, <paramref name="toMs"/>]
+    /// window. The reply may say <c>available = false</c> with a plain reason
+    /// ("insufficient evidence for this window"); callers must surface that rather
+    /// than invent a diagnosis (PRD §9.16.4).
+    /// </summary>
+    public Task<RpcOutcome<DiagnoseReply>> DiagnoseAsync(
+        long incidentId,
+        long fromMs,
+        long toMs,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _client.DiagnoseAsync(
+            new DiagnoseRequest
+            {
+                IncidentId = incidentId,
+                Range = new TimeRange { FromMs = fromMs, ToMs = toMs },
+            },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>
+    /// Renders a report for an incident (by id) or the ad-hoc window (id 0) in the
+    /// requested <paramref name="format"/>, applying <paramref name="redaction"/>
+    /// server-side. Returns the content plus its MIME type.
+    /// </summary>
+    public Task<RpcOutcome<GenerateReportReply>> GenerateReportAsync(
+        long incidentId,
+        long fromMs,
+        long toMs,
+        ReportFormat format,
+        RedactionOptions redaction,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _client.GenerateReportAsync(
+            new GenerateReportRequest
+            {
+                IncidentId = incidentId,
+                Range = new TimeRange { FromMs = fromMs, ToMs = toMs },
+                Format = format,
+                Redaction = redaction ?? new RedactionOptions(),
+            },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    // ----------------------------------------------------------------------
     // M6: safe process actions (AtlasControl) — two-phase prepare/execute.
     // ----------------------------------------------------------------------
 
