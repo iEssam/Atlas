@@ -7,6 +7,8 @@
 //! dev client (M4, docs/phases.md). Windows-service mode arrives at M9.
 
 #[cfg(windows)]
+mod broker;
+#[cfg(windows)]
 mod ipc;
 
 use std::collections::HashMap;
@@ -95,6 +97,11 @@ enum Cmd {
         /// Override the pipe name discriminator (default: current username).
         #[arg(long)]
         pipe: Option<String>,
+        /// Store path for history queries + audit (default: dev atlas.db). This
+        /// is the same file `record` writes; WAL keeps the two connections
+        /// coexisting.
+        #[arg(long)]
+        db: Option<PathBuf>,
     },
     /// Connect to a running `serve` over the pipe and print a snapshot (M4).
     ///
@@ -128,6 +135,71 @@ enum Cmd {
         #[arg(long)]
         watch: bool,
     },
+    /// Print decimated history buckets for a metric over a look-back window (M6).
+    ///
+    /// Exercises the same `query_range` the AtlasQuery RPC serves, straight
+    /// against the store — no `serve` needed.
+    History {
+        /// Database path (default: %LOCALAPPDATA%\SystemAtlas\dev\atlas.db).
+        #[arg(long)]
+        db: Option<PathBuf>,
+        /// Metric to query: sys-cpu | sys-mem | sys-commit | sys-procs |
+        /// cpu | ws | priv | read | write (the per-process ones need --scope).
+        #[arg(long, default_value = "sys-cpu")]
+        metric: String,
+        /// Per-process scope (process_instance row id); ignored for sys-* metrics.
+        #[arg(long, default_value_t = 0)]
+        scope: i64,
+        /// Look-back window in minutes.
+        #[arg(long, default_value_t = 10)]
+        minutes: u64,
+        /// Decimation target (max buckets).
+        #[arg(long, default_value_t = 60)]
+        buckets: u32,
+    },
+    /// Full-text/substring search over processes, events, and bookmarks (M6).
+    Search {
+        #[arg(long)]
+        db: Option<PathBuf>,
+        /// The query string (name / pid / bookmark label).
+        query: String,
+        #[arg(long, default_value_t = 20)]
+        limit: u32,
+    },
+    /// Manage incident bookmarks (M6): `bookmark add "<label>"` / `bookmark list`.
+    Bookmark {
+        #[arg(long)]
+        db: Option<PathBuf>,
+        #[command(subcommand)]
+        cmd: BookmarkCmd,
+    },
+    /// Prepare (and optionally execute) a safe process action (M6 broker).
+    ///
+    /// DEFAULT IS DRY-RUN: without `--yes` this runs Prepare only and prints the
+    /// risk picture + verdict; it never touches the target. With `--yes` it runs
+    /// Prepare then Execute against the SAME in-process broker. Test suspend/
+    /// resume/close/terminate on a throwaway process you spawned — never a system
+    /// process (the protected-critical list denies those anyway).
+    Action {
+        #[arg(long)]
+        db: Option<PathBuf>,
+        /// Target process id.
+        #[arg(long)]
+        pid: u32,
+        /// Action verb: suspend | resume | close | terminate.
+        #[arg(long = "do")]
+        action: String,
+        /// Actually execute after preparing (default: dry-run / prepare only).
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Print the most recent safe-action audit rows (M6 verification helper).
+    Audit {
+        #[arg(long)]
+        db: Option<PathBuf>,
+        #[arg(long, default_value_t = 20)]
+        limit: u32,
+    },
     /// Measure Atlas's own collection overhead against the PRD budgets (M3).
     ///
     /// Runs the real record pipeline against a TEMP database for `--duration`
@@ -145,6 +217,25 @@ enum Cmd {
         /// Aggregation/flush window in seconds (matches `record`).
         #[arg(long, default_value_t = 15)]
         flush_secs: u64,
+    },
+}
+
+#[derive(Subcommand)]
+enum BookmarkCmd {
+    /// Add a bookmark at the current time (or `--at <ms>`).
+    Add {
+        /// The label text.
+        label: String,
+        /// Unix-epoch ms to bookmark (default: now).
+        #[arg(long)]
+        at: Option<i64>,
+    },
+    /// List bookmarks, optionally within a [--from, --to] ms window.
+    List {
+        #[arg(long)]
+        from: Option<i64>,
+        #[arg(long)]
+        to: Option<i64>,
     },
 }
 
@@ -177,7 +268,31 @@ fn main() -> Result<()> {
         Cmd::DbTop { db, minutes, limit } => {
             cmd_db_top(db.unwrap_or_else(default_db_path), minutes, limit)
         }
-        Cmd::Serve { pipe } => cmd_serve(pipe),
+        Cmd::History {
+            db,
+            metric,
+            scope,
+            minutes,
+            buckets,
+        } => cmd_history(
+            db.unwrap_or_else(default_db_path),
+            &metric,
+            scope,
+            minutes,
+            buckets,
+        ),
+        Cmd::Search { db, query, limit } => {
+            cmd_search(db.unwrap_or_else(default_db_path), &query, limit)
+        }
+        Cmd::Bookmark { db, cmd } => cmd_bookmark(db.unwrap_or_else(default_db_path), cmd),
+        Cmd::Action {
+            db,
+            pid,
+            action,
+            yes,
+        } => cmd_action(db.unwrap_or_else(default_db_path), pid, &action, yes),
+        Cmd::Audit { db, limit } => cmd_audit(db.unwrap_or_else(default_db_path), limit),
+        Cmd::Serve { pipe, db } => cmd_serve(pipe, db.unwrap_or_else(default_db_path)),
         Cmd::ClientSnapshot { pipe, top_n, watch } => cmd_client_snapshot(pipe, top_n, watch),
         Cmd::RingRead { pipe, limit, watch } => cmd_ring_read(pipe, limit, watch),
         Cmd::Overhead {
@@ -1152,10 +1267,10 @@ fn ring_discriminator(pipe: Option<String>) -> String {
     })
 }
 
-/// `serve`: host AtlasQuery over the named pipe until Ctrl+C.
+/// `serve`: host AtlasQuery + AtlasControl over the named pipe until Ctrl+C.
 #[cfg(windows)]
-fn cmd_serve(pipe: Option<String>) -> Result<()> {
-    use atlas_ipc::AtlasQueryServer;
+fn cmd_serve(pipe: Option<String>, db: PathBuf) -> Result<()> {
+    use atlas_ipc::{AtlasControlServer, AtlasQueryServer};
 
     let pipe_disc = pipe.clone();
     let name = resolve_pipe_name(pipe);
@@ -1167,13 +1282,17 @@ fn cmd_serve(pipe: Option<String>) -> Result<()> {
     // client with the same `--pipe` flag rendezvous with this server.
     let ring_disc = ring_discriminator(pipe_disc);
     rt.block_on(async move {
-        let service = ipc::QueryService::start(&ring_disc)?;
+        let service = ipc::QueryService::start(&ring_disc, db)?;
         let handle = std::sync::Arc::new(service);
+        // The broker shares the query service's store handle so both the audit
+        // log and the history queries use the same connection.
+        let broker = std::sync::Arc::new(broker::BrokerService::new(handle.store()));
         let router = tonic::transport::Server::builder()
-            .add_service(AtlasQueryServer::from_arc(handle.clone()));
+            .add_service(AtlasQueryServer::from_arc(handle.clone()))
+            .add_service(AtlasControlServer::from_arc(broker));
 
-        tracing::info!(pipe = %name, "AtlasQuery serving (Ctrl+C to stop)");
-        println!("Serving AtlasQuery on {name} (Ctrl+C to stop)");
+        tracing::info!(pipe = %name, "AtlasQuery + AtlasControl serving (Ctrl+C to stop)");
+        println!("Serving AtlasQuery + AtlasControl on {name} (Ctrl+C to stop)");
 
         let shutdown = async {
             let _ = tokio::signal::ctrl_c().await;
@@ -1183,7 +1302,7 @@ fn cmd_serve(pipe: Option<String>) -> Result<()> {
         result
     })?;
 
-    tracing::info!("AtlasQuery server stopped");
+    tracing::info!("Atlas server stopped");
     Ok(())
 }
 
@@ -1768,6 +1887,248 @@ fn print_overhead_report(
         }
     );
     println!("=======================================");
+}
+
+/// Parses a CLI metric token into an [`atlas_tsdb::Metric`]. Accepts short
+/// aliases for both the system gauges and the per-process series.
+fn parse_metric(token: &str) -> Option<Metric> {
+    Some(match token.to_ascii_lowercase().as_str() {
+        "sys-cpu" | "sys_cpu" => Metric::SysCpuPermille,
+        "sys-mem" | "sys_mem" => Metric::SysMemUsed,
+        "sys-commit" | "sys_commit" => Metric::SysCommitUsed,
+        "sys-procs" | "sys-proc" | "sys_procs" => Metric::SysProcessCount,
+        "cpu" => Metric::CpuPermille,
+        "ws" | "working-set" => Metric::WorkingSet,
+        "priv" | "private" => Metric::PrivateBytes,
+        "read" | "read-bps" => Metric::ReadBps,
+        "write" | "write-bps" => Metric::WriteBps,
+        _ => return None,
+    })
+}
+
+/// `history`: decimate a metric series over a look-back window and print the
+/// buckets. Exercises the store's `query_range` (the AtlasQuery RPC's backend).
+fn cmd_history(
+    db_path: PathBuf,
+    metric: &str,
+    scope: i64,
+    minutes: u64,
+    buckets: u32,
+) -> Result<()> {
+    let m = parse_metric(metric).ok_or_else(|| {
+        anyhow::anyhow!(
+            "unknown metric '{metric}'. Try: sys-cpu sys-mem sys-commit sys-procs cpu ws priv read write"
+        )
+    })?;
+    let store = Store::open(&db_path)?;
+    let now = now_ms();
+    let from = now - (minutes as i64) * 60_000;
+    let rows = store.query_range(m, scope, from, now, buckets)?;
+    println!(
+        "History for {metric} (scope {scope}) over the last {minutes} min — {} bucket(s), source {}",
+        rows.len(),
+        db_path.display()
+    );
+    if rows.is_empty() {
+        println!("(no samples in range — run `record` first, or widen --minutes)");
+        return Ok(());
+    }
+    println!(
+        "{:>15} {:>12} {:>12} {:>12} {:>8}",
+        "START (t-of-day)", "MIN", "MAX", "AVG", "SAMPLES"
+    );
+    for b in rows {
+        println!(
+            "{:>15} {:>12.2} {:>12.2} {:>12.2} {:>8}",
+            format_ts(b.start_ms),
+            b.min,
+            b.max,
+            b.avg,
+            b.samples
+        );
+    }
+    Ok(())
+}
+
+/// `search`: run the store search and print the three hit lists.
+fn cmd_search(db_path: PathBuf, query: &str, limit: u32) -> Result<()> {
+    let store = Store::open(&db_path)?;
+    let hits = store.search(query, limit)?;
+    println!(
+        "Search '{query}' (FTS5: {}) — {} process, {} event, {} bookmark hit(s), source {}",
+        if store.has_fts5() {
+            "on"
+        } else {
+            "LIKE fallback"
+        },
+        hits.processes.len(),
+        hits.events.len(),
+        hits.bookmarks.len(),
+        db_path.display()
+    );
+    for p in &hits.processes {
+        println!(
+            "  proc  pid={:>6} {:<28} {}",
+            p.pid,
+            truncate(&p.image_name, 28),
+            if p.live { "live" } else { "exited" }
+        );
+    }
+    for e in &hits.events {
+        let kind = if e.kind == PROC_EVENT_START as u32 {
+            "start"
+        } else {
+            "stop"
+        };
+        println!(
+            "  event {:>5} pid={:>6} {}",
+            kind,
+            e.pid,
+            truncate(&e.image_name, 28)
+        );
+    }
+    for b in &hits.bookmarks {
+        println!(
+            "  bmark id={:>4} [{}] {}",
+            b.id,
+            format_ts(b.ts_ms),
+            b.label
+        );
+    }
+    Ok(())
+}
+
+/// `bookmark add|list`.
+fn cmd_bookmark(db_path: PathBuf, cmd: BookmarkCmd) -> Result<()> {
+    let store = Store::open(&db_path)?;
+    match cmd {
+        BookmarkCmd::Add { label, at } => {
+            let ts = at.unwrap_or_else(now_ms);
+            let id = store.create_bookmark(ts, &label)?;
+            println!("Added bookmark #{id} at {} — \"{label}\"", format_ts(ts));
+        }
+        BookmarkCmd::List { from, to } => {
+            let from = from.unwrap_or(i64::MIN);
+            let to = to.unwrap_or(i64::MAX);
+            let rows = store.list_bookmarks(from, to)?;
+            if rows.is_empty() {
+                println!("No bookmarks in range ({}).", db_path.display());
+                return Ok(());
+            }
+            println!("{} bookmark(s):", rows.len());
+            for b in rows {
+                println!("  #{:<4} [{}] {}", b.id, format_ts(b.ts_ms), b.label);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `audit`: print the recent safe-action audit rows.
+fn cmd_audit(db_path: PathBuf, limit: u32) -> Result<()> {
+    let store = Store::open(&db_path)?;
+    let rows = store.recent_audit(limit)?;
+    if rows.is_empty() {
+        println!("No audit rows yet ({}).", db_path.display());
+        return Ok(());
+    }
+    println!("{} recent audit row(s) (newest first):", rows.len());
+    for a in rows {
+        println!(
+            "  [{}] {:<14} pid={:<6} {:<20} {:<16} {}",
+            format_ts(a.ts_ms),
+            a.action,
+            a.pid,
+            truncate(&a.image_name, 20),
+            a.decision,
+            a.detail
+        );
+    }
+    Ok(())
+}
+
+/// `action`: prepare (and optionally execute) a safe process action against the
+/// in-process broker. Default is dry-run (Prepare only). This is Windows-only
+/// (the broker uses Win32 process actions); a stub errors on other platforms.
+#[cfg(windows)]
+fn cmd_action(db_path: PathBuf, pid: u32, action: &str, yes: bool) -> Result<()> {
+    use atlas_ipc::{ExecuteActionRequest, PrepareActionRequest, ProcessActionKind};
+
+    let kind = match action.to_ascii_lowercase().as_str() {
+        "close" | "close-windows" => ProcessActionKind::CloseWindows,
+        "suspend" => ProcessActionKind::Suspend,
+        "resume" => ProcessActionKind::Resume,
+        "terminate" | "kill" => ProcessActionKind::Terminate,
+        other => {
+            anyhow::bail!("unknown action '{other}'. Use: suspend | resume | close | terminate")
+        }
+    };
+
+    // Build a broker directly over the store — no pipe/serve needed for the dev
+    // path. The audit log lands in the same db.
+    let store = std::sync::Arc::new(std::sync::Mutex::new(Store::open(&db_path)?));
+    let broker = broker::BrokerService::new(store);
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    rt.block_on(async move {
+        use atlas_ipc::AtlasControl;
+        let prep = broker
+            .prepare_action(tonic::Request::new(PrepareActionRequest {
+                pid,
+                create_time_100ns: 0,
+                action: kind as i32,
+            }))
+            .await?
+            .into_inner();
+
+        println!("=== Prepare {action} on pid {pid} ===");
+        if let Some(risk) = &prep.risk {
+            println!(
+                "risk: critical={} system={} visible_windows={} children={}",
+                risk.is_critical, risk.is_system, risk.visible_windows, risk.child_count
+            );
+            for note in &risk.notes {
+                println!("  note: {note}");
+            }
+        }
+        if prep.allowed {
+            println!(
+                "verdict: ALLOWED (token issued, expires at {})",
+                format_ts(prep.token_expires_ms)
+            );
+        } else {
+            println!("verdict: DENIED — {}", prep.denial_reason);
+        }
+
+        if !yes {
+            println!("(dry-run: pass --yes to execute; nothing was done)");
+            return Ok::<(), anyhow::Error>(());
+        }
+        if !prep.allowed {
+            println!("Not executing: prepare was denied.");
+            return Ok(());
+        }
+
+        let exec = broker
+            .execute_action(tonic::Request::new(ExecuteActionRequest {
+                consent_token: prep.consent_token,
+            }))
+            .await?
+            .into_inner();
+        println!(
+            "=== Execute === success={} — {}",
+            exec.success, exec.message
+        );
+        Ok(())
+    })?;
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn cmd_action(_db_path: PathBuf, _pid: u32, _action: &str, _yes: bool) -> Result<()> {
+    anyhow::bail!("the `action` command requires Windows process-action APIs");
 }
 
 fn cmd_db_top(db_path: PathBuf, minutes: u64, limit: u32) -> Result<()> {

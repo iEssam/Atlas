@@ -34,14 +34,33 @@ pub use transport::{connect, default_pipe_name, pipe_name, serve, PipeConnectInf
 
 // Convenience re-exports so downstream crates depend on the contract through
 // atlas-ipc rather than pinning tonic/prost versions themselves.
+pub use v0::atlas_control_client::AtlasControlClient;
+pub use v0::atlas_control_server::{AtlasControl, AtlasControlServer};
 pub use v0::atlas_query_client::AtlasQueryClient;
 pub use v0::atlas_query_server::{AtlasQuery, AtlasQueryServer};
 pub use v0::{
-    CapabilitiesReply, CapabilitiesRequest, ProcessRow, SnapshotReply, SnapshotRequest,
-    SystemGauges,
+    ActionRisk, Bookmark, CapabilitiesReply, CapabilitiesRequest, CreateBookmarkReply,
+    CreateBookmarkRequest, EventRow, ExecuteActionReply, ExecuteActionRequest, ListBookmarksReply,
+    ListBookmarksRequest, ListEventsReply, ListEventsRequest, MetricKind, PrepareActionReply,
+    PrepareActionRequest, ProcessActionKind, ProcessHit, ProcessRole, ProcessRow, QueryRangeReply,
+    QueryRangeRequest, RangeBucket, SearchHit, SearchReply, SearchRequest, SnapshotReply,
+    SnapshotRequest, SystemGauges, TimeRange,
 };
 
 /// Capability flag advertised by [`v0::CapabilitiesReply`] when the service can
 /// serve process snapshots. Always present in M4; sensor/ETW flags follow in
 /// later milestones (degraded-mode propagation, tech-stack §5).
 pub const CAP_PROCESS_SNAPSHOTS: &str = "process_snapshots";
+
+/// M6: the service answers historical range/event/search/bookmark queries from
+/// the local store (AtlasQuery's read surface).
+pub const CAP_HISTORY_QUERIES: &str = "history_queries";
+
+/// M6: the service exposes the safe-action broker (AtlasControl). Present only
+/// when the store is available (audit trail) — the UI hides the action ladder
+/// otherwise.
+pub const CAP_SAFE_ACTIONS: &str = "safe_actions";
+
+/// M6: full-text search is backed by SQLite FTS5 (prefix matching). When absent
+/// the service still answers Search via a LIKE substring scan.
+pub const CAP_FTS5_SEARCH: &str = "fts5_search";

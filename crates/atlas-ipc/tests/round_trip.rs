@@ -34,6 +34,8 @@ fn fake_rows() -> Vec<ProcessRow> {
             write_bps: 0,
             handle_count: 10,
             thread_count: 5,
+            app_group: format!("app:proc{i}#{}", 100 + i),
+            role: 1, // MAIN
         })
         .collect()
 }
@@ -92,6 +94,50 @@ impl AtlasQuery for FakeQuery {
         Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(
             rx,
         )))
+    }
+
+    // The M6 history/bookmark RPCs are not exercised by this transport test;
+    // return empty replies so the fake satisfies the (frozen) trait surface.
+    async fn query_range(
+        &self,
+        _req: Request<atlas_ipc::QueryRangeRequest>,
+    ) -> Result<Response<atlas_ipc::QueryRangeReply>, Status> {
+        Ok(Response::new(atlas_ipc::QueryRangeReply {
+            buckets: vec![],
+        }))
+    }
+
+    async fn list_events(
+        &self,
+        _req: Request<atlas_ipc::ListEventsRequest>,
+    ) -> Result<Response<atlas_ipc::ListEventsReply>, Status> {
+        Ok(Response::new(atlas_ipc::ListEventsReply {
+            events: vec![],
+            truncated: false,
+        }))
+    }
+
+    async fn search(
+        &self,
+        _req: Request<atlas_ipc::SearchRequest>,
+    ) -> Result<Response<atlas_ipc::SearchReply>, Status> {
+        Ok(Response::new(atlas_ipc::SearchReply { hits: vec![] }))
+    }
+
+    async fn create_bookmark(
+        &self,
+        _req: Request<atlas_ipc::CreateBookmarkRequest>,
+    ) -> Result<Response<atlas_ipc::CreateBookmarkReply>, Status> {
+        Ok(Response::new(atlas_ipc::CreateBookmarkReply { id: 1 }))
+    }
+
+    async fn list_bookmarks(
+        &self,
+        _req: Request<atlas_ipc::ListBookmarksRequest>,
+    ) -> Result<Response<atlas_ipc::ListBookmarksReply>, Status> {
+        Ok(Response::new(atlas_ipc::ListBookmarksReply {
+            bookmarks: vec![],
+        }))
     }
 }
 

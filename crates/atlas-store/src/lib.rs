@@ -127,6 +127,86 @@ CREATE INDEX IF NOT EXISTS ix_sample_block_time
     ON sample_block(start_ms);
 "#;
 
+// Additive v5 migration (docs/phases.md M6): incident bookmarks, the safe-
+// action audit trail, and FTS5 full-text search indexes over process instances
+// and bookmarks.
+//
+// `bookmark` is a plain append-only table (id, ts_ms, label, created_ms).
+// `audit` is the broker's append-only decision log — every PrepareAction and
+// ExecuteAction lands one row regardless of outcome (PRD §9.22).
+//
+// Search uses SQLite FTS5 (bundled with rusqlite's `bundled` feature). Two
+// contentless-external FTS5 tables mirror the searchable text of
+// `process_instance` (image_name + pid as text) and `bookmark` (label); they
+// are kept in sync by triggers so inserts/updates/deletes on the base tables
+// propagate automatically. If a build ever lacks FTS5, [`Store::migrate`]
+// skips these objects and [`Store::search`] falls back to a LIKE scan.
+//
+// All objects are created IF NOT EXISTS so a v4 database upgrades in place.
+const SCHEMA_V5: &str = r#"
+CREATE TABLE IF NOT EXISTS bookmark (
+    id         INTEGER PRIMARY KEY,
+    ts_ms      INTEGER NOT NULL,
+    label      TEXT    NOT NULL,
+    created_ms INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_bookmark_ts ON bookmark(ts_ms);
+
+CREATE TABLE IF NOT EXISTS audit (
+    id        INTEGER PRIMARY KEY,
+    ts_ms     INTEGER NOT NULL,
+    actor     TEXT    NOT NULL,
+    action    TEXT    NOT NULL,
+    pid       INTEGER NOT NULL,
+    image_name TEXT   NOT NULL,
+    decision  TEXT    NOT NULL,
+    detail    TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_audit_ts ON audit(ts_ms);
+"#;
+
+// FTS5 objects, applied only when the runtime confirms the FTS5 module is
+// present. Kept separate from SCHEMA_V5 so a build without FTS5 can still take
+// the v5 migration (bookmark + audit) and fall back to LIKE search.
+//
+// The two indexes are external-content FTS tables (`content=''`, i.e. the FTS
+// stores its own copy of the indexed text keyed by the base row's rowid). Sync
+// triggers on the base tables mirror insert/update/delete. `pid` is indexed as
+// text so `search 4242` matches by pid.
+const SCHEMA_V5_FTS: &str = r#"
+CREATE VIRTUAL TABLE IF NOT EXISTS process_fts USING fts5(
+    image_name,
+    pid,
+    content=''
+);
+CREATE VIRTUAL TABLE IF NOT EXISTS bookmark_fts USING fts5(
+    label,
+    content=''
+);
+
+CREATE TRIGGER IF NOT EXISTS process_fts_ai AFTER INSERT ON process_instance BEGIN
+    INSERT INTO process_fts(rowid, image_name, pid)
+    VALUES (new.id, new.image_name, CAST(new.pid AS TEXT));
+END;
+CREATE TRIGGER IF NOT EXISTS process_fts_ad AFTER DELETE ON process_instance BEGIN
+    INSERT INTO process_fts(process_fts, rowid, image_name, pid)
+    VALUES ('delete', old.id, old.image_name, CAST(old.pid AS TEXT));
+END;
+CREATE TRIGGER IF NOT EXISTS process_fts_au AFTER UPDATE ON process_instance BEGIN
+    INSERT INTO process_fts(process_fts, rowid, image_name, pid)
+    VALUES ('delete', old.id, old.image_name, CAST(old.pid AS TEXT));
+    INSERT INTO process_fts(rowid, image_name, pid)
+    VALUES (new.id, new.image_name, CAST(new.pid AS TEXT));
+END;
+
+CREATE TRIGGER IF NOT EXISTS bookmark_fts_ai AFTER INSERT ON bookmark BEGIN
+    INSERT INTO bookmark_fts(rowid, label) VALUES (new.id, new.label);
+END;
+CREATE TRIGGER IF NOT EXISTS bookmark_fts_ad AFTER DELETE ON bookmark BEGIN
+    INSERT INTO bookmark_fts(bookmark_fts, rowid, label) VALUES ('delete', old.id, old.label);
+END;
+"#;
+
 /// Whether `table` already has a column named `column`, via `PRAGMA table_info`.
 /// Used to make the v3 `ADD COLUMN` migration idempotent (SQLite lacks
 /// `ADD COLUMN IF NOT EXISTS`).
@@ -196,6 +276,88 @@ pub struct DecodedBlock {
     pub points: Vec<(i64, f64)>,
 }
 
+/// One decimation bucket returned by [`Store::query_range`] (M6). Carries the
+/// min/max (spike-preserving), the mean, and the sample count folded into the
+/// bucket. Empty buckets are never emitted.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RangeBucketRow {
+    pub start_ms: i64,
+    pub min: f64,
+    pub max: f64,
+    pub avg: f64,
+    pub samples: u32,
+}
+
+/// One process lifecycle event as returned by [`Store::list_events`] — the
+/// stored `proc_event` row shaped for the wire (M6). `has_exit_status` mirrors
+/// the proto's explicit presence flag so a stop with a genuine 0 exit code is
+/// distinguishable from an unknown one.
+#[derive(Debug, Clone)]
+pub struct EventListRow {
+    pub ts_ms: i64,
+    pub kind: u32,
+    pub pid: u32,
+    pub parent_pid: u32,
+    pub session_id: u32,
+    pub image_name: String,
+    pub exit_status: i32,
+    pub has_exit_status: bool,
+}
+
+/// One process-instance search hit (M6): a `process_instance` row matched by
+/// name or pid, with its identity and liveness. `exit_seen_ms` is 0 while live.
+#[derive(Debug, Clone)]
+pub struct ProcessHitRow {
+    pub proc_row_id: i64,
+    pub pid: u32,
+    pub image_name: String,
+    pub first_seen_ms: i64,
+    pub exit_seen_ms: i64,
+    pub live: bool,
+}
+
+/// One stored incident bookmark (PRD §9.3.6).
+#[derive(Debug, Clone)]
+pub struct BookmarkRow {
+    pub id: i64,
+    pub ts_ms: i64,
+    pub label: String,
+    pub created_ms: i64,
+}
+
+/// The typed result set of a [`Store::search`] call: process instances, events,
+/// and bookmarks that matched the query. The service maps each into a proto
+/// `SearchHit` oneof arm.
+#[derive(Debug, Clone, Default)]
+pub struct SearchHits {
+    pub processes: Vec<ProcessHitRow>,
+    pub events: Vec<EventListRow>,
+    pub bookmarks: Vec<BookmarkRow>,
+}
+
+/// One safe-action audit row (PRD §9.22, docs/phases.md M6). Every broker
+/// prepare and execute appends one of these regardless of outcome. Text-valued
+/// so the log is human-readable straight out of SQLite: `action` is the action
+/// name ("SUSPEND", ...), `decision` is the verdict phase+result
+/// ("PREPARE_ALLOWED" / "PREPARE_DENIED" / "EXECUTE_OK" / "EXECUTE_FAIL"), and
+/// `detail` is the free-form reason or result message.
+#[derive(Debug, Clone)]
+pub struct AuditRow {
+    pub ts_ms: i64,
+    /// Who requested it. Always "local-ui" for the broker v0 (the pipe DACL is
+    /// the actual principal boundary; there is one local actor).
+    pub actor: String,
+    /// Action name, e.g. "CLOSE_WINDOWS" / "SUSPEND" / "RESUME" / "TERMINATE".
+    pub action: String,
+    pub pid: u32,
+    pub image_name: String,
+    /// Verdict/phase tag, e.g. "PREPARE_ALLOWED" / "PREPARE_DENIED" /
+    /// "EXECUTE_OK" / "EXECUTE_FAIL".
+    pub decision: String,
+    /// Free-form reason (denial cause, result message, error text).
+    pub detail: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct TopProcessRow {
     pub pid: u32,
@@ -263,7 +425,57 @@ impl Store {
             self.conn.execute_batch(SCHEMA_V4)?;
             self.conn.execute_batch("PRAGMA user_version = 4;")?;
         }
+        if version < 5 {
+            self.conn.execute_batch(SCHEMA_V5)?;
+            self.conn.execute_batch("PRAGMA user_version = 5;")?;
+        }
+        // FTS5 objects are built (idempotently, IF NOT EXISTS) on every open
+        // once the module is confirmed present, independent of user_version: a
+        // v5 database created on a no-FTS5 build must gain the indexes the first
+        // time it is opened on an FTS5-capable build. When FTS5 is absent the
+        // search path falls back to LIKE (see `search`).
+        if self.has_fts5() {
+            self.conn.execute_batch(SCHEMA_V5_FTS)?;
+            self.backfill_fts()?;
+        }
         Ok(())
+    }
+
+    /// Populates the FTS indexes from existing base-table rows the first time
+    /// the indexes appear (a database recorded before FTS5 was available, or
+    /// before the v5 migration's triggers existed). Idempotent: it only inserts
+    /// rows whose rowid is not already indexed, so repeated opens are cheap.
+    fn backfill_fts(&self) -> Result<()> {
+        self.conn.execute_batch(
+            "INSERT INTO process_fts(rowid, image_name, pid)
+                 SELECT id, image_name, CAST(pid AS TEXT) FROM process_instance pi
+                 WHERE NOT EXISTS (SELECT 1 FROM process_fts f WHERE f.rowid = pi.id);
+             INSERT INTO bookmark_fts(rowid, label)
+                 SELECT id, label FROM bookmark b
+                 WHERE NOT EXISTS (SELECT 1 FROM bookmark_fts f WHERE f.rowid = b.id);",
+        )?;
+        Ok(())
+    }
+
+    /// Whether the bundled SQLite has FTS5 compiled in (PRAGMA compile_options).
+    /// The M6 search path prefers FTS5 when present and falls back to LIKE with
+    /// a capability note otherwise (docs/phases.md M6).
+    pub fn has_fts5(&self) -> bool {
+        self.conn
+            .prepare("PRAGMA compile_options")
+            .and_then(|mut stmt| {
+                let mut rows = stmt.query([])?;
+                let mut found = false;
+                while let Some(row) = rows.next()? {
+                    let opt: String = row.get(0)?;
+                    if opt.eq_ignore_ascii_case("ENABLE_FTS5") {
+                        found = true;
+                        break;
+                    }
+                }
+                Ok(found)
+            })
+            .unwrap_or(false)
     }
 
     /// Returns the stable row id for a process instance, inserting it on
@@ -664,6 +876,413 @@ impl Store {
         rows.truncate(limit as usize);
         Ok(rows)
     }
+
+    /// Lists `proc_event` rows in `[from_ms, to_ms]`, newest first, optionally
+    /// filtered to the given `kinds` (empty = all). Returns at most `limit` rows
+    /// and a `truncated` flag set when more rows matched than were returned
+    /// (M6 `ListEvents`). One extra row is fetched to detect truncation.
+    pub fn list_events(
+        &self,
+        from_ms: i64,
+        to_ms: i64,
+        kinds: &[u32],
+        limit: u32,
+    ) -> Result<(Vec<EventListRow>, bool)> {
+        let fetch = limit as i64 + 1; // one extra to detect truncation
+                                      // Build an IN (...) clause for the kinds filter when present. The kinds
+                                      // set is tiny (0/1) so inlining the integers is safe and keeps the
+                                      // prepared statement simple.
+        let kind_clause = if kinds.is_empty() {
+            String::new()
+        } else {
+            let list = kinds
+                .iter()
+                .map(|k| k.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            format!(" AND kind IN ({list})")
+        };
+        let sql = format!(
+            "SELECT ts_ms, kind, pid, parent_pid, session_id, image_name, exit_status
+               FROM proc_event
+              WHERE ts_ms >= ?1 AND ts_ms <= ?2{kind_clause}
+              ORDER BY ts_ms DESC
+              LIMIT ?3"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params![from_ms, to_ms, fetch], |r| {
+            let exit: Option<i64> = r.get(6)?;
+            Ok(EventListRow {
+                ts_ms: r.get(0)?,
+                kind: r.get::<_, i64>(1)? as u32,
+                pid: r.get::<_, i64>(2)? as u32,
+                parent_pid: r.get::<_, Option<i64>>(3)?.unwrap_or(0) as u32,
+                session_id: r.get::<_, Option<i64>>(4)?.unwrap_or(0) as u32,
+                image_name: r.get::<_, Option<String>>(5)?.unwrap_or_default(),
+                exit_status: exit.unwrap_or(0) as i32,
+                has_exit_status: exit.is_some(),
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        let truncated = out.len() as i64 > limit as i64;
+        out.truncate(limit as usize);
+        Ok((out, truncated))
+    }
+
+    /// Case-insensitive search across process instances (name or pid),
+    /// `proc_event` image names, and bookmark labels (M6 `Search`). `limit` caps
+    /// each entity list independently.
+    ///
+    /// Process instances and bookmarks are served from the FTS5 indexes when the
+    /// module is present (a prefix query, so `chr` matches `chrome.exe`); events
+    /// and — when FTS5 is unavailable — everything, fall back to an escaped
+    /// substring LIKE scan. A purely numeric query additionally matches by pid.
+    /// The recent corpus is small, so LIKE scans cheaply; FTS5 is preferred per
+    /// docs/phases.md M6.
+    pub fn search(&self, query: &str, limit: u32) -> Result<SearchHits> {
+        let q = query.trim();
+        if q.is_empty() {
+            return Ok(SearchHits::default());
+        }
+        let pid_num: Option<i64> = q.parse::<i64>().ok();
+        let lim = limit as i64;
+        let use_fts = self.has_fts5();
+
+        let processes = if use_fts {
+            self.search_processes_fts(q, pid_num, lim)?
+        } else {
+            self.search_processes_like(q, pid_num, lim)?
+        };
+        // proc_event is high-churn and intentionally not FTS-indexed; a LIKE
+        // scan over the retained window is cheap and keeps the write path free.
+        let events = self.search_events_like(q, pid_num, lim)?;
+        let bookmarks = if use_fts {
+            self.search_bookmarks_fts(q, lim)?
+        } else {
+            self.search_bookmarks_like(q, lim)?
+        };
+
+        Ok(SearchHits {
+            processes,
+            events,
+            bookmarks,
+        })
+    }
+
+    /// Builds an FTS5 MATCH expression from a free-text query: each
+    /// whitespace-separated token becomes a quoted prefix term (`"tok"*`) so a
+    /// partial name matches and FTS5 special characters are treated literally.
+    fn fts_prefix_query(q: &str) -> String {
+        q.split_whitespace()
+            .map(|t| format!("\"{}\"*", t.replace('"', "\"\"")))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    fn search_processes_fts(
+        &self,
+        q: &str,
+        pid_num: Option<i64>,
+        lim: i64,
+    ) -> Result<Vec<ProcessHitRow>> {
+        let match_expr = Self::fts_prefix_query(q);
+        // The FTS MATCH must be the sole constraint on the FTS table, so it runs
+        // in a rowid subquery; the pid arm is OR-ed against that on the base
+        // table (mixing MATCH with OR on a joined row errors with "unable to use
+        // function MATCH in the requested context").
+        let mut stmt = self.conn.prepare(
+            "SELECT id, pid, image_name, first_seen_ms, exit_seen_ms
+               FROM process_instance
+              WHERE id IN (SELECT rowid FROM process_fts WHERE process_fts MATCH ?1)
+                 OR (?2 IS NOT NULL AND pid = ?2)
+              ORDER BY (exit_seen_ms IS NULL) DESC, last_seen_ms DESC
+              LIMIT ?3",
+        )?;
+        let rows = stmt
+            .query_map(params![match_expr, pid_num, lim], Self::map_process_hit)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    fn search_processes_like(
+        &self,
+        q: &str,
+        pid_num: Option<i64>,
+        lim: i64,
+    ) -> Result<Vec<ProcessHitRow>> {
+        let pattern = like_pattern(q);
+        let mut stmt = self.conn.prepare(
+            "SELECT id, pid, image_name, first_seen_ms, exit_seen_ms
+               FROM process_instance
+              WHERE image_name LIKE ?1 ESCAPE '\\' COLLATE NOCASE
+                 OR (?2 IS NOT NULL AND pid = ?2)
+              ORDER BY (exit_seen_ms IS NULL) DESC, last_seen_ms DESC
+              LIMIT ?3",
+        )?;
+        let rows = stmt
+            .query_map(params![pattern, pid_num, lim], Self::map_process_hit)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    fn map_process_hit(r: &rusqlite::Row) -> rusqlite::Result<ProcessHitRow> {
+        let exit: Option<i64> = r.get(4)?;
+        Ok(ProcessHitRow {
+            proc_row_id: r.get(0)?,
+            pid: r.get::<_, i64>(1)? as u32,
+            image_name: r.get(2)?,
+            first_seen_ms: r.get(3)?,
+            exit_seen_ms: exit.unwrap_or(0),
+            live: exit.is_none(),
+        })
+    }
+
+    fn search_events_like(
+        &self,
+        q: &str,
+        pid_num: Option<i64>,
+        lim: i64,
+    ) -> Result<Vec<EventListRow>> {
+        let pattern = like_pattern(q);
+        let mut stmt = self.conn.prepare(
+            "SELECT ts_ms, kind, pid, parent_pid, session_id, image_name, exit_status
+               FROM proc_event
+              WHERE image_name LIKE ?1 ESCAPE '\\' COLLATE NOCASE
+                 OR (?2 IS NOT NULL AND pid = ?2)
+              ORDER BY ts_ms DESC
+              LIMIT ?3",
+        )?;
+        let rows = stmt
+            .query_map(params![pattern, pid_num, lim], |r| {
+                let exit: Option<i64> = r.get(6)?;
+                Ok(EventListRow {
+                    ts_ms: r.get(0)?,
+                    kind: r.get::<_, i64>(1)? as u32,
+                    pid: r.get::<_, i64>(2)? as u32,
+                    parent_pid: r.get::<_, Option<i64>>(3)?.unwrap_or(0) as u32,
+                    session_id: r.get::<_, Option<i64>>(4)?.unwrap_or(0) as u32,
+                    image_name: r.get::<_, Option<String>>(5)?.unwrap_or_default(),
+                    exit_status: exit.unwrap_or(0) as i32,
+                    has_exit_status: exit.is_some(),
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    fn search_bookmarks_fts(&self, q: &str, lim: i64) -> Result<Vec<BookmarkRow>> {
+        let match_expr = Self::fts_prefix_query(q);
+        let mut stmt = self.conn.prepare(
+            "SELECT id, ts_ms, label, created_ms
+               FROM bookmark
+              WHERE id IN (SELECT rowid FROM bookmark_fts WHERE bookmark_fts MATCH ?1)
+              ORDER BY ts_ms DESC
+              LIMIT ?2",
+        )?;
+        let rows = stmt
+            .query_map(params![match_expr, lim], Self::map_bookmark)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    fn search_bookmarks_like(&self, q: &str, lim: i64) -> Result<Vec<BookmarkRow>> {
+        let pattern = like_pattern(q);
+        let mut stmt = self.conn.prepare(
+            "SELECT id, ts_ms, label, created_ms
+               FROM bookmark
+              WHERE label LIKE ?1 ESCAPE '\\' COLLATE NOCASE
+              ORDER BY ts_ms DESC
+              LIMIT ?2",
+        )?;
+        let rows = stmt
+            .query_map(params![pattern, lim], Self::map_bookmark)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    fn map_bookmark(r: &rusqlite::Row) -> rusqlite::Result<BookmarkRow> {
+        Ok(BookmarkRow {
+            id: r.get(0)?,
+            ts_ms: r.get(1)?,
+            label: r.get(2)?,
+            created_ms: r.get(3)?,
+        })
+    }
+
+    /// Inserts an incident bookmark and returns its row id (M6 `CreateBookmark`).
+    /// `created_ms` is stamped from wall clock at insert time.
+    pub fn create_bookmark(&self, ts_ms: i64, label: &str) -> Result<i64> {
+        let created_ms = crate::now_ms();
+        self.conn.execute(
+            "INSERT INTO bookmark (ts_ms, label, created_ms) VALUES (?1, ?2, ?3)",
+            params![ts_ms, label, created_ms],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Lists bookmarks whose `ts_ms` falls in `[from_ms, to_ms]`, ascending by
+    /// time (M6 `ListBookmarks`).
+    pub fn list_bookmarks(&self, from_ms: i64, to_ms: i64) -> Result<Vec<BookmarkRow>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT id, ts_ms, label, created_ms FROM bookmark
+              WHERE ts_ms >= ?1 AND ts_ms <= ?2
+              ORDER BY ts_ms ASC",
+        )?;
+        let rows = stmt
+            .query_map(params![from_ms, to_ms], |r| {
+                Ok(BookmarkRow {
+                    id: r.get(0)?,
+                    ts_ms: r.get(1)?,
+                    label: r.get(2)?,
+                    created_ms: r.get(3)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Appends one safe-action audit row (PRD §9.22 — every prepare/execute is
+    /// recorded regardless of outcome). Append-only; the log is never updated or
+    /// deleted by the broker.
+    pub fn record_audit(&self, a: &AuditRow) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO audit (ts_ms, actor, action, pid, image_name, decision, detail)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                a.ts_ms,
+                a.actor,
+                a.action,
+                a.pid,
+                a.image_name,
+                a.decision,
+                a.detail
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Reads the most recent audit rows, newest first (dev/verification helper).
+    pub fn recent_audit(&self, limit: u32) -> Result<Vec<AuditRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT ts_ms, actor, action, pid, image_name, decision, detail
+               FROM audit ORDER BY ts_ms DESC, id DESC LIMIT ?1",
+        )?;
+        let rows = stmt
+            .query_map(params![limit], |r| {
+                Ok(AuditRow {
+                    ts_ms: r.get(0)?,
+                    actor: r.get(1)?,
+                    action: r.get(2)?,
+                    pid: r.get::<_, i64>(3)? as u32,
+                    image_name: r.get(4)?,
+                    decision: r.get(5)?,
+                    detail: r.get(6)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Buckets a metric series over `[from_ms, to_ms]` into at most `buckets`
+    /// min/max/avg/count spans (M6 `QueryRange`). Reads matching `sample_block`s,
+    /// decodes them via atlas-tsdb, and folds every in-window point into its
+    /// time bucket. Empty buckets are omitted (the UI renders gaps as missing
+    /// data, never zero — PRD §11.3), and buckets come out ascending by
+    /// `start_ms`. `buckets` of 0 uses the server default of 500.
+    ///
+    /// `scope` selects the series: a `process_instance` row id for per-process
+    /// metrics, or [`SYSTEM_SCOPE`] (0) for the system gauges. Mirrors the
+    /// min/max-preserving decimation of [`atlas_tsdb::SeriesRing::decimate_minmax`]
+    /// but adds avg/count and works over the persisted block store.
+    pub fn query_range(
+        &self,
+        metric: Metric,
+        scope: i64,
+        from_ms: i64,
+        to_ms: i64,
+        buckets: u32,
+    ) -> Result<Vec<RangeBucketRow>> {
+        let n_buckets = if buckets == 0 { 500 } else { buckets } as usize;
+        if to_ms <= from_ms {
+            return Ok(Vec::new());
+        }
+        let span = (to_ms - from_ms) as u128;
+        let width = (span / n_buckets as u128).max(1) as i64;
+
+        // One accumulator per bucket index; None until a point lands there.
+        struct Acc {
+            start_ms: i64,
+            min: f64,
+            max: f64,
+            sum: f64,
+            count: u32,
+        }
+        let mut acc: Vec<Option<Acc>> = (0..n_buckets).map(|_| None).collect();
+
+        for blk in self.read_blocks(metric, Some(scope), from_ms, to_ms)? {
+            for &(ts, v) in &blk.points {
+                // Half-open [from, to): the upper bound is exclusive so a bucket
+                // boundary point is not double-counted.
+                if ts < from_ms || ts >= to_ms {
+                    continue;
+                }
+                let idx = ((((ts - from_ms) as u128) * n_buckets as u128) / span) as usize;
+                let idx = idx.min(n_buckets - 1);
+                match &mut acc[idx] {
+                    Some(a) => {
+                        a.min = a.min.min(v);
+                        a.max = a.max.max(v);
+                        a.sum += v;
+                        a.count += 1;
+                    }
+                    slot @ None => {
+                        *slot = Some(Acc {
+                            start_ms: from_ms + idx as i64 * width,
+                            min: v,
+                            max: v,
+                            sum: v,
+                            count: 1,
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(acc
+            .into_iter()
+            .flatten()
+            .map(|a| RangeBucketRow {
+                start_ms: a.start_ms,
+                min: a.min,
+                max: a.max,
+                avg: a.sum / a.count as f64,
+                samples: a.count,
+            })
+            .collect())
+    }
+}
+
+/// Builds a case-insensitive substring LIKE pattern (`%needle%`) with the
+/// query's own LIKE metacharacters (`\`, `%`, `_`) escaped, so a user typing
+/// them matches literally (paired with `ESCAPE '\\'` in the SQL).
+fn like_pattern(q: &str) -> String {
+    let escaped = q
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    format!("%{escaped}%")
+}
+
+/// Wall-clock Unix-epoch milliseconds. Small local helper so the store can
+/// stamp `created_ms`/audit timestamps without a dependency on the service.
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -807,7 +1426,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 4, "migration walks v1 up to the current schema");
+        assert_eq!(version, 5, "migration walks v1 up to the current schema");
 
         store
             .write_self_sample(&SelfSampleRow {
@@ -883,7 +1502,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 4, "migration walks a v2 db to the current schema");
+        assert_eq!(version, 5, "migration walks a v2 db to the current schema");
         assert!(column_exists(&store.conn, "process_instance", "exit_status").unwrap());
 
         // Pre-existing row survived and has a NULL exit_status.
@@ -993,12 +1612,228 @@ mod tests {
     }
 
     #[test]
-    fn fresh_database_is_v4() {
+    fn fresh_database_is_v5() {
         let store = Store::open_in_memory().unwrap();
         let version: i64 = store
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
+    }
+
+    #[test]
+    fn list_events_filters_kinds_and_truncates() {
+        let mut store = Store::open_in_memory().unwrap();
+        let events = vec![
+            ProcEventRow {
+                ts_ms: 1_000,
+                pid: 10,
+                kind: PROC_EVENT_START,
+                parent_pid: Some(4),
+                session_id: Some(1),
+                image_name: Some("a.exe".into()),
+                exit_status: None,
+            },
+            ProcEventRow {
+                ts_ms: 2_000,
+                pid: 10,
+                kind: PROC_EVENT_STOP,
+                parent_pid: None,
+                session_id: None,
+                image_name: None,
+                exit_status: Some(0),
+            },
+            ProcEventRow {
+                ts_ms: 3_000,
+                pid: 11,
+                kind: PROC_EVENT_START,
+                parent_pid: Some(4),
+                session_id: Some(1),
+                image_name: Some("b.exe".into()),
+                exit_status: None,
+            },
+        ];
+        store.write_batch(&[], &events).unwrap();
+
+        // All kinds, generous limit: three rows, newest first, not truncated.
+        let (rows, truncated) = store.list_events(0, 10_000, &[], 100).unwrap();
+        assert_eq!(rows.len(), 3);
+        assert!(!truncated);
+        assert_eq!(rows[0].ts_ms, 3_000, "newest first");
+
+        // Only stops.
+        let (stops, _) = store
+            .list_events(0, 10_000, &[PROC_EVENT_STOP as u32], 100)
+            .unwrap();
+        assert_eq!(stops.len(), 1);
+        assert_eq!(stops[0].pid, 10);
+        assert_eq!(stops[0].exit_status, 0);
+        assert!(stops[0].has_exit_status);
+
+        // Limit forces truncation.
+        let (limited, truncated) = store.list_events(0, 10_000, &[], 2).unwrap();
+        assert_eq!(limited.len(), 2);
+        assert!(truncated, "more rows existed than the limit");
+    }
+
+    #[test]
+    fn search_matches_name_pid_and_bookmark() {
+        let mut store = Store::open_in_memory().unwrap();
+        store.upsert_process(&identity(4242), 1_000).unwrap();
+        store
+            .write_batch(
+                &[],
+                &[ProcEventRow {
+                    ts_ms: 5_000,
+                    pid: 777,
+                    kind: PROC_EVENT_START,
+                    parent_pid: Some(4),
+                    session_id: Some(1),
+                    image_name: Some("chrome.exe".into()),
+                    exit_status: None,
+                }],
+            )
+            .unwrap();
+        store.create_bookmark(9_000, "chrome spike").unwrap();
+
+        // Name substring hits the live instance (proc4242.exe) — case-insensitive.
+        let hits = store.search("PROC4242", 50).unwrap();
+        assert!(
+            hits.processes.iter().any(|p| p.pid == 4242),
+            "process instance matched by name"
+        );
+
+        // "chrome" hits the event image name and the bookmark label.
+        let hits = store.search("chrome", 50).unwrap();
+        assert!(hits.events.iter().any(|e| e.pid == 777));
+        assert!(hits.bookmarks.iter().any(|b| b.label == "chrome spike"));
+
+        // Numeric query matches pid.
+        let hits = store.search("777", 50).unwrap();
+        assert!(hits.events.iter().any(|e| e.pid == 777));
+    }
+
+    #[test]
+    fn bookmarks_roundtrip_and_range() {
+        let store = Store::open_in_memory().unwrap();
+        let a = store.create_bookmark(1_000, "one").unwrap();
+        let b = store.create_bookmark(5_000, "two").unwrap();
+        assert_ne!(a, b);
+
+        let all = store.list_bookmarks(0, 10_000).unwrap();
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[0].ts_ms, 1_000, "ordered by ts ascending");
+
+        let windowed = store.list_bookmarks(2_000, 10_000).unwrap();
+        assert_eq!(windowed.len(), 1);
+        assert_eq!(windowed[0].label, "two");
+    }
+
+    #[test]
+    fn audit_rows_are_appended() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .record_audit(&AuditRow {
+                ts_ms: 1_000,
+                actor: "local-ui".into(),
+                action: "TERMINATE".into(),
+                pid: 42,
+                image_name: "lsass.exe".into(),
+                decision: "PREPARE_DENIED".into(),
+                detail: "protected-critical".into(),
+            })
+            .unwrap();
+        store
+            .record_audit(&AuditRow {
+                ts_ms: 2_000,
+                actor: "local-ui".into(),
+                action: "SUSPEND".into(),
+                pid: 99,
+                image_name: "notepad.exe".into(),
+                decision: "EXECUTE_OK".into(),
+                detail: "suspended".into(),
+            })
+            .unwrap();
+        let n: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM audit", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 2);
+        // recent_audit returns newest first with the text fields intact.
+        let recent = store.recent_audit(10).unwrap();
+        assert_eq!(recent.len(), 2);
+        assert_eq!(recent[0].action, "SUSPEND");
+        assert_eq!(recent[0].decision, "EXECUTE_OK");
+        assert_eq!(recent[1].image_name, "lsass.exe");
+    }
+
+    #[test]
+    fn query_range_buckets_with_gaps_and_stats() {
+        let mut store = Store::open_in_memory().unwrap();
+        let id = store.upsert_process(&identity(50), 1_000).unwrap();
+        // Over [0,10000) with 3 buckets (~3333 ms each): the three early points
+        // (0/1000/2000) fall in bucket 0, the two late points (8000/9000) in
+        // bucket 2; bucket 1 is empty and must be omitted. A spike of 90 lives
+        // among the early low values and must survive as the bucket max.
+        let cpu = block(
+            Metric::CpuPermille,
+            id,
+            &[
+                (0, 10.0),
+                (1_000, 90.0),
+                (2_000, 20.0),
+                (8_000, 30.0),
+                (9_000, 50.0),
+            ],
+        );
+        store.write_blocks(&[cpu]).unwrap();
+
+        let buckets = store
+            .query_range(Metric::CpuPermille, id, 0, 10_000, 3)
+            .unwrap();
+        // Only two non-empty buckets are returned (the empty middle one omitted).
+        assert_eq!(buckets.len(), 2, "empty buckets omitted");
+        // First bucket spans the three early points: min 10, max 90, avg 40.
+        assert_eq!(buckets[0].samples, 3);
+        assert_eq!(buckets[0].min, 10.0);
+        assert_eq!(buckets[0].max, 90.0, "spike preserved");
+        assert!((buckets[0].avg - 40.0).abs() < 1e-9);
+        // Second bucket: the two late points, avg 40.
+        assert_eq!(buckets[1].samples, 2);
+        assert_eq!(buckets[1].min, 30.0);
+        assert_eq!(buckets[1].max, 50.0);
+        // Buckets come out ascending by start_ms.
+        assert!(buckets[0].start_ms < buckets[1].start_ms);
+
+        // System scope + empty range degenerate cleanly.
+        assert!(store
+            .query_range(Metric::SysCpuPermille, atlas_tsdb::SYSTEM_SCOPE, 0, 0, 10)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn search_prefers_fts_when_available() {
+        // Documents the FTS5 outcome: the bundled sqlite has FTS5, so prefix
+        // matching works ("chr" → chrome.exe) — a capability LIKE cannot give.
+        let store = Store::open_in_memory().unwrap();
+        assert!(store.has_fts5(), "bundled sqlite must ship FTS5");
+        store.upsert_process(&identity(4242), 1_000).unwrap();
+        store
+            .conn
+            .execute(
+                "INSERT INTO process_instance
+                     (pid, create_time_100ns, parent_pid, session_id, image_name,
+                      first_seen_ms, last_seen_ms)
+                 VALUES (555, 7, 4, 1, 'chrome.exe', 100, 100)",
+                [],
+            )
+            .unwrap();
+        // Prefix hit via FTS.
+        let hits = store.search("chro", 50).unwrap();
+        assert!(
+            hits.processes.iter().any(|p| p.image_name == "chrome.exe"),
+            "prefix match found chrome.exe"
+        );
     }
 }
