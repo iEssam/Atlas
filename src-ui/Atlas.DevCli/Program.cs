@@ -17,6 +17,7 @@ uint topN = 15;
 bool watch = false;
 bool probeR2 = false;
 bool probeRules = false;
+bool probePrivacyAlerts = false;
 uint probePid = 0;
 
 for (int i = 0; i < args.Length; i++)
@@ -46,6 +47,11 @@ for (int i = 0; i < args.Length; i++)
         case "--probe-rules":
             probeRules = true;
             break;
+        // R2 privacy-alerts live check: exercise the 5 privacy-alert RPCs and
+        // report how each degrades (Supported vs Unsupported→"server too old").
+        case "--probe-privacy-alerts":
+            probePrivacyAlerts = true;
+            break;
         case "--pid" when i + 1 < args.Length:
             if (!uint.TryParse(args[++i], out probePid))
             {
@@ -57,7 +63,7 @@ for (int i = 0; i < args.Length; i++)
         case "--help":
             Console.WriteLine(
                 "usage: atlas-devcli [--pipe <who>] [--top <n>] [--watch] "
-                + "[--probe-r2 [--pid <pid>]] [--probe-rules]");
+                + "[--probe-r2 [--pid <pid>]] [--probe-rules] [--probe-privacy-alerts]");
             return 0;
         default:
             Console.Error.WriteLine($"unknown argument: {args[i]}");
@@ -73,6 +79,11 @@ if (probeR2)
 if (probeRules)
 {
     return await ProbeRulesAsync(who);
+}
+
+if (probePrivacyAlerts)
+{
+    return await ProbePrivacyAlertsAsync(who);
 }
 
 var pipePath = AtlasPipe.FullPath(who ?? AtlasPipe.DefaultWho());
@@ -244,6 +255,88 @@ static async Task<int> ProbeRulesAsync(string? who)
             ? "AtlasRules is served — the Rules/Profiles pages will show live data."
             : "AtlasRules is not served — the Rules/Profiles pages will show their calm "
               + "\"unavailable — server too old\" states, and the app stays fully usable.");
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"error: {ex.Message}");
+        return 1;
+    }
+}
+
+// Exercises the R2 advanced-privacy-alerts RPCs (ListPrivacyAlertRules,
+// CreatePrivacyAlertRule, UpdatePrivacyAlertRule, DeletePrivacyAlertRule,
+// ListFiredAlerts) and prints, for each, whether the server supported it or
+// degraded to Unsupported. This is the console equivalent of navigating the UI's
+// Privacy Alerts page: against a server too old to serve these RPCs, every call
+// should come back Unsupported (not throw), which is exactly what drives the
+// page's calm "unavailable — server too old" state. The read-only list calls are
+// exercised first; the mutating create/update/delete probes only fire if the read
+// side is already Supported, so this never writes rules into an older service.
+static async Task<int> ProbePrivacyAlertsAsync(string? who)
+{
+    try
+    {
+        using var atlas = AtlasChannel.Connect(who);
+        Console.WriteLine("Probing privacy-alert RPCs ...");
+        Console.WriteLine();
+
+        var rules = await atlas.ListPrivacyAlertRulesAsync();
+        Console.WriteLine(rules.Supported
+            ? $"ListPrivacyAlertRules : Supported ({rules.Value.Rules.Count} rules)"
+            : $"ListPrivacyAlertRules : Unsupported — {rules.UnsupportedReason}");
+
+        long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var fired = await atlas.ListFiredAlertsAsync(
+            now - (long)TimeSpan.FromDays(7).TotalMilliseconds, now, limit: 50);
+        Console.WriteLine(fired.Supported
+            ? $"ListFiredAlerts       : Supported ({fired.Value.Alerts.Count} alerts, "
+              + $"truncated={fired.Value.Truncated})"
+            : $"ListFiredAlerts       : Unsupported — {fired.UnsupportedReason}");
+
+        if (rules.Supported)
+        {
+            // The read side works, so the mutating RPCs are safe to exercise
+            // (create a throwaway rule, toggle it, delete it) end to end.
+            var draft = new Atlas.V0.PrivacyAlertRule
+            {
+                Name = "devcli probe",
+                Enabled = false,
+                Capability = Atlas.V0.CapabilityKind.Camera,
+                Condition = Atlas.V0.PrivacyAlertCondition.AlertBackgroundUse,
+            };
+            var created = await atlas.CreatePrivacyAlertRuleAsync(draft);
+            Console.WriteLine(created.Supported
+                ? $"CreatePrivacyAlertRule: Supported (id={created.Value.Id})"
+                : $"CreatePrivacyAlertRule: Unsupported — {created.UnsupportedReason}");
+
+            if (created.Supported)
+            {
+                draft.Id = created.Value.Id;
+                draft.Enabled = true;
+                var updated = await atlas.UpdatePrivacyAlertRuleAsync(draft);
+                Console.WriteLine(updated.Supported
+                    ? $"UpdatePrivacyAlertRule: Supported (ok={updated.Value.Ok})"
+                    : $"UpdatePrivacyAlertRule: Unsupported — {updated.UnsupportedReason}");
+
+                var deleted = await atlas.DeletePrivacyAlertRuleAsync(created.Value.Id);
+                Console.WriteLine(deleted.Supported
+                    ? $"DeletePrivacyAlertRule: Supported (ok={deleted.Value.Ok})"
+                    : $"DeletePrivacyAlertRule: Unsupported — {deleted.UnsupportedReason}");
+            }
+        }
+        else
+        {
+            Console.WriteLine("CreatePrivacyAlertRule: skipped (read side Unsupported)");
+            Console.WriteLine("UpdatePrivacyAlertRule: skipped (read side Unsupported)");
+            Console.WriteLine("DeletePrivacyAlertRule: skipped (read side Unsupported)");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine(rules.Supported
+            ? "Privacy alerts are served — the Privacy Alerts page will show live data."
+            : "Privacy alerts are not served — the Privacy Alerts page will show its calm "
+              + "\"unavailable — server too old\" state, and the app stays fully usable.");
         return 0;
     }
     catch (Exception ex)

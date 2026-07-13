@@ -38,6 +38,7 @@ public sealed partial class MainWindow : Window
             "timeline" => typeof(TimelinePage),
             "search" => typeof(SearchPage),
             "privacy" => typeof(PrivacyPage),
+            "privacyalerts" => typeof(PrivacyAlertsPage),
             "startup" => typeof(StartupPage),
             "services" => typeof(ServicesPage),
             "network" => typeof(NetworkPage),
@@ -47,6 +48,7 @@ public sealed partial class MainWindow : Window
             "rules" => typeof(RulesPage),
             "profiles" => typeof(ProfilesPage),
             "diagnostics" => typeof(DiagnosticsPage),
+            "settings" => typeof(SettingsPage),
             _ => null,
         };
         if (type is not null && ContentFrame.CurrentSourcePageType != type)

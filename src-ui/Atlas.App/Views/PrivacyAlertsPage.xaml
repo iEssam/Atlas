@@ -1,0 +1,250 @@
+<Page
+    x:Class="Atlas.App.Views.PrivacyAlertsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vm="using:Atlas.App.ViewModels"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <Grid Padding="24" RowSpacing="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Title + New -->
+        <Grid Grid.Row="0">
+            <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                <TextBlock Text="Privacy Alerts" Style="{StaticResource TitleTextBlockStyle}" />
+                <TextBlock VerticalAlignment="Bottom"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                           Text="Get told when camera, microphone, or location is used" />
+                <Border x:Name="DemoBadge" Visibility="Collapsed"
+                        VerticalAlignment="Center"
+                        Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
+                        CornerRadius="4" Padding="8,2">
+                    <TextBlock Text="Demo data" Style="{StaticResource CaptionTextBlockStyle}" />
+                </Border>
+            </StackPanel>
+            <Button x:Name="NewAlertButton"
+                    HorizontalAlignment="Right"
+                    AutomationProperties.Name="New privacy alert"
+                    Style="{StaticResource AccentButtonStyle}"
+                    Click="NewAlert_Click">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <FontIcon Glyph="&#xE710;" FontSize="14" />
+                    <TextBlock Text="New alert" />
+                </StackPanel>
+            </Button>
+        </Grid>
+
+        <!-- Status line -->
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="12">
+            <ProgressRing IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}" Width="16" Height="16" />
+            <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Text="{x:Bind ViewModel.StatusText, Mode=OneWay}" />
+        </StackPanel>
+
+        <!-- Rules table / states -->
+        <Grid Grid.Row="2">
+            <!-- Unavailable -->
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
+                        Visibility="{x:Bind ViewModel.IsUnavailable, Mode=OneWay}">
+                <FontIcon Glyph="&#xE7BA;" FontSize="28"
+                          Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                          HorizontalAlignment="Center" />
+                <TextBlock Text="Privacy alerts unavailable"
+                           Style="{StaticResource SubtitleTextBlockStyle}"
+                           HorizontalAlignment="Center" />
+                <TextBlock Text="The connected service is too old to manage privacy alerts. Update the Atlas service to use them."
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                           TextWrapping="Wrap" MaxWidth="420"
+                           HorizontalTextAlignment="Center" />
+            </StackPanel>
+
+            <!-- Empty -->
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
+                        Visibility="{x:Bind ViewModel.IsEmpty, Mode=OneWay}">
+                <FontIcon Glyph="&#xEA8F;" FontSize="28"
+                          Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                          HorizontalAlignment="Center" />
+                <TextBlock Text="No alert rules yet"
+                           Style="{StaticResource SubtitleTextBlockStyle}"
+                           HorizontalAlignment="Center" />
+                <TextBlock Text="Add an alert to be told when an app uses your camera, microphone, or location — for example, in the background or while your screen is locked. Alerts only inform you; they never block anything."
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                           TextWrapping="Wrap" MaxWidth="440"
+                           HorizontalTextAlignment="Center" />
+            </StackPanel>
+
+            <Grid Visibility="{x:Bind ViewModel.IsUnavailable, Mode=OneWay, Converter={StaticResource InverseBoolToVisibility}}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <!-- Header -->
+                <Grid Grid.Row="0" Padding="16,4,16,8" ColumnSpacing="12"
+                      Visibility="{x:Bind ViewModel.IsEmpty, Mode=OneWay, Converter={StaticResource InverseBoolToVisibility}}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="2*" />
+                        <ColumnDefinition Width="1.4*" />
+                        <ColumnDefinition Width="1.8*" />
+                        <ColumnDefinition Width="Auto" MinWidth="96" />
+                        <ColumnDefinition Width="Auto" MinWidth="96" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="Name" Style="{StaticResource CaptionTextBlockStyle}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <TextBlock Grid.Column="1" Text="Capability" Style="{StaticResource CaptionTextBlockStyle}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <TextBlock Grid.Column="2" Text="Alert when" Style="{StaticResource CaptionTextBlockStyle}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <TextBlock Grid.Column="3" Text="Enabled" Style="{StaticResource CaptionTextBlockStyle}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                </Grid>
+
+                <!-- Rows -->
+                <ListView Grid.Row="1"
+                          AutomationProperties.Name="Privacy alert rules table"
+                          ItemsSource="{x:Bind ViewModel.Rules, Mode=OneWay}"
+                          SelectionMode="None">
+                    <ListView.ItemContainerStyle>
+                        <Style TargetType="ListViewItem">
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                            <Setter Property="Padding" Value="8,6" />
+                            <Setter Property="MinHeight" Value="0" />
+                        </Style>
+                    </ListView.ItemContainerStyle>
+                    <ListView.ItemTemplate>
+                        <DataTemplate x:DataType="vm:PrivacyAlertRuleRowViewModel">
+                            <Grid ColumnSpacing="12" Padding="8,2">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="2*" />
+                                    <ColumnDefinition Width="1.4*" />
+                                    <ColumnDefinition Width="1.8*" />
+                                    <ColumnDefinition Width="Auto" MinWidth="96" />
+                                    <ColumnDefinition Width="Auto" MinWidth="96" />
+                                </Grid.ColumnDefinitions>
+
+                                <TextBlock Grid.Column="0" VerticalAlignment="Center"
+                                           Text="{x:Bind Name}"
+                                           TextTrimming="CharacterEllipsis" />
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8"
+                                            VerticalAlignment="Center">
+                                    <FontIcon Glyph="{x:Bind CapabilityGlyph}" FontSize="14"
+                                              Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    <TextBlock Text="{x:Bind CapabilityText}"
+                                               TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                                <TextBlock Grid.Column="2" VerticalAlignment="Center"
+                                           Text="{x:Bind ConditionText}"
+                                           TextTrimming="CharacterEllipsis"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <ToggleSwitch Grid.Column="3" VerticalAlignment="Center"
+                                              MinWidth="0"
+                                              AutomationProperties.Name="Enable alert"
+                                              IsOn="{x:Bind Enabled}"
+                                              OnContent="" OffContent=""
+                                              Toggled="EnabledToggle_Toggled" />
+
+                                <!-- Per-row actions -->
+                                <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="2"
+                                            VerticalAlignment="Center">
+                                    <Button AutomationProperties.Name="Edit alert"
+                                            ToolTipService.ToolTip="Edit"
+                                            Background="Transparent" BorderThickness="0"
+                                            Click="EditAlert_Click">
+                                        <FontIcon Glyph="&#xE70F;" FontSize="15" />
+                                    </Button>
+                                    <Button AutomationProperties.Name="Delete alert"
+                                            ToolTipService.ToolTip="Delete"
+                                            Background="Transparent" BorderThickness="0"
+                                            Click="DeleteAlert_Click">
+                                        <FontIcon Glyph="&#xE74D;" FontSize="15" />
+                                    </Button>
+                                </StackPanel>
+                            </Grid>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+            </Grid>
+        </Grid>
+
+        <!-- Recent alerts (the log — factual, PRD §9.10.3) -->
+        <Border Grid.Row="3"
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                BorderThickness="1" CornerRadius="8" Padding="16,12"
+                MaxHeight="260">
+            <Grid RowSpacing="8">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8">
+                    <FontIcon Glyph="&#xEA8F;" FontSize="16" VerticalAlignment="Center" />
+                    <TextBlock Text="Recent alerts"
+                               Style="{StaticResource BodyStrongTextBlockStyle}"
+                               VerticalAlignment="Center" />
+                </StackPanel>
+
+                <TextBlock Grid.Row="1"
+                           Text="{x:Bind ViewModel.AlertsStatus, Mode=OneWay}"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                           TextWrapping="Wrap" />
+
+                <!-- Unavailable note -->
+                <TextBlock Grid.Row="2" VerticalAlignment="Top" Margin="0,4,0,0"
+                           Visibility="{x:Bind ViewModel.AlertsUnavailable, Mode=OneWay}"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                           TextWrapping="Wrap"
+                           Text="The connected service can't report fired alerts yet." />
+
+                <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto"
+                              Visibility="{x:Bind ViewModel.AlertsUnavailable, Mode=OneWay, Converter={StaticResource InverseBoolToVisibility}}">
+                    <ItemsControl ItemsSource="{x:Bind ViewModel.RecentAlerts, Mode=OneWay}"
+                                  AutomationProperties.Name="Recent alerts list">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:FiredAlertRowViewModel">
+                                <Grid ColumnSpacing="12" Padding="0,6"
+                                      ToolTipService.ToolTip="{x:Bind Line}"
+                                      BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                                      BorderThickness="0,0,0,1">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" MinWidth="96" />
+                                        <ColumnDefinition Width="Auto" MinWidth="140" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" MinWidth="64" />
+                                    </Grid.ColumnDefinitions>
+                                    <FontIcon Grid.Column="0" Glyph="{x:Bind Glyph}" FontSize="14"
+                                              VerticalAlignment="Center"
+                                              Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    <TextBlock Grid.Column="1" VerticalAlignment="Center"
+                                               Text="{x:Bind Capability}" />
+                                    <TextBlock Grid.Column="2" VerticalAlignment="Center"
+                                               Text="{x:Bind AppName}"
+                                               TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Grid.Column="3" VerticalAlignment="Center"
+                                               Text="{x:Bind Detail}"
+                                               TextTrimming="CharacterEllipsis"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    <TextBlock Grid.Column="4" VerticalAlignment="Center"
+                                               HorizontalAlignment="Right"
+                                               Text="{x:Bind TimeText}"
+                                               Style="{StaticResource CaptionTextBlockStyle}"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </Grid>
+        </Border>
+    </Grid>
+</Page>

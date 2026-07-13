@@ -503,6 +503,73 @@ public sealed class AtlasChannel : IDisposable
             cancellationToken: cancellationToken).ResponseAsync);
 
     // ----------------------------------------------------------------------
+    // R2: advanced privacy alerts (AtlasQuery, PRD §9.10.3). Alert rules over
+    // camera / microphone / location usage, plus the fired-alert log. All
+    // read-only from the UI's perspective except the rule CRUD, which the
+    // service's ConsentStore change-watcher evaluates. Same Unimplemented→
+    // Unsupported guard so the privacy-alerts page degrades gracefully against an
+    // older service that serves these RPCs as Unimplemented (the server side
+    // lands after the UI — task brief). A fired alert means "you asked to be told
+    // about this", never "a threat" — the framing stays factual (proto R2 header).
+    // ----------------------------------------------------------------------
+
+    /// <summary>All configured privacy-alert rules (enabled and disabled), in server order.</summary>
+    public Task<RpcOutcome<ListPrivacyAlertRulesReply>> ListPrivacyAlertRulesAsync(
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _client.ListPrivacyAlertRulesAsync(
+            new ListPrivacyAlertRulesRequest(),
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>
+    /// Creates a privacy-alert rule (the <c>id</c> field is ignored server-side).
+    /// Returns the assigned id. A disabled rule watches nothing until enabled.
+    /// </summary>
+    public Task<RpcOutcome<CreatePrivacyAlertRuleReply>> CreatePrivacyAlertRuleAsync(
+        PrivacyAlertRule rule,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _client.CreatePrivacyAlertRuleAsync(
+            new CreatePrivacyAlertRuleRequest { Rule = rule },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>
+    /// Updates an existing privacy-alert rule in place (matched by its <c>id</c>).
+    /// The reply's <c>ok</c> flag carries the server-side result.
+    /// </summary>
+    public Task<RpcOutcome<UpdatePrivacyAlertRuleReply>> UpdatePrivacyAlertRuleAsync(
+        PrivacyAlertRule rule,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _client.UpdatePrivacyAlertRuleAsync(
+            new UpdatePrivacyAlertRuleRequest { Rule = rule },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>Deletes a privacy-alert rule by id. The rule simply stops watching.</summary>
+    public Task<RpcOutcome<DeletePrivacyAlertRuleReply>> DeletePrivacyAlertRuleAsync(
+        long id,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _client.DeletePrivacyAlertRuleAsync(
+            new DeletePrivacyAlertRuleRequest { Id = id },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>
+    /// Alerts that have fired in a window, newest first. <paramref name="limit"/>
+    /// of 0 uses the server default; the reply's <c>truncated</c> flag says whether
+    /// more were elided. A fired alert is an informational record ("you asked to be
+    /// told about this"), never a verdict.
+    /// </summary>
+    public Task<RpcOutcome<ListFiredAlertsReply>> ListFiredAlertsAsync(
+        long fromMs,
+        long toMs,
+        uint limit = 0,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _client.ListFiredAlertsAsync(
+            new ListFiredAlertsRequest
+            {
+                Range = new TimeRange { FromMs = fromMs, ToMs = toMs },
+                Limit = limit,
+            },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    // ----------------------------------------------------------------------
     // M6: safe process actions (AtlasControl) — two-phase prepare/execute.
     // ----------------------------------------------------------------------
 

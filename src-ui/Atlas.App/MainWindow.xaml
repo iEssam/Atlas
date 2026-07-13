@@ -37,6 +37,11 @@
                     <FontIcon Glyph="&#xE72E;" />
                 </NavigationViewItem.Icon>
             </NavigationViewItem>
+            <NavigationViewItem Content="Privacy Alerts" Tag="privacyalerts">
+                <NavigationViewItem.Icon>
+                    <FontIcon Glyph="&#xEA8F;" />
+                </NavigationViewItem.Icon>
+            </NavigationViewItem>
             <NavigationViewItem Content="Startup" Tag="startup">
                 <NavigationViewItem.Icon>
                     <FontIcon Glyph="&#xE7E8;" />
@@ -83,6 +88,14 @@
                 </NavigationViewItem.Icon>
             </NavigationViewItem>
         </NavigationView.MenuItems>
+
+        <NavigationView.FooterMenuItems>
+            <NavigationViewItem Content="Settings" Tag="settings">
+                <NavigationViewItem.Icon>
+                    <FontIcon Glyph="&#xE713;" />
+                </NavigationViewItem.Icon>
+            </NavigationViewItem>
+        </NavigationView.FooterMenuItems>
 
         <Frame x:Name="ContentFrame" />
     </NavigationView>
