@@ -448,6 +448,7 @@ extern "system" {
 pub type PVOID = *mut c_void;
 pub type LPCWSTR = *const u16;
 pub type LPWSTR = *mut u16;
+pub type LPCSTR = *const u8;
 pub type UINT = u32;
 pub type USHORT = u16;
 pub type ULONG = u32;
@@ -669,9 +670,13 @@ pub const WINTRUST_ACTION_GENERIC_VERIFY_V2: GUID = GUID {
 pub const WTD_UI_NONE: DWORD = 2;
 pub const WTD_REVOKE_NONE: DWORD = 0;
 pub const WTD_CHOICE_FILE: DWORD = 1;
+pub const WTD_CHOICE_CATALOG: DWORD = 2;
 pub const WTD_STATEACTION_VERIFY: DWORD = 1;
 pub const WTD_STATEACTION_CLOSE: DWORD = 2;
 pub const WTD_REVOCATION_CHECK_NONE: DWORD = 0x0000_0010;
+pub const CERT_NAME_ATTR_TYPE: DWORD = 3;
+pub const CERT_NAME_SIMPLE_DISPLAY_TYPE: DWORD = 4;
+pub const LOAD_LIBRARY_SEARCH_SYSTEM32: DWORD = 0x0000_0800;
 /// `WinVerifyTrust` result: the file carries no signature at all.
 pub const TRUST_E_NOSIGNATURE: LONG = 0x800B_0100_u32 as i32;
 pub const TRUST_E_SUBJECT_FORM_UNKNOWN: LONG = 0x800B_0003_u32 as i32;
@@ -686,6 +691,39 @@ pub struct WINTRUST_FILE_INFO {
     pub pgKnownSubject: *const GUID,
 }
 
+/// Maximum Win32 path carried inline by `CATALOG_INFO`.
+pub const MAX_PATH: usize = 260;
+
+/// Catalog location returned for an `HCATINFO` membership match.
+#[repr(C)]
+pub struct CATALOG_INFO {
+    pub cbStruct: DWORD,
+    pub wszCatalogFile: [u16; MAX_PATH],
+}
+
+/// `WINTRUST_CATALOG_INFO` — a catalog and one member file to verify.
+#[repr(C)]
+pub struct WINTRUST_CATALOG_INFO {
+    pub cbStruct: DWORD,
+    pub dwCatalogVersion: DWORD,
+    pub pcwszCatalogFilePath: LPCWSTR,
+    pub pcwszMemberTag: LPCWSTR,
+    pub pcwszMemberFilePath: LPCWSTR,
+    pub hMemberFile: HANDLE,
+    pub pbCalculatedFileHash: *mut u8,
+    pub cbCalculatedFileHash: DWORD,
+    pub pcCatalogContext: PVOID,
+    pub hCatAdmin: HANDLE,
+}
+
+/// Prefix of `CRYPT_PROVIDER_CERT`; only the signing certificate context is
+/// consumed before `WinVerifyTrust` releases the provider state.
+#[repr(C)]
+pub struct CRYPT_PROVIDER_CERT_PREFIX {
+    pub cbStruct: DWORD,
+    pub pCert: *const c_void,
+}
+
 /// `WINTRUST_DATA` — the verify request. Unused union/callback slots are typed
 /// as opaque pointers/DWORDs to keep the documented 64-bit layout.
 #[repr(C)]
@@ -696,7 +734,9 @@ pub struct WINTRUST_DATA {
     pub dwUIChoice: DWORD,
     pub fdwRevocationChecks: DWORD,
     pub dwUnionChoice: DWORD,
-    pub pFile: *const WINTRUST_FILE_INFO,
+    /// Active member of the native `pFile`/`pCatalog` union, selected by
+    /// `dwUnionChoice`.
+    pub pInfo: PVOID,
     pub dwStateAction: DWORD,
     pub hWVTStateData: HANDLE,
     pub pwszURLReference: LPWSTR,
@@ -750,6 +790,13 @@ extern "system" {
 
 #[link(name = "kernel32")]
 extern "system" {
+    /// Loads a DLL from a constrained search location. Used for Wintrust
+    /// helpers that Microsoft exposes only through dynamic linking.
+    pub fn LoadLibraryExW(lpLibFileName: LPCWSTR, hFile: HANDLE, dwFlags: DWORD) -> HMODULE;
+
+    /// Resolves an exported function in a loaded module.
+    pub fn GetProcAddress(hModule: HMODULE, lpProcName: LPCSTR) -> PVOID;
+
     /// Full image path of a running process. `dwFlags` 0 = Win32 path form.
     pub fn QueryFullProcessImageNameW(
         hProcess: HANDLE,
@@ -896,6 +943,19 @@ extern "system" {
     /// Authenticode trust verification. 0 = trusted; `TRUST_E_NOSIGNATURE` etc.
     /// otherwise. Called once to verify and once more to release state.
     pub fn WinVerifyTrust(hwnd: HANDLE, pgActionID: *const GUID, pWVTData: PVOID) -> LONG;
+}
+
+#[link(name = "crypt32")]
+extern "system" {
+    /// Reads a subject/issuer display attribute from a certificate context.
+    pub fn CertGetNameStringW(
+        pCertContext: *const c_void,
+        dwType: DWORD,
+        dwFlags: DWORD,
+        pvTypePara: PVOID,
+        pszNameString: LPWSTR,
+        cchNameString: DWORD,
+    ) -> DWORD;
 }
 
 #[link(name = "rstrtmgr")]

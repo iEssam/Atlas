@@ -32,7 +32,7 @@ use crate::ffi::{
     UNICODE_STRING, USHORT,
 };
 use crate::snapshot::{snapshot_processes, snapshot_thread_infos};
-use crate::winver::{read_version_info, verify_signature};
+use crate::winver::{read_version_info, verify_signature_info, SignatureStatus};
 
 /// `ProcessCommandLineInformation` info class for `NtQueryInformationProcess`.
 const PROCESS_COMMAND_LINE_INFORMATION: u32 = 60;
@@ -298,17 +298,19 @@ pub fn process_detail(pid: u32, create_time_100ns: i64) -> ProcessDetailResult {
         None => detail.limited = true,
     }
 
-    // Version + signature from the on-disk image (once the path is known).
+    // Version + verified signature identity from the on-disk image (once the
+    // path is known). Certificate publisher wins over spoofable CompanyName.
     if !detail.image_path.is_empty() {
+        let signature = verify_signature_info(&detail.image_path);
         if let Some(vi) = read_version_info(&detail.image_path) {
             detail.file_version = vi.file_version.clone();
             detail.product_name = vi.product_name.clone();
             detail.publisher = vi.company_name.clone();
-            detail.signature_status =
-                verify_signature(&detail.image_path).to_label(&vi.company_name);
-        } else {
-            detail.signature_status = verify_signature(&detail.image_path).to_label("");
         }
+        if !signature.publisher.is_empty() {
+            detail.publisher = signature.publisher;
+        }
+        detail.signature_status = signature.status.to_label(&detail.publisher);
     }
 
     ProcessDetailResult {
@@ -729,7 +731,11 @@ pub fn list_modules(pid: u32) -> ModulesResult {
                 info.version = vi.file_version;
                 info.publisher = vi.company_name;
             }
-            info.signed = verify_signature(&path) == crate::winver::SignatureStatus::Signed;
+            let signature = verify_signature_info(&path);
+            if !signature.publisher.is_empty() {
+                info.publisher = signature.publisher;
+            }
+            info.signed = signature.status == SignatureStatus::Signed;
         }
         modules.push(info);
     }

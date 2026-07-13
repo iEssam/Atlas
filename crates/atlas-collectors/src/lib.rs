@@ -63,4 +63,7 @@ pub use startup::{
     enumerate_startup, Scope as StartupScope, StartupEntry, StartupSource as CollectorStartupSource,
 };
 #[cfg(windows)]
-pub use winver::{read_version_info, verify_signature, FileVersionInfo, SignatureStatus};
+pub use winver::{
+    read_version_info, verify_signature, verify_signature_info, FileVersionInfo, SignatureInfo,
+    SignatureStatus,
+};
