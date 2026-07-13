@@ -6,6 +6,8 @@
 
 #[cfg(windows)]
 pub mod actions;
+#[cfg(windows)]
+pub mod boot;
 pub mod cadence;
 #[cfg(windows)]
 pub mod events;
@@ -16,6 +18,10 @@ pub mod grouping;
 pub mod handles;
 #[cfg(windows)]
 pub mod inspector;
+#[cfg(windows)]
+pub mod network;
+#[cfg(windows)]
+pub mod power;
 #[cfg(windows)]
 pub mod privacy;
 #[cfg(windows)]
@@ -29,6 +35,8 @@ pub mod snapshot;
 #[cfg(windows)]
 pub mod startup;
 #[cfg(windows)]
+pub mod tasks;
+#[cfg(windows)]
 pub mod winver;
 
 #[cfg(windows)]
@@ -36,6 +44,8 @@ pub use actions::{
     count_visible_top_level_windows, post_close_to_windows, resume_process, suspend_process,
     terminate_process, ActionOutcome,
 };
+#[cfg(windows)]
+pub use boot::{analyze_boots, BootAnalysis, BootRecord};
 pub use cadence::{CadenceController, Tick};
 #[cfg(windows)]
 pub use events::{EventError, ProcessEvent, ProcessEventKind, ProcessEventWatcher, WatcherOptions};
@@ -48,6 +58,13 @@ pub use inspector::{
     list_modules, list_threads, process_detail, ModuleInfo, ModulesResult, ProcessDetail,
     ProcessDetailResult, ThreadDetail,
 };
+#[cfg(windows)]
+pub use network::{
+    list_connections, list_listening_ports, Connection, L4Protocol as NetL4Protocol, ListeningPort,
+    TcpState as NetTcpState,
+};
+#[cfg(windows)]
+pub use power::{battery_status, thermal_status, BatteryReading, ThermalReading, ThermalSensor};
 #[cfg(windows)]
 pub use privacy::{enumerate_privacy_usage, Capability, PrivacyUsage};
 #[cfg(windows)]
@@ -62,5 +79,7 @@ pub use snapshot::{snapshot_processes, snapshot_thread_infos, ProcessSnapshot, T
 pub use startup::{
     enumerate_startup, Scope as StartupScope, StartupEntry, StartupSource as CollectorStartupSource,
 };
+#[cfg(windows)]
+pub use tasks::{enumerate_tasks, ScheduledTask};
 #[cfg(windows)]
 pub use winver::{read_version_info, verify_signature, FileVersionInfo, SignatureStatus};

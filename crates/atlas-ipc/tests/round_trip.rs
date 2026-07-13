@@ -364,6 +364,141 @@ impl AtlasQuery for FakeQuery {
             }],
         }))
     }
+
+    // R2 monitors: fixed responses so the transport test exercises the six new
+    // RPCs end-to-end (the real collection logic is unit-tested against the live
+    // OS in atlas-collectors).
+    async fn list_connections(
+        &self,
+        req: Request<atlas_ipc::ListConnectionsRequest>,
+    ) -> Result<Response<atlas_ipc::ListConnectionsReply>, Status> {
+        let include_listening = req.into_inner().include_listening;
+        let mut connections = vec![atlas_ipc::Connection {
+            pid: 1000,
+            image_name: "svc.exe".into(),
+            protocol: atlas_ipc::L4Protocol::Tcp as i32,
+            local_addr: "192.168.1.10".into(),
+            local_port: 52000,
+            remote_addr: "93.184.216.34".into(),
+            remote_port: 443,
+            remote_domain: "example.com".into(),
+            state: atlas_ipc::TcpState::TcpEstablished as i32,
+            is_ipv6: false,
+        }];
+        if include_listening {
+            connections.push(atlas_ipc::Connection {
+                pid: 4,
+                image_name: "System".into(),
+                protocol: atlas_ipc::L4Protocol::Tcp as i32,
+                local_addr: "0.0.0.0".into(),
+                local_port: 445,
+                remote_addr: "0.0.0.0".into(),
+                remote_port: 0,
+                remote_domain: String::new(),
+                state: atlas_ipc::TcpState::TcpListen as i32,
+                is_ipv6: false,
+            });
+        }
+        Ok(Response::new(atlas_ipc::ListConnectionsReply {
+            connections,
+        }))
+    }
+
+    async fn list_listening_ports(
+        &self,
+        _req: Request<atlas_ipc::ListListeningPortsRequest>,
+    ) -> Result<Response<atlas_ipc::ListListeningPortsReply>, Status> {
+        Ok(Response::new(atlas_ipc::ListListeningPortsReply {
+            ports: vec![atlas_ipc::ListeningPort {
+                protocol: atlas_ipc::L4Protocol::Tcp as i32,
+                bind_addr: "0.0.0.0".into(),
+                port: 445,
+                pid: 4,
+                image_name: "System".into(),
+                is_ipv6: false,
+            }],
+        }))
+    }
+
+    async fn list_scheduled_tasks(
+        &self,
+        req: Request<atlas_ipc::ListScheduledTasksRequest>,
+    ) -> Result<Response<atlas_ipc::ListScheduledTasksReply>, Status> {
+        let _ = req.into_inner();
+        Ok(Response::new(atlas_ipc::ListScheduledTasksReply {
+            tasks: vec![atlas_ipc::ScheduledTask {
+                name: "MyTask".into(),
+                path: "\\Microsoft\\Windows\\MyTask".into(),
+                folder: "\\Microsoft\\Windows".into(),
+                enabled: true,
+                triggers: "At logon".into(),
+                action: "C:\\foo.exe /run".into(),
+                last_run_ms: 1_700_000_000_000,
+                next_run_ms: 1_700_000_600_000,
+                last_result: 0,
+                author: "Microsoft Corporation".into(),
+                run_as_highest: true,
+                runs_on_idle: false,
+                wakes_to_run: false,
+            }],
+        }))
+    }
+
+    async fn list_boots(
+        &self,
+        req: Request<atlas_ipc::ListBootsRequest>,
+    ) -> Result<Response<atlas_ipc::ListBootsReply>, Status> {
+        let _ = req.into_inner();
+        Ok(Response::new(atlas_ipc::ListBootsReply {
+            available: true,
+            unavailable_reason: String::new(),
+            boots: vec![atlas_ipc::BootRecord {
+                boot_ms: 1_700_000_000_000,
+                boot_duration_ms: 45_231,
+                main_path_ms: 21_000,
+                post_boot_ms: 24_231,
+                degraded: false,
+            }],
+        }))
+    }
+
+    async fn get_battery_status(
+        &self,
+        _req: Request<atlas_ipc::GetBatteryStatusRequest>,
+    ) -> Result<Response<atlas_ipc::GetBatteryStatusReply>, Status> {
+        Ok(Response::new(atlas_ipc::GetBatteryStatusReply {
+            available: true,
+            unavailable_reason: String::new(),
+            status: Some(atlas_ipc::BatteryStatus {
+                present: true,
+                charging: false,
+                on_ac: false,
+                percent: 82,
+                rate_mw: -12_000,
+                remaining_mwh: 41_000,
+                full_charge_mwh: 50_000,
+                design_mwh: 60_000,
+                health_percent: 83,
+                cycle_count: 120,
+                est_runtime_s: 9_000,
+            }),
+        }))
+    }
+
+    async fn get_thermal(
+        &self,
+        _req: Request<atlas_ipc::GetThermalRequest>,
+    ) -> Result<Response<atlas_ipc::GetThermalReply>, Status> {
+        Ok(Response::new(atlas_ipc::GetThermalReply {
+            available: true,
+            unavailable_reason: String::new(),
+            sensors: vec![atlas_ipc::ThermalSensor {
+                name: "ACPI\\ThermalZone\\TZ00".into(),
+                celsius: 42.5,
+                source: "ACPI thermal zone (WMI)".into(),
+            }],
+        }))
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -524,6 +659,74 @@ async fn capabilities_and_snapshot_round_trip() {
     assert_eq!(owners.owners.len(), 1);
     assert_eq!(owners.owners[0].pid, 4321);
     assert!(!owners.owners[0].is_service);
+
+    // R2: ListConnections returns the established connection; with listening
+    // requested it also folds in the LISTEN row.
+    let conns = client
+        .list_connections(atlas_ipc::ListConnectionsRequest {
+            include_listening: true,
+        })
+        .await
+        .expect("ListConnections")
+        .into_inner();
+    assert_eq!(conns.connections.len(), 2);
+    assert_eq!(conns.connections[0].remote_domain, "example.com");
+    assert_eq!(
+        conns.connections[0].state,
+        atlas_ipc::TcpState::TcpEstablished as i32
+    );
+
+    // R2: ListListeningPorts names the owning pid + bind.
+    let ports = client
+        .list_listening_ports(atlas_ipc::ListListeningPortsRequest {})
+        .await
+        .expect("ListListeningPorts")
+        .into_inner();
+    assert_eq!(ports.ports.len(), 1);
+    assert_eq!(ports.ports[0].port, 445);
+
+    // R2: ListScheduledTasks round-trips the task fields.
+    let tasks = client
+        .list_scheduled_tasks(atlas_ipc::ListScheduledTasksRequest {
+            filter: String::new(),
+        })
+        .await
+        .expect("ListScheduledTasks")
+        .into_inner();
+    assert_eq!(tasks.tasks.len(), 1);
+    assert_eq!(tasks.tasks[0].author, "Microsoft Corporation");
+    assert!(tasks.tasks[0].run_as_highest);
+
+    // R2: ListBoots reports availability + a boot record.
+    let boots = client
+        .list_boots(atlas_ipc::ListBootsRequest { limit: 0 })
+        .await
+        .expect("ListBoots")
+        .into_inner();
+    assert!(boots.available);
+    assert_eq!(boots.boots.len(), 1);
+    assert_eq!(boots.boots[0].boot_duration_ms, 45_231);
+
+    // R2: GetBatteryStatus round-trips the status + health.
+    let battery = client
+        .get_battery_status(atlas_ipc::GetBatteryStatusRequest {})
+        .await
+        .expect("GetBatteryStatus")
+        .into_inner();
+    assert!(battery.available);
+    let bs = battery.status.expect("battery status present");
+    assert_eq!(bs.percent, 82);
+    assert_eq!(bs.health_percent, 83);
+
+    // R2: GetThermal reports a sensor with a source label.
+    let thermal = client
+        .get_thermal(atlas_ipc::GetThermalRequest {})
+        .await
+        .expect("GetThermal")
+        .into_inner();
+    assert!(thermal.available);
+    assert_eq!(thermal.sensors.len(), 1);
+    assert!((thermal.sensors[0].celsius - 42.5).abs() < 0.001);
 
     // Shut the server down cleanly.
     let _ = shutdown_tx.send(());

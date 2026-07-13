@@ -473,6 +473,168 @@ service AtlasQuery {
   rpc ListModules(ListModulesRequest) returns (ListModulesReply);
   rpc ListThreads(ListThreadsRequest) returns (ListThreadsReply);
   rpc FindResourceOwners(FindResourceOwnersRequest) returns (FindResourceOwnersReply);
+  rpc ListConnections(ListConnectionsRequest) returns (ListConnectionsReply);
+  rpc ListListeningPorts(ListListeningPortsRequest) returns (ListListeningPortsReply);
+  rpc ListScheduledTasks(ListScheduledTasksRequest) returns (ListScheduledTasksReply);
+  rpc ListBoots(ListBootsRequest) returns (ListBootsReply);
+  rpc GetBatteryStatus(GetBatteryStatusRequest) returns (GetBatteryStatusReply);
+  rpc GetThermal(GetThermalRequest) returns (GetThermalReply);
+}
+
+// ---------------------------------------------------------------------------
+// R2: monitors — network, scheduled tasks, boot analysis, battery, thermal.
+// All read-only. Hardware-dependent replies (battery, thermal) carry
+// available + unavailable_reason so absent sensors degrade honestly (§9.6.7).
+// ---------------------------------------------------------------------------
+
+enum L4Protocol {
+  L4_PROTOCOL_UNSPECIFIED = 0;
+  TCP = 1;
+  UDP = 2;
+}
+
+enum TcpState {
+  TCP_STATE_UNSPECIFIED = 0;
+  TCP_CLOSED = 1;
+  TCP_LISTEN = 2;
+  TCP_SYN_SENT = 3;
+  TCP_SYN_RCVD = 4;
+  TCP_ESTABLISHED = 5;
+  TCP_FIN_WAIT1 = 6;
+  TCP_FIN_WAIT2 = 7;
+  TCP_CLOSE_WAIT = 8;
+  TCP_CLOSING = 9;
+  TCP_LAST_ACK = 10;
+  TCP_TIME_WAIT = 11;
+  TCP_DELETE_TCB = 12;
+}
+
+message Connection {
+  uint32 pid = 1;
+  string image_name = 2;
+  L4Protocol protocol = 3;
+  string local_addr = 4;
+  uint32 local_port = 5;
+  string remote_addr = 6;
+  uint32 remote_port = 7;
+  // Resolved via the DNS cache where available; empty otherwise.
+  string remote_domain = 8;
+  // Only meaningful for TCP.
+  TcpState state = 9;
+  bool is_ipv6 = 10;
+}
+
+message ListConnectionsRequest {
+  bool include_listening = 1;
+}
+
+message ListConnectionsReply {
+  repeated Connection connections = 1;
+}
+
+message ListeningPort {
+  L4Protocol protocol = 1;
+  string bind_addr = 2;
+  uint32 port = 3;
+  uint32 pid = 4;
+  string image_name = 5;
+  bool is_ipv6 = 6;
+}
+
+message ListListeningPortsRequest {}
+
+message ListListeningPortsReply {
+  repeated ListeningPort ports = 1;
+}
+
+message ScheduledTask {
+  string name = 1;
+  // Full task path incl. folder, e.g. "\Microsoft\Windows\Foo".
+  string path = 2;
+  string folder = 3;
+  bool enabled = 4;
+  // Human-readable trigger summary.
+  string triggers = 5;
+  // Executable + arguments of the primary action.
+  string action = 6;
+  int64 last_run_ms = 7;
+  int64 next_run_ms = 8;
+  int32 last_result = 9;
+  string author = 10;
+  bool run_as_highest = 11;
+  bool runs_on_idle = 12;
+  bool wakes_to_run = 13;
+}
+
+message ListScheduledTasksRequest {
+  // Case-insensitive substring over name/path; empty = all.
+  string filter = 1;
+}
+
+message ListScheduledTasksReply {
+  repeated ScheduledTask tasks = 1;
+}
+
+message BootRecord {
+  // When the boot occurred.
+  int64 boot_ms = 1;
+  uint32 boot_duration_ms = 2;
+  uint32 main_path_ms = 3;
+  uint32 post_boot_ms = 4;
+  // Flagged slower than the rolling baseline.
+  bool degraded = 5;
+}
+
+message ListBootsRequest {
+  uint32 limit = 1;
+}
+
+message ListBootsReply {
+  bool available = 1;
+  // e.g. "diagnostics-performance log unavailable".
+  string unavailable_reason = 2;
+  repeated BootRecord boots = 3;
+}
+
+message BatteryStatus {
+  bool present = 1;
+  bool charging = 2;
+  bool on_ac = 3;
+  uint32 percent = 4;
+  // Charge/discharge rate in milliwatts; negative = discharging.
+  int32 rate_mw = 5;
+  uint64 remaining_mwh = 6;
+  uint64 full_charge_mwh = 7;
+  uint64 design_mwh = 8;
+  // full_charge / design, where derivable.
+  uint32 health_percent = 9;
+  uint32 cycle_count = 10;
+  int64 est_runtime_s = 11;
+}
+
+message GetBatteryStatusRequest {}
+
+message GetBatteryStatusReply {
+  bool available = 1;
+  // "no battery present" on desktops.
+  string unavailable_reason = 2;
+  BatteryStatus status = 3;
+}
+
+message ThermalSensor {
+  string name = 1;
+  double celsius = 2;
+  // Where the reading came from (ACPI thermal zone, OEM WMI, ...).
+  string source = 3;
+}
+
+message GetThermalRequest {}
+
+message GetThermalReply {
+  bool available = 1;
+  // "no thermal sensors exposed" — honest when hardware doesn't provide them.
+  string unavailable_reason = 2;
+  repeated ThermalSensor sensors = 3;
 }
 
 // ---------------------------------------------------------------------------
@@ -667,4 +829,162 @@ message ExecuteActionReply {
 service AtlasControl {
   rpc PrepareAction(PrepareActionRequest) returns (PrepareActionReply);
   rpc ExecuteAction(ExecuteActionRequest) returns (ExecuteActionReply);
+}
+
+// ---------------------------------------------------------------------------
+// R2: performance rules engine + profiles (PRD §9.7).
+// Persistent, reversible policies applied to matching processes. Enabling a
+// rule IS the consent (unlike the one-shot AtlasControl broker); every
+// application is reversible and audited, and protected-critical processes are
+// never touched. Actions are the safe, reversible subset: priority class,
+// core affinity / P-E steering, and EcoQoS efficiency mode.
+// ---------------------------------------------------------------------------
+
+enum RuleTrigger {
+  RULE_TRIGGER_UNSPECIFIED = 0;
+  // Apply to matching processes whenever they run.
+  WHILE_RUNNING = 1;
+  // ...only while on AC power.
+  ON_AC_POWER = 2;
+  // ...only while on battery.
+  ON_DC_POWER = 3;
+  // ...only while a matching process is the foreground/fullscreen app.
+  ON_FULLSCREEN = 4;
+}
+
+enum PriorityClass {
+  // Leave priority unchanged.
+  PRIORITY_CLASS_UNSPECIFIED = 0;
+  PRIORITY_IDLE = 1;
+  PRIORITY_BELOW_NORMAL = 2;
+  PRIORITY_NORMAL = 3;
+  PRIORITY_ABOVE_NORMAL = 4;
+  PRIORITY_HIGH = 5;
+  // No REALTIME — unsafe, deliberately unsupported.
+}
+
+enum CoreAffinityMode {
+  // Leave affinity unchanged.
+  CORE_AFFINITY_UNSPECIFIED = 0;
+  ALL_CORES = 1;
+  PREFER_P_CORES = 2;
+  PREFER_E_CORES = 3;
+  // Use affinity_mask verbatim.
+  CUSTOM_MASK = 4;
+}
+
+message RuleAction {
+  PriorityClass priority = 1;
+  CoreAffinityMode affinity_mode = 2;
+  // Processor affinity bitmask when affinity_mode = CUSTOM_MASK.
+  uint64 affinity_mask = 3;
+  // Enable EcoQoS (efficiency mode / ProcessPowerThrottling).
+  bool eco_qos = 4;
+}
+
+message Rule {
+  int64 id = 1;
+  string name = 2;
+  bool enabled = 3;
+  // Case-insensitive image-name match (e.g. "chrome.exe"). Empty matches none.
+  string match_image = 4;
+  RuleTrigger trigger = 5;
+  RuleAction action = 6;
+  // Higher precedence wins when rules conflict on the same process.
+  int32 precedence = 7;
+  int64 created_ms = 8;
+}
+
+message ListRulesRequest {}
+message ListRulesReply { repeated Rule rules = 1; }
+
+message GetRuleRequest { int64 id = 1; }
+message GetRuleReply { bool found = 1; Rule rule = 2; }
+
+message CreateRuleRequest { Rule rule = 1; } // id ignored
+message CreateRuleReply { int64 id = 1; }
+
+message UpdateRuleRequest { Rule rule = 1; }
+message UpdateRuleReply { bool ok = 1; string message = 2; }
+
+message DeleteRuleRequest { int64 id = 1; }
+message DeleteRuleReply { bool ok = 1; }
+
+message SetRuleEnabledRequest { int64 id = 1; bool enabled = 2; }
+message SetRuleEnabledReply { bool ok = 1; }
+
+// Dry-run preview (PRD §9.7.5) — never applies anything.
+message SimulateRuleRequest { Rule rule = 1; } // an unsaved rule is allowed
+
+message SimulatedTarget {
+  uint32 pid = 1;
+  string image_name = 2;
+  string current_priority = 3;
+  string new_priority = 4;
+  string current_affinity = 5;
+  string new_affinity = 6;
+  bool eco_qos_change = 7;
+  // Blocked because the target is protected-critical.
+  bool blocked = 8;
+  string blocked_reason = 9;
+}
+
+message SimulateRuleReply {
+  repeated SimulatedTarget targets = 1;
+  // Conflicts with other enabled rules (PRD §9.7.6).
+  repeated string conflicts = 2;
+}
+
+message Intervention {
+  int64 rule_id = 1;
+  string rule_name = 2;
+  uint32 pid = 3;
+  string image_name = 4;
+  // Human summary of what is currently applied.
+  string applied = 5;
+  int64 since_ms = 6;
+}
+
+message ListInterventionsRequest {}
+message ListInterventionsReply { repeated Intervention interventions = 1; }
+
+// Profiles (PRD §9.7.4): a named, activatable bundle of rules + a power mode.
+message Profile {
+  int64 id = 1;
+  string name = 2;
+  repeated int64 rule_ids = 3;
+  // "" / "PowerSaver" / "Balanced" / "HighPerformance".
+  string power_mode = 4;
+  bool active = 5;
+}
+
+message ListProfilesRequest {}
+message ListProfilesReply { repeated Profile profiles = 1; }
+
+message CreateProfileRequest { Profile profile = 1; }
+message CreateProfileReply { int64 id = 1; }
+
+message UpdateProfileRequest { Profile profile = 1; }
+message UpdateProfileReply { bool ok = 1; }
+
+message DeleteProfileRequest { int64 id = 1; }
+message DeleteProfileReply { bool ok = 1; }
+
+message SetProfileActiveRequest { int64 id = 1; bool active = 2; }
+message SetProfileActiveReply { bool ok = 1; string message = 2; }
+
+service AtlasRules {
+  rpc ListRules(ListRulesRequest) returns (ListRulesReply);
+  rpc GetRule(GetRuleRequest) returns (GetRuleReply);
+  rpc CreateRule(CreateRuleRequest) returns (CreateRuleReply);
+  rpc UpdateRule(UpdateRuleRequest) returns (UpdateRuleReply);
+  rpc DeleteRule(DeleteRuleRequest) returns (DeleteRuleReply);
+  rpc SetRuleEnabled(SetRuleEnabledRequest) returns (SetRuleEnabledReply);
+  rpc SimulateRule(SimulateRuleRequest) returns (SimulateRuleReply);
+  rpc ListInterventions(ListInterventionsRequest) returns (ListInterventionsReply);
+  rpc ListProfiles(ListProfilesRequest) returns (ListProfilesReply);
+  rpc CreateProfile(CreateProfileRequest) returns (CreateProfileReply);
+  rpc UpdateProfile(UpdateProfileRequest) returns (UpdateProfileReply);
+  rpc DeleteProfile(DeleteProfileRequest) returns (DeleteProfileReply);
+  rpc SetProfileActive(SetProfileActiveRequest) returns (SetProfileActiveReply);
 }

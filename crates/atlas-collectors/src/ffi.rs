@@ -961,3 +961,845 @@ pub struct RM_PROCESS_INFO {
     pub TSSessionId: DWORD,
     pub bRestartable: BOOL,
 }
+
+// ---------------------------------------------------------------------------
+// R2 network-inspector FFI (docs/phases.md Phase 2, PRD §9.12). Backs the
+// connection / listening-port collector: iphlpapi's `GetExtendedTcpTable` /
+// `GetExtendedUdpTable` (owner-pid variants, both AF_INET and AF_INET6) plus a
+// best-effort DNS-resolver-cache read (dnsapi `DnsGetCacheDataTable` +
+// cache-only `DnsQuery_W`) to attach domains to remote addresses. Hand-written
+// in the collector style — stable-ABI reads, no `windows-sys` dependency; the
+// MIB row layouts are locked by offset tests in `network.rs`. Every call is an
+// unprivileged read; nothing opens a socket or emits a packet.
+// ---------------------------------------------------------------------------
+
+/// Address families passed to the extended-table calls.
+pub const AF_INET: ULONG = 2;
+pub const AF_INET6: ULONG = 23;
+
+/// `TCP_TABLE_CLASS::TCP_TABLE_OWNER_PID_ALL` — every TCP row with its owner pid.
+pub const TCP_TABLE_OWNER_PID_ALL: ULONG = 5;
+/// `UDP_TABLE_CLASS::UDP_TABLE_OWNER_PID` — every UDP bind with its owner pid.
+pub const UDP_TABLE_OWNER_PID: ULONG = 1;
+
+/// `MIB_TCP_STATE` values (map 1:1 to the proto `TcpState` discriminants).
+pub const MIB_TCP_STATE_LISTEN: DWORD = 2;
+
+/// One IPv4 TCP row from `GetExtendedTcpTable(TCP_TABLE_OWNER_PID_ALL)`.
+/// Ports are network-byte-order in the low 16 bits; addresses are `in_addr`
+/// (network order). Layout locked by an offset test in `network.rs`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct MIB_TCPROW_OWNER_PID {
+    pub dwState: DWORD,
+    pub dwLocalAddr: DWORD,
+    pub dwLocalPort: DWORD,
+    pub dwRemoteAddr: DWORD,
+    pub dwRemotePort: DWORD,
+    pub dwOwningPid: DWORD,
+}
+
+/// Fixed header of `MIB_TCPTABLE_OWNER_PID`; `dwNumEntries` rows follow.
+#[repr(C)]
+pub struct MIB_TCPTABLE_OWNER_PID {
+    pub dwNumEntries: DWORD,
+    // MIB_TCPROW_OWNER_PID table[dwNumEntries] follows.
+}
+
+/// One IPv6 TCP row. Addresses are raw 16-byte `in6_addr` (network order).
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct MIB_TCP6ROW_OWNER_PID {
+    pub ucLocalAddr: [u8; 16],
+    pub dwLocalScopeId: DWORD,
+    pub dwLocalPort: DWORD,
+    pub ucRemoteAddr: [u8; 16],
+    pub dwRemoteScopeId: DWORD,
+    pub dwRemotePort: DWORD,
+    pub dwState: DWORD,
+    pub dwOwningPid: DWORD,
+}
+
+/// Fixed header of `MIB_TCP6TABLE_OWNER_PID`; `dwNumEntries` rows follow.
+#[repr(C)]
+pub struct MIB_TCP6TABLE_OWNER_PID {
+    pub dwNumEntries: DWORD,
+}
+
+/// One IPv4 UDP bind from `GetExtendedUdpTable(UDP_TABLE_OWNER_PID)`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct MIB_UDPROW_OWNER_PID {
+    pub dwLocalAddr: DWORD,
+    pub dwLocalPort: DWORD,
+    pub dwOwningPid: DWORD,
+}
+
+/// Fixed header of `MIB_UDPTABLE_OWNER_PID`; `dwNumEntries` rows follow.
+#[repr(C)]
+pub struct MIB_UDPTABLE_OWNER_PID {
+    pub dwNumEntries: DWORD,
+}
+
+/// One IPv6 UDP bind.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct MIB_UDP6ROW_OWNER_PID {
+    pub ucLocalAddr: [u8; 16],
+    pub dwLocalScopeId: DWORD,
+    pub dwLocalPort: DWORD,
+    pub dwOwningPid: DWORD,
+}
+
+/// Fixed header of `MIB_UDP6TABLE_OWNER_PID`; `dwNumEntries` rows follow.
+#[repr(C)]
+pub struct MIB_UDP6TABLE_OWNER_PID {
+    pub dwNumEntries: DWORD,
+}
+
+#[link(name = "iphlpapi")]
+extern "system" {
+    /// Fills `pTcpTable` with the TCP connection table for `ulAf`
+    /// (AF_INET / AF_INET6) at `TableClass`. Two-call size pattern: a too-small
+    /// buffer returns ERROR_INSUFFICIENT_BUFFER with the needed size in
+    /// `*pdwSize`.
+    pub fn GetExtendedTcpTable(
+        pTcpTable: PVOID,
+        pdwSize: *mut DWORD,
+        bOrder: BOOL,
+        ulAf: ULONG,
+        TableClass: ULONG,
+        Reserved: ULONG,
+    ) -> DWORD;
+
+    /// Fills `pUdpTable` with the UDP bind table for `ulAf` at `TableClass`.
+    pub fn GetExtendedUdpTable(
+        pUdpTable: PVOID,
+        pdwSize: *mut DWORD,
+        bOrder: BOOL,
+        ulAf: ULONG,
+        TableClass: ULONG,
+        Reserved: ULONG,
+    ) -> DWORD;
+}
+
+// --- DNS resolver-cache read (dnsapi) ---------------------------------------
+
+/// DNS record types we consume from the cache (forward A / AAAA only).
+pub const DNS_TYPE_A: u16 = 0x0001;
+pub const DNS_TYPE_AAAA: u16 = 0x001C;
+
+/// `DnsQuery_W` option: answer only from the resolver cache — never a wire
+/// query. This keeps domain resolution passive (no packets, no reverse DNS).
+pub const DNS_QUERY_NO_WIRE_QUERY: DWORD = 0x10;
+
+/// `DNS_FREE_TYPE::DnsFreeRecordList` — frees a `DnsQuery_W` record list.
+pub const DNS_FREE_RECORD_LIST: u32 = 1;
+
+/// One entry of the resolver cache from `DnsGetCacheDataTable` (undocumented but
+/// ABI-stable since XP): a singly linked list carrying the cached name + record
+/// type. The address data is not here — a cache-only `DnsQuery_W` per name
+/// yields it. Layout locked by an offset test in `network.rs`.
+#[repr(C)]
+pub struct DNS_CACHE_ENTRY {
+    pub pNext: *mut DNS_CACHE_ENTRY,
+    pub pszName: LPWSTR,
+    pub wType: u16,
+    pub wDataLength: u16,
+    pub dwFlags: ULONG,
+}
+
+/// Fixed head of a `DnsQuery_W` result record. The trailing `Data` union starts
+/// at offset 32 on 64-bit (A = a 4-byte `IP4_ADDRESS`, AAAA = a 16-byte
+/// `IP6_ADDRESS`). Only `pNext`, `pName`, `wType` and the address data are read;
+/// layout locked by an offset test in `network.rs`.
+#[repr(C)]
+pub struct DNS_RECORD_HEAD {
+    pub pNext: *mut DNS_RECORD_HEAD,
+    pub pName: LPWSTR,
+    pub wType: u16,
+    pub wDataLength: u16,
+    pub Flags: ULONG,
+    pub dwTtl: ULONG,
+    pub dwReserved: ULONG,
+    // union { IP4_ADDRESS A; IP6_ADDRESS AAAA; ... } Data follows at offset 32.
+}
+
+/// Byte offset of the `Data` union inside `DNS_RECORD` on 64-bit Windows.
+pub const DNS_RECORD_DATA_OFFSET: usize = 32;
+
+#[link(name = "dnsapi")]
+extern "system" {
+    /// Returns the resolver cache as a linked list of [`DNS_CACHE_ENTRY`].
+    /// Nonzero on success. The list is not freed here (a small, bounded
+    /// per-call cost on an on-demand read — see `network.rs`), avoiding an
+    /// undocumented free path that could corrupt the heap.
+    pub fn DnsGetCacheDataTable(ppTable: *mut *mut DNS_CACHE_ENTRY) -> BOOL;
+
+    /// Resolves `pszName` of `wType` from cache only (with
+    /// `DNS_QUERY_NO_WIRE_QUERY`). 0 (`ERROR_SUCCESS`) on a cache hit; the
+    /// records are freed with `DnsRecordListFree`.
+    pub fn DnsQuery_W(
+        pszName: LPCWSTR,
+        wType: u16,
+        Options: DWORD,
+        pExtra: PVOID,
+        ppQueryResults: *mut *mut DNS_RECORD_HEAD,
+        pReserved: PVOID,
+    ) -> LONG;
+
+    /// Frees a `DnsQuery_W` record list (`freeType` = DNS_FREE_RECORD_LIST).
+    pub fn DnsRecordListFree(pRecordList: *mut DNS_RECORD_HEAD, freeType: u32);
+}
+
+// ---------------------------------------------------------------------------
+// R2 scheduled-tasks COM FFI (docs/phases.md Phase 2, PRD §9.9.2). Backs the
+// Task Scheduler 2.0 collector. Hand-written COM: `CoCreateInstance` of
+// `CLSID_TaskScheduler` yields an `ITaskService`; the folder/task collection
+// interfaces are walked via explicit vtable calls (each interface's methods sit
+// after the 7 `IDispatch` slots in IDL order). Only the interfaces actually
+// walked are declared, and only up to the last method called — the unused
+// leading slots (QueryInterface/AddRef and any skipped methods) are typed as
+// opaque `usize` so the vtable offsets stay exact without importing signatures
+// we never invoke. The static task definition (author, run level, idle/wake,
+// actions, triggers) is read from each task's XML (`get_Xml`) rather than the
+// deep `ITaskDefinition` interface tree — far less vtable surface for the same
+// data. COM is confined to the collector thread (CoInitializeEx + CoUninitialize
+// around the walk). Read-only throughout.
+// ---------------------------------------------------------------------------
+
+/// `HRESULT` — COM call status (S_OK == 0).
+pub type HRESULT = LONG;
+/// `BSTR` — a length-prefixed, NUL-terminated OLE string pointer.
+pub type BSTR = *mut u16;
+/// `VARIANT_BOOL` — VARIANT_TRUE (-1) / VARIANT_FALSE (0).
+pub type VARIANT_BOOL = i16;
+/// `DATE` — OLE automation date (days since 1899-12-30, fractional = time).
+pub type DATE = f64;
+
+pub const S_OK: HRESULT = 0;
+pub const S_FALSE: HRESULT = 1;
+/// `CoInitializeEx` returns this when the thread already has a different
+/// apartment model — COM is usable, but we must not balance-uninit.
+pub const RPC_E_CHANGED_MODE: HRESULT = 0x8001_0106_u32 as i32;
+/// `COINIT_APARTMENTTHREADED` — an STA worker (Task Scheduler is happy in either).
+pub const COINIT_APARTMENTTHREADED: DWORD = 0x2;
+/// `CLSCTX_INPROC_SERVER` — taskschd.dll serves the object in-process.
+pub const CLSCTX_INPROC_SERVER: DWORD = 0x1;
+
+/// `TASK_STATE` values from `IRegisteredTask::get_State`.
+pub const TASK_STATE_UNKNOWN: i32 = 0;
+pub const TASK_STATE_DISABLED: i32 = 1;
+pub const TASK_STATE_QUEUED: i32 = 2;
+pub const TASK_STATE_READY: i32 = 3;
+pub const TASK_STATE_RUNNING: i32 = 4;
+
+/// `CLSID_TaskScheduler` = {0F87369F-A4E5-4CFC-BD3E-73E6154572DD}.
+pub const CLSID_TASK_SCHEDULER: GUID = GUID {
+    Data1: 0x0F87_369F,
+    Data2: 0xA4E5,
+    Data3: 0x4CFC,
+    Data4: [0xBD, 0x3E, 0x73, 0xE6, 0x15, 0x45, 0x72, 0xDD],
+};
+
+/// `IID_ITaskService` = {2FABA4C7-4DA9-4013-9697-20CC3FD40F85}.
+pub const IID_ITASK_SERVICE: GUID = GUID {
+    Data1: 0x2FAB_A4C7,
+    Data2: 0x4DA9,
+    Data3: 0x4013,
+    Data4: [0x96, 0x97, 0x20, 0xCC, 0x3F, 0xD4, 0x0F, 0x85],
+};
+
+/// A 24-byte `VARIANT` (64-bit ABI). Only VT_EMPTY (Connect args) and VT_I4
+/// (collection `get_Item` index) are constructed; the value union is exposed as
+/// a raw `i64` slot at offset 8 which comfortably holds a LONG.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct VARIANT {
+    pub vt: u16,
+    pub wReserved1: u16,
+    pub wReserved2: u16,
+    pub wReserved3: u16,
+    /// The value union (8-byte aligned). `llVal` for the widest simple case.
+    pub val: i64,
+    /// Padding so the union spans the full 16-byte VARIANT tail.
+    pub val_hi: i64,
+}
+
+pub const VT_EMPTY: u16 = 0;
+pub const VT_I4: u16 = 3;
+
+impl VARIANT {
+    /// A VT_EMPTY variant (the "not supplied" argument, e.g. local Connect).
+    pub fn empty() -> Self {
+        VARIANT {
+            vt: VT_EMPTY,
+            wReserved1: 0,
+            wReserved2: 0,
+            wReserved3: 0,
+            val: 0,
+            val_hi: 0,
+        }
+    }
+
+    /// A VT_I4 variant carrying `n` (a 1-based collection index).
+    pub fn i4(n: i32) -> Self {
+        VARIANT {
+            vt: VT_I4,
+            wReserved1: 0,
+            wReserved2: 0,
+            wReserved3: 0,
+            val: n as i64,
+            val_hi: 0,
+        }
+    }
+}
+
+/// Minimal `IUnknown` vtable prefix — used to `Release` any COM interface (its
+/// `Release` is always slot 2). The interface pointer's first field is a
+/// `*const IUnknownVtbl`.
+#[repr(C)]
+pub struct IUnknownVtbl {
+    pub QueryInterface: usize,
+    pub AddRef: usize,
+    pub Release: unsafe extern "system" fn(this: PVOID) -> ULONG,
+}
+
+/// `ITaskService` vtable, declared through `Connect` (the last method called).
+/// Slots 0..=6 are IDispatch; 7=GetFolder, 8=GetRunningTasks, 9=NewTask,
+/// 10=Connect.
+#[repr(C)]
+pub struct ITaskServiceVtbl {
+    pub QueryInterface: usize,
+    pub AddRef: usize,
+    pub Release: unsafe extern "system" fn(this: PVOID) -> ULONG,
+    pub GetTypeInfoCount: usize,
+    pub GetTypeInfo: usize,
+    pub GetIDsOfNames: usize,
+    pub Invoke: usize,
+    pub GetFolder:
+        unsafe extern "system" fn(this: PVOID, path: BSTR, ppFolder: *mut PVOID) -> HRESULT,
+    pub GetRunningTasks: usize,
+    pub NewTask: usize,
+    pub Connect: unsafe extern "system" fn(
+        this: PVOID,
+        serverName: VARIANT,
+        user: VARIANT,
+        domain: VARIANT,
+        password: VARIANT,
+    ) -> HRESULT,
+}
+
+/// `ITaskFolder` vtable through `GetTasks`. 7=get_Name, 8=get_Path, 9=GetFolder,
+/// 10=GetFolders, 11=CreateFolder, 12=DeleteFolder, 13=GetTask, 14=GetTasks.
+#[repr(C)]
+pub struct ITaskFolderVtbl {
+    pub QueryInterface: usize,
+    pub AddRef: usize,
+    pub Release: unsafe extern "system" fn(this: PVOID) -> ULONG,
+    pub GetTypeInfoCount: usize,
+    pub GetTypeInfo: usize,
+    pub GetIDsOfNames: usize,
+    pub Invoke: usize,
+    pub get_Name: usize,
+    pub get_Path: unsafe extern "system" fn(this: PVOID, pPath: *mut BSTR) -> HRESULT,
+    pub GetFolder: usize,
+    pub GetFolders:
+        unsafe extern "system" fn(this: PVOID, flags: LONG, ppFolders: *mut PVOID) -> HRESULT,
+    pub CreateFolder: usize,
+    pub DeleteFolder: usize,
+    pub GetTask: usize,
+    pub GetTasks:
+        unsafe extern "system" fn(this: PVOID, flags: LONG, ppTasks: *mut PVOID) -> HRESULT,
+}
+
+/// A collection vtable (shared shape for `ITaskFolderCollection` and
+/// `IRegisteredTaskCollection`): 7=get_Count, 8=get_Item(VARIANT index).
+#[repr(C)]
+pub struct ICollectionVtbl {
+    pub QueryInterface: usize,
+    pub AddRef: usize,
+    pub Release: unsafe extern "system" fn(this: PVOID) -> ULONG,
+    pub GetTypeInfoCount: usize,
+    pub GetTypeInfo: usize,
+    pub GetIDsOfNames: usize,
+    pub Invoke: usize,
+    pub get_Count: unsafe extern "system" fn(this: PVOID, pCount: *mut LONG) -> HRESULT,
+    pub get_Item:
+        unsafe extern "system" fn(this: PVOID, index: VARIANT, ppItem: *mut PVOID) -> HRESULT,
+}
+
+/// `IRegisteredTask` vtable through `get_Xml`. 7=get_Name, 8=get_Path,
+/// 9=get_State, 10=get_Enabled, 11=put_Enabled, 12=Run, 13=RunEx,
+/// 14=GetInstances, 15=get_LastRunTime, 16=get_LastTaskResult,
+/// 17=get_NumberOfMissedRuns, 18=get_NextRunTime, 19=get_Definition, 20=get_Xml.
+#[repr(C)]
+pub struct IRegisteredTaskVtbl {
+    pub QueryInterface: usize,
+    pub AddRef: usize,
+    pub Release: unsafe extern "system" fn(this: PVOID) -> ULONG,
+    pub GetTypeInfoCount: usize,
+    pub GetTypeInfo: usize,
+    pub GetIDsOfNames: usize,
+    pub Invoke: usize,
+    pub get_Name: unsafe extern "system" fn(this: PVOID, pName: *mut BSTR) -> HRESULT,
+    pub get_Path: unsafe extern "system" fn(this: PVOID, pPath: *mut BSTR) -> HRESULT,
+    pub get_State: unsafe extern "system" fn(this: PVOID, pState: *mut i32) -> HRESULT,
+    pub get_Enabled: unsafe extern "system" fn(this: PVOID, pEnabled: *mut VARIANT_BOOL) -> HRESULT,
+    pub put_Enabled: usize,
+    pub Run: usize,
+    pub RunEx: usize,
+    pub GetInstances: usize,
+    pub get_LastRunTime: unsafe extern "system" fn(this: PVOID, pLastRun: *mut DATE) -> HRESULT,
+    pub get_LastTaskResult: unsafe extern "system" fn(this: PVOID, pResult: *mut LONG) -> HRESULT,
+    pub get_NumberOfMissedRuns: usize,
+    pub get_NextRunTime: unsafe extern "system" fn(this: PVOID, pNextRun: *mut DATE) -> HRESULT,
+    pub get_Definition: usize,
+    pub get_Xml: unsafe extern "system" fn(this: PVOID, pXml: *mut BSTR) -> HRESULT,
+}
+
+#[link(name = "ole32")]
+extern "system" {
+    /// Initializes COM on the calling thread with `dwCoInit`. S_FALSE means
+    /// already initialized (still balance with CoUninitialize);
+    /// RPC_E_CHANGED_MODE means a different model is active (do not uninit).
+    pub fn CoInitializeEx(pvReserved: PVOID, dwCoInit: DWORD) -> HRESULT;
+
+    /// Balances a successful `CoInitializeEx` on this thread.
+    pub fn CoUninitialize();
+
+    /// Creates a COM object of `rclsid` and returns its `riid` interface.
+    pub fn CoCreateInstance(
+        rclsid: *const GUID,
+        pUnkOuter: PVOID,
+        dwClsContext: DWORD,
+        riid: *const GUID,
+        ppv: *mut PVOID,
+    ) -> HRESULT;
+}
+
+#[link(name = "oleaut32")]
+extern "system" {
+    /// Allocates a `BSTR` from a NUL-terminated UTF-16 string (for the Connect /
+    /// GetFolder path arguments).
+    pub fn SysAllocString(psz: *const u16) -> BSTR;
+
+    /// Frees a `BSTR` (from `SysAllocString` or returned by a COM getter).
+    pub fn SysFreeString(bstr: BSTR);
+}
+
+// ---------------------------------------------------------------------------
+// R2 boot-analysis FFI (docs/phases.md Phase 2, PRD §9.8.4). Backs the boot
+// collector via the Windows Event Log (wevtapi): `EvtQuery` the
+// `Microsoft-Windows-Diagnostics-Performance/Operational` channel for event 100
+// (boot performance), newest-first, then `EvtNext` + `EvtRender` each event to
+// XML and parse the boot timings out of its `EventData`. All read-only.
+// `EVT_HANDLE` is an opaque handle closed with `EvtClose`.
+// ---------------------------------------------------------------------------
+
+/// `EVT_HANDLE` — an opaque event-log query/result/event handle.
+pub type EVT_HANDLE = HANDLE;
+
+/// `EvtQuery` flags: interpret the path as a channel name, read newest-first.
+pub const EVT_QUERY_CHANNEL_PATH: DWORD = 0x1;
+pub const EVT_QUERY_REVERSE_DIRECTION: DWORD = 0x200;
+/// `EvtRender` flag: render the event as an XML string.
+pub const EVT_RENDER_EVENT_XML: DWORD = 1;
+/// `EvtQuery`/`EvtOpenChannel` error: the named channel does not exist.
+pub const ERROR_EVT_CHANNEL_NOT_FOUND: DWORD = 15007;
+/// Generic access-denied (channel readable only elevated / not in the group).
+pub const ERROR_ACCESS_DENIED: DWORD = 5;
+
+#[link(name = "wevtapi")]
+extern "system" {
+    /// Runs `query` (an XPath filter) against `path` (a channel or log-file),
+    /// returning a result-set handle. NULL on failure (check `GetLastError`).
+    pub fn EvtQuery(Session: EVT_HANDLE, Path: LPCWSTR, Query: LPCWSTR, Flags: DWORD)
+        -> EVT_HANDLE;
+
+    /// Fetches up to `EventsSize` event handles from a result set into `Events`,
+    /// writing the count to `*Returned`. FALSE + ERROR_NO_MORE_ITEMS at the end.
+    pub fn EvtNext(
+        ResultSet: EVT_HANDLE,
+        EventsSize: DWORD,
+        Events: *mut EVT_HANDLE,
+        Timeout: DWORD,
+        Flags: DWORD,
+        Returned: *mut DWORD,
+    ) -> BOOL;
+
+    /// Renders an event (`Fragment`) per `Flags` (EVT_RENDER_EVENT_XML here) into
+    /// `Buffer`. Two-call size pattern via `BufferUsed`.
+    pub fn EvtRender(
+        Context: EVT_HANDLE,
+        Fragment: EVT_HANDLE,
+        Flags: DWORD,
+        BufferSize: DWORD,
+        Buffer: PVOID,
+        BufferUsed: *mut DWORD,
+        PropertyCount: *mut DWORD,
+    ) -> BOOL;
+
+    /// Closes any `EVT_HANDLE` (query, result set, or event).
+    pub fn EvtClose(Object: EVT_HANDLE) -> BOOL;
+}
+
+// ---------------------------------------------------------------------------
+// R2 battery + thermal FFI (docs/phases.md Phase 2, PRD §9.6.6/§9.6.7). Battery:
+// `GetSystemPowerStatus` for AC/charge, then the battery device interface
+// (`SetupDiGetClassDevs(GUID_DEVCLASS_BATTERY)` +
+// `DeviceIoControl(IOCTL_BATTERY_*)`) for design/full-charge capacity, rate and
+// cycle count. Thermal is served through WMI (`MSAcpi_ThermalZoneTemperature`)
+// in `power.rs` via the same COM primitives declared for scheduled tasks. All
+// read-only; absent hardware degrades honestly (available=false).
+// ---------------------------------------------------------------------------
+
+/// `SYSTEM_POWER_STATUS` from `GetSystemPowerStatus`.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct SYSTEM_POWER_STATUS {
+    pub ACLineStatus: u8,
+    pub BatteryFlag: u8,
+    /// 0..=100, or 255 when unknown.
+    pub BatteryLifePercent: u8,
+    pub SystemStatusFlag: u8,
+    /// Seconds of remaining runtime, or -1 (0xFFFFFFFF) when unknown.
+    pub BatteryLifeTime: u32,
+    pub BatteryFullLifeTime: u32,
+}
+
+/// `GUID_DEVCLASS_BATTERY` = {72631E54-78A4-11D0-BCF7-00AA00B7B32A}.
+pub const GUID_DEVCLASS_BATTERY: GUID = GUID {
+    Data1: 0x7263_1E54,
+    Data2: 0x78A4,
+    Data3: 0x11D0,
+    Data4: [0xBC, 0xF7, 0x00, 0xAA, 0x00, 0xB7, 0xB3, 0x2A],
+};
+
+/// `SetupDiGetClassDevs` flags: present devices exposing the interface.
+pub const DIGCF_PRESENT: DWORD = 0x02;
+pub const DIGCF_DEVICEINTERFACE: DWORD = 0x10;
+/// Sentinel handle value returned by `SetupDiGetClassDevs` on failure.
+pub const INVALID_HANDLE_VALUE: HANDLE = usize::MAX as *mut c_void;
+
+/// `SP_DEVICE_INTERFACE_DATA`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct SP_DEVICE_INTERFACE_DATA {
+    pub cbSize: DWORD,
+    pub InterfaceClassGuid: GUID,
+    pub Flags: DWORD,
+    pub Reserved: usize,
+}
+
+/// `SP_DEVICE_INTERFACE_DETAIL_DATA_W` header. The device path (a WCHAR array)
+/// follows `DevicePath[0]`; we over-allocate a byte buffer and read the tail.
+#[repr(C)]
+pub struct SP_DEVICE_INTERFACE_DETAIL_DATA_W {
+    pub cbSize: DWORD,
+    pub DevicePath: [u16; 1],
+}
+
+/// `CreateFile` sharing/access constants for opening the battery device.
+pub const GENERIC_READ: DWORD = 0x8000_0000;
+pub const GENERIC_WRITE: DWORD = 0x4000_0000;
+pub const FILE_SHARE_READ: DWORD = 0x1;
+pub const FILE_SHARE_WRITE: DWORD = 0x2;
+pub const OPEN_EXISTING: DWORD = 3;
+
+/// Battery IOCTLs (from batclass.h / winioctl.h).
+pub const IOCTL_BATTERY_QUERY_TAG: DWORD = 0x0029_4040;
+pub const IOCTL_BATTERY_QUERY_INFORMATION: DWORD = 0x0029_4044;
+pub const IOCTL_BATTERY_QUERY_STATUS: DWORD = 0x0029_404C;
+
+/// `BATTERY_QUERY_INFORMATION_LEVEL` values.
+pub const BATTERY_INFORMATION_LEVEL: u32 = 0;
+
+/// `BATTERY_INFORMATION.Capabilities` flag: capacities are relative (%), not mWh.
+pub const BATTERY_CAPACITY_RELATIVE: u32 = 0x4000_0000;
+
+/// `BATTERY_QUERY_INFORMATION` input for `IOCTL_BATTERY_QUERY_INFORMATION`.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct BATTERY_QUERY_INFORMATION {
+    pub BatteryTag: u32,
+    pub InformationLevel: u32,
+    pub AtRate: i32,
+}
+
+/// `BATTERY_INFORMATION` (InformationLevel = BatteryInformation).
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct BATTERY_INFORMATION {
+    pub Capabilities: u32,
+    pub Technology: u8,
+    pub Reserved: [u8; 3],
+    pub Chemistry: [u8; 4],
+    pub DesignedCapacity: u32,
+    pub FullChargedCapacity: u32,
+    pub DefaultAlert1: u32,
+    pub DefaultAlert2: u32,
+    pub CriticalBias: u32,
+    pub CycleCount: u32,
+}
+
+/// `BATTERY_WAIT_STATUS` input for `IOCTL_BATTERY_QUERY_STATUS`.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct BATTERY_WAIT_STATUS {
+    pub BatteryTag: u32,
+    pub Timeout: u32,
+    pub PowerState: u32,
+    pub LowCapacity: u32,
+    pub HighCapacity: u32,
+}
+
+/// `BATTERY_STATUS` output for `IOCTL_BATTERY_QUERY_STATUS`.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct BATTERY_STATUS {
+    pub PowerState: u32,
+    /// Remaining capacity in mWh (or BATTERY_UNKNOWN_CAPACITY).
+    pub Capacity: u32,
+    /// Battery voltage in mV (or BATTERY_UNKNOWN_VOLTAGE).
+    pub Voltage: u32,
+    /// Charge/discharge rate in mW; negative = discharging.
+    pub Rate: i32,
+}
+
+/// `BATTERY_STATUS.PowerState` bits.
+pub const BATTERY_POWER_ON_LINE: u32 = 0x0000_0001;
+pub const BATTERY_CHARGING: u32 = 0x0000_0004;
+pub const BATTERY_DISCHARGING: u32 = 0x0000_0008;
+/// Sentinel for an unknown capacity/rate reading.
+pub const BATTERY_UNKNOWN_CAPACITY: u32 = 0xFFFF_FFFF;
+pub const BATTERY_UNKNOWN_RATE: i32 = 0x8000_0000_u32 as i32;
+
+#[link(name = "kernel32")]
+extern "system" {
+    /// Fills `*lpSystemPowerStatus` with AC/battery status. Nonzero on success.
+    pub fn GetSystemPowerStatus(lpSystemPowerStatus: *mut SYSTEM_POWER_STATUS) -> BOOL;
+
+    /// Opens a device/file by path (the battery device interface path here).
+    pub fn CreateFileW(
+        lpFileName: LPCWSTR,
+        dwDesiredAccess: DWORD,
+        dwShareMode: DWORD,
+        lpSecurityAttributes: PVOID,
+        dwCreationDisposition: DWORD,
+        dwFlagsAndAttributes: DWORD,
+        hTemplateFile: HANDLE,
+    ) -> HANDLE;
+
+    /// Issues a device control request (the battery IOCTLs).
+    pub fn DeviceIoControl(
+        hDevice: HANDLE,
+        dwIoControlCode: DWORD,
+        lpInBuffer: PVOID,
+        nInBufferSize: DWORD,
+        lpOutBuffer: PVOID,
+        nOutBufferSize: DWORD,
+        lpBytesReturned: *mut DWORD,
+        lpOverlapped: PVOID,
+    ) -> BOOL;
+}
+
+#[link(name = "setupapi")]
+extern "system" {
+    /// Returns a device information set for the given interface class present on
+    /// the machine. `INVALID_HANDLE_VALUE` on failure.
+    pub fn SetupDiGetClassDevsW(
+        ClassGuid: *const GUID,
+        Enumerator: LPCWSTR,
+        hwndParent: HANDLE,
+        Flags: DWORD,
+    ) -> HANDLE;
+
+    /// Enumerates the `MemberIndex`-th device interface in the set.
+    pub fn SetupDiEnumDeviceInterfaces(
+        DeviceInfoSet: HANDLE,
+        DeviceInfoData: PVOID,
+        InterfaceClassGuid: *const GUID,
+        MemberIndex: DWORD,
+        DeviceInterfaceData: *mut SP_DEVICE_INTERFACE_DATA,
+    ) -> BOOL;
+
+    /// Retrieves the device interface detail (the device path). Two-call size
+    /// pattern via `RequiredSize`.
+    pub fn SetupDiGetDeviceInterfaceDetailW(
+        DeviceInfoSet: HANDLE,
+        DeviceInterfaceData: *const SP_DEVICE_INTERFACE_DATA,
+        DeviceInterfaceDetailData: *mut SP_DEVICE_INTERFACE_DETAIL_DATA_W,
+        DeviceInterfaceDetailDataSize: DWORD,
+        RequiredSize: *mut DWORD,
+        DeviceInfoData: PVOID,
+    ) -> BOOL;
+
+    /// Frees a device information set from `SetupDiGetClassDevsW`.
+    pub fn SetupDiDestroyDeviceInfoList(DeviceInfoSet: HANDLE) -> BOOL;
+}
+
+// ---------------------------------------------------------------------------
+// R2 thermal WMI FFI (docs/phases.md Phase 2, PRD §9.6.7). Backs the thermal
+// collector via WMI's `MSAcpi_ThermalZoneTemperature` class in the `root\WMI`
+// namespace. Hand-written COM over the WBEM interfaces (IWbemLocator →
+// IWbemServices → IEnumWbemClassObject → IWbemClassObject), all of which derive
+// directly from IUnknown (no IDispatch prefix). Only the methods walked are
+// typed; earlier slots are opaque `usize` placeholders to keep vtable offsets
+// exact. Read-only queries; absent sensors degrade honestly (available=false).
+// ---------------------------------------------------------------------------
+
+/// `CLSID_WbemLocator` = {4590F811-1D3A-11D0-891F-00AA004B2E24}.
+pub const CLSID_WBEM_LOCATOR: GUID = GUID {
+    Data1: 0x4590_F811,
+    Data2: 0x1D3A,
+    Data3: 0x11D0,
+    Data4: [0x89, 0x1F, 0x00, 0xAA, 0x00, 0x4B, 0x2E, 0x24],
+};
+
+/// `IID_IWbemLocator` = {DC12A687-737F-11CF-884D-00AA004B2E24}.
+pub const IID_IWBEM_LOCATOR: GUID = GUID {
+    Data1: 0xDC12_A687,
+    Data2: 0x737F,
+    Data3: 0x11CF,
+    Data4: [0x88, 0x4D, 0x00, 0xAA, 0x00, 0x4B, 0x2E, 0x24],
+};
+
+/// `ExecQuery`/enumeration flags: a fast forward-only enumerator.
+pub const WBEM_FLAG_FORWARD_ONLY: LONG = 0x20;
+pub const WBEM_FLAG_RETURN_IMMEDIATELY: LONG = 0x10;
+/// `IEnumWbemClassObject::Next` timeout: block indefinitely.
+pub const WBEM_INFINITE: LONG = 0xFFFF_FFFF_u32 as i32;
+
+/// COM security constants for `CoInitializeSecurity` / `CoSetProxyBlanket`.
+pub const RPC_C_AUTHN_WINNT: DWORD = 10;
+pub const RPC_C_AUTHZ_NONE: DWORD = 0;
+pub const RPC_C_AUTHN_LEVEL_DEFAULT: DWORD = 0;
+pub const RPC_C_AUTHN_LEVEL_CALL: DWORD = 3;
+pub const RPC_C_IMP_LEVEL_IMPERSONATE: DWORD = 3;
+pub const EOAC_NONE: DWORD = 0;
+/// `CoInitializeSecurity` when already called this process — benign to ignore.
+pub const RPC_E_TOO_LATE: HRESULT = 0x8001_0119_u32 as i32;
+/// Sentinel for the "use default" cAuthSvc argument.
+pub const COLE_DEFAULT_AUTHINFO: isize = -1;
+
+/// `IWbemLocator` vtable through `ConnectServer` (slot 3; derives from IUnknown).
+#[repr(C)]
+pub struct IWbemLocatorVtbl {
+    pub QueryInterface: usize,
+    pub AddRef: usize,
+    pub Release: unsafe extern "system" fn(this: PVOID) -> ULONG,
+    pub ConnectServer: unsafe extern "system" fn(
+        this: PVOID,
+        strNetworkResource: BSTR,
+        strUser: BSTR,
+        strPassword: BSTR,
+        strLocale: BSTR,
+        lSecurityFlags: LONG,
+        strAuthority: BSTR,
+        pCtx: PVOID,
+        ppNamespace: *mut PVOID,
+    ) -> HRESULT,
+}
+
+/// `IWbemServices` vtable through `ExecQuery` (slot 20). Slots 3..=19 are the
+/// namespace/class/instance methods we never call, kept as opaque placeholders.
+#[repr(C)]
+pub struct IWbemServicesVtbl {
+    pub QueryInterface: usize,
+    pub AddRef: usize,
+    pub Release: unsafe extern "system" fn(this: PVOID) -> ULONG,
+    pub OpenNamespace: usize,
+    pub CancelAsyncCall: usize,
+    pub QueryObjectSink: usize,
+    pub GetObject: usize,
+    pub GetObjectAsync: usize,
+    pub PutClass: usize,
+    pub PutClassAsync: usize,
+    pub DeleteClass: usize,
+    pub DeleteClassAsync: usize,
+    pub CreateClassEnum: usize,
+    pub CreateClassEnumAsync: usize,
+    pub PutInstance: usize,
+    pub PutInstanceAsync: usize,
+    pub DeleteInstance: usize,
+    pub DeleteInstanceAsync: usize,
+    pub CreateInstanceEnum: usize,
+    pub CreateInstanceEnumAsync: usize,
+    pub ExecQuery: unsafe extern "system" fn(
+        this: PVOID,
+        strQueryLanguage: BSTR,
+        strQuery: BSTR,
+        lFlags: LONG,
+        pCtx: PVOID,
+        ppEnum: *mut PVOID,
+    ) -> HRESULT,
+}
+
+/// `IEnumWbemClassObject` vtable through `Next` (slot 4).
+#[repr(C)]
+pub struct IEnumWbemClassObjectVtbl {
+    pub QueryInterface: usize,
+    pub AddRef: usize,
+    pub Release: unsafe extern "system" fn(this: PVOID) -> ULONG,
+    pub Reset: usize,
+    pub Next: unsafe extern "system" fn(
+        this: PVOID,
+        lTimeout: LONG,
+        uCount: ULONG,
+        apObjects: *mut PVOID,
+        puReturned: *mut ULONG,
+    ) -> HRESULT,
+}
+
+/// `IWbemClassObject` vtable through `Get` (slot 4).
+#[repr(C)]
+pub struct IWbemClassObjectVtbl {
+    pub QueryInterface: usize,
+    pub AddRef: usize,
+    pub Release: unsafe extern "system" fn(this: PVOID) -> ULONG,
+    pub GetQualifierSet: usize,
+    pub Get: unsafe extern "system" fn(
+        this: PVOID,
+        wszName: LPCWSTR,
+        lFlags: LONG,
+        pVal: *mut VARIANT,
+        pType: *mut LONG,
+        plFlavor: *mut LONG,
+    ) -> HRESULT,
+}
+
+#[link(name = "ole32")]
+extern "system" {
+    /// Registers process-wide default COM security (WMI needs it before the
+    /// first call). RPC_E_TOO_LATE if already set — benign.
+    pub fn CoInitializeSecurity(
+        pSecDesc: PVOID,
+        cAuthSvc: isize,
+        asAuthSvc: PVOID,
+        pReserved1: PVOID,
+        dwAuthnLevel: DWORD,
+        dwImpLevel: DWORD,
+        pAuthList: PVOID,
+        dwCapabilities: DWORD,
+        pReserved3: PVOID,
+    ) -> HRESULT;
+
+    /// Sets the authentication blanket on a proxy (the IWbemServices proxy).
+    pub fn CoSetProxyBlanket(
+        pProxy: PVOID,
+        dwAuthnSvc: DWORD,
+        dwAuthzSvc: DWORD,
+        pServerPrincName: PVOID,
+        dwAuthnLevel: DWORD,
+        dwImpLevel: DWORD,
+        pAuthInfo: PVOID,
+        dwCapabilities: DWORD,
+    ) -> HRESULT;
+}
+
+#[link(name = "oleaut32")]
+extern "system" {
+    /// Clears a VARIANT, freeing any owned BSTR/interface (after reading Get()).
+    pub fn VariantClear(pvarg: *mut VARIANT) -> HRESULT;
+}

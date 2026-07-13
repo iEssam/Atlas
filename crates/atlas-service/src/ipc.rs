@@ -19,30 +19,41 @@ use tonic::{Request, Response, Status};
 
 #[cfg(windows)]
 use atlas_collectors::{
-    enumerate_privacy_usage, enumerate_services, enumerate_startup, Capability,
-    CollectorServiceState, CollectorStartupSource, ServiceStartType as CollectorStartType,
+    analyze_boots, battery_status, enumerate_privacy_usage, enumerate_services, enumerate_startup,
+    enumerate_tasks, list_connections, list_listening_ports, thermal_status, BatteryReading,
+    BootRecord as CollectorBootRecord, Capability, CollectorServiceState, CollectorStartupSource,
+    Connection as CollectorConnection, ListeningPort as CollectorListeningPort, NetL4Protocol,
+    NetTcpState, ScheduledTask as CollectorScheduledTask, ServiceStartType as CollectorStartType,
+    ThermalReading,
 };
 use atlas_collectors::{
     group_processes, GroupInput, ProcessRole as CollectorRole, SampleSet, Sampler,
 };
 use atlas_ipc::v0::atlas_query_server::AtlasQuery;
 use atlas_ipc::{
-    Bookmark, CapabilitiesReply, CapabilitiesRequest, CapabilityKind, CreateBookmarkReply,
-    CreateBookmarkRequest, DiagnoseReply, DiagnoseRequest, EventRow, FindResourceOwnersReply,
-    FindResourceOwnersRequest, GenerateReportReply, GenerateReportRequest, HandleRow, Incident,
-    ListBookmarksReply, ListBookmarksRequest, ListEventsReply, ListEventsRequest, ListHandlesReply,
-    ListHandlesRequest, ListIncidentsReply, ListIncidentsRequest, ListModulesReply,
+    BatteryStatus as ProtoBatteryStatus, Bookmark, BootRecord as ProtoBootRecord,
+    CapabilitiesReply, CapabilitiesRequest, CapabilityKind, Connection as ProtoConnection,
+    CreateBookmarkReply, CreateBookmarkRequest, DiagnoseReply, DiagnoseRequest, EventRow,
+    FindResourceOwnersReply, FindResourceOwnersRequest, GenerateReportReply, GenerateReportRequest,
+    GetBatteryStatusReply, GetBatteryStatusRequest, GetThermalReply, GetThermalRequest, HandleRow,
+    Incident, L4Protocol, ListBookmarksReply, ListBookmarksRequest, ListBootsReply,
+    ListBootsRequest, ListConnectionsReply, ListConnectionsRequest, ListEventsReply,
+    ListEventsRequest, ListHandlesReply, ListHandlesRequest, ListIncidentsReply,
+    ListIncidentsRequest, ListListeningPortsReply, ListListeningPortsRequest, ListModulesReply,
     ListModulesRequest, ListPrivacyEventsReply, ListPrivacyEventsRequest, ListPrivacyUsageReply,
-    ListPrivacyUsageRequest, ListServicesReply, ListServicesRequest, ListStartupReply,
-    ListStartupRequest, ListThreadsReply, ListThreadsRequest, MetricKind, ModuleRow, PrivacyEvent,
+    ListPrivacyUsageRequest, ListScheduledTasksReply, ListScheduledTasksRequest, ListServicesReply,
+    ListServicesRequest, ListStartupReply, ListStartupRequest, ListThreadsReply,
+    ListThreadsRequest, ListeningPort as ProtoListeningPort, MetricKind, ModuleRow, PrivacyEvent,
     PrivacyUsage, ProcessDetail as ProtoProcessDetail, ProcessDetailReply, ProcessDetailRequest,
     ProcessHit, ProcessRole, ProcessRow, QueryRangeReply, QueryRangeRequest, RangeBucket,
-    ReportFormat, ResourceOwner as ProtoResourceOwner, RingUpdate, RingWriter, RowInput, SearchHit,
-    SearchReply, SearchRequest, ServiceEntry, ServiceStartType, ServiceState, SnapshotReply,
-    SnapshotRequest, StartupEntry, StartupSource, SystemGauges, ThreadRow, TimeRange,
-    CAP_DIAGNOSTICS, CAP_FTS5_SEARCH, CAP_HISTORY_QUERIES, CAP_INCIDENT_DETECTION,
-    CAP_PRIVACY_EVENTS, CAP_PROCESS_INSPECTOR, CAP_PROCESS_SNAPSHOTS, CAP_REPORTS,
-    CAP_RESOURCE_OWNERSHIP, CAP_SAFE_ACTIONS, CAP_SERVICES_INVENTORY, CAP_STARTUP_INVENTORY,
+    ReportFormat, ResourceOwner as ProtoResourceOwner, RingUpdate, RingWriter, RowInput,
+    ScheduledTask as ProtoScheduledTask, SearchHit, SearchReply, SearchRequest, ServiceEntry,
+    ServiceStartType, ServiceState, SnapshotReply, SnapshotRequest, StartupEntry, StartupSource,
+    SystemGauges, TcpState, ThermalSensor as ProtoThermalSensor, ThreadRow, TimeRange,
+    CAP_BATTERY_STATUS, CAP_BOOT_ANALYSIS, CAP_DIAGNOSTICS, CAP_FTS5_SEARCH, CAP_HISTORY_QUERIES,
+    CAP_INCIDENT_DETECTION, CAP_NETWORK_INSPECTOR, CAP_PRIVACY_EVENTS, CAP_PROCESS_INSPECTOR,
+    CAP_PROCESS_SNAPSHOTS, CAP_REPORTS, CAP_RESOURCE_OWNERSHIP, CAP_SAFE_ACTIONS,
+    CAP_SCHEDULED_TASKS, CAP_SERVICES_INVENTORY, CAP_STARTUP_INVENTORY, CAP_THERMAL_SENSORS,
     RING_ROWS,
 };
 
@@ -335,6 +346,34 @@ impl AtlasQuery for QueryService {
             // live OS reads (no store), always available on Windows here.
             flags.push(CAP_PROCESS_INSPECTOR.to_string());
             flags.push(CAP_RESOURCE_OWNERSHIP.to_string());
+            // R2 monitors. Network inspection and scheduled-task enumeration are
+            // supported live reads (always advertised). The three hardware/log-
+            // dependent monitors are advertised only when they actually resolve
+            // on this machine — a battery is present, a thermal sensor is
+            // exposed, or the boot-performance log is readable — so a UI hides
+            // what the box cannot provide (degraded-mode propagation, §5). The
+            // probes block (syscalls / WMI / event log), so they run off the
+            // runtime on a blocking thread.
+            flags.push(CAP_NETWORK_INSPECTOR.to_string());
+            flags.push(CAP_SCHEDULED_TASKS.to_string());
+            let (has_battery, has_thermal, has_boots) = tokio::task::spawn_blocking(|| {
+                (
+                    battery_status().present,
+                    thermal_status().available,
+                    analyze_boots(1).available,
+                )
+            })
+            .await
+            .unwrap_or((false, false, false));
+            if has_battery {
+                flags.push(CAP_BATTERY_STATUS.to_string());
+            }
+            if has_thermal {
+                flags.push(CAP_THERMAL_SENSORS.to_string());
+            }
+            if has_boots {
+                flags.push(CAP_BOOT_ANALYSIS.to_string());
+            }
         }
         Ok(Response::new(CapabilitiesReply {
             service_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -756,6 +795,78 @@ impl AtlasQuery for QueryService {
                 .collect(),
         }))
     }
+
+    // -----------------------------------------------------------------------
+    // R2 monitors (PRD §9.12, §9.9.2, §9.8.4, §9.6.6/§9.6.7). All read-only
+    // live OS reads that block (extended-table syscalls, DNS-cache queries,
+    // Task Scheduler COM, the event-log query, battery IOCTLs, WMI), so each
+    // runs on a blocking thread to keep the async runtime responsive. The
+    // hardware/log-dependent replies carry available + unavailable_reason so
+    // absent sensors degrade honestly rather than returning fabricated data.
+    // -----------------------------------------------------------------------
+
+    async fn list_connections(
+        &self,
+        req: Request<ListConnectionsRequest>,
+    ) -> Result<Response<ListConnectionsReply>, Status> {
+        let include_listening = req.into_inner().include_listening;
+        let conns = tokio::task::spawn_blocking(move || list_connections_impl(include_listening))
+            .await
+            .map_err(|e| Status::internal(format!("list_connections task: {e}")))?;
+        Ok(Response::new(ListConnectionsReply { connections: conns }))
+    }
+
+    async fn list_listening_ports(
+        &self,
+        _req: Request<ListListeningPortsRequest>,
+    ) -> Result<Response<ListListeningPortsReply>, Status> {
+        let ports = tokio::task::spawn_blocking(list_listening_ports_impl)
+            .await
+            .map_err(|e| Status::internal(format!("list_listening_ports task: {e}")))?;
+        Ok(Response::new(ListListeningPortsReply { ports }))
+    }
+
+    async fn list_scheduled_tasks(
+        &self,
+        req: Request<ListScheduledTasksRequest>,
+    ) -> Result<Response<ListScheduledTasksReply>, Status> {
+        let filter = req.into_inner().filter;
+        let tasks = tokio::task::spawn_blocking(move || list_scheduled_tasks_impl(&filter))
+            .await
+            .map_err(|e| Status::internal(format!("list_scheduled_tasks task: {e}")))?;
+        Ok(Response::new(ListScheduledTasksReply { tasks }))
+    }
+
+    async fn list_boots(
+        &self,
+        req: Request<ListBootsRequest>,
+    ) -> Result<Response<ListBootsReply>, Status> {
+        let limit = req.into_inner().limit;
+        let reply = tokio::task::spawn_blocking(move || list_boots_impl(limit))
+            .await
+            .map_err(|e| Status::internal(format!("list_boots task: {e}")))?;
+        Ok(Response::new(reply))
+    }
+
+    async fn get_battery_status(
+        &self,
+        _req: Request<GetBatteryStatusRequest>,
+    ) -> Result<Response<GetBatteryStatusReply>, Status> {
+        let reply = tokio::task::spawn_blocking(get_battery_status_impl)
+            .await
+            .map_err(|e| Status::internal(format!("get_battery_status task: {e}")))?;
+        Ok(Response::new(reply))
+    }
+
+    async fn get_thermal(
+        &self,
+        _req: Request<GetThermalRequest>,
+    ) -> Result<Response<GetThermalReply>, Status> {
+        let reply = tokio::task::spawn_blocking(get_thermal_impl)
+            .await
+            .map_err(|e| Status::internal(format!("get_thermal task: {e}")))?;
+        Ok(Response::new(reply))
+    }
 }
 
 /// Maps a collector [`atlas_collectors::ProcessDetail`] to the proto message
@@ -1037,6 +1148,229 @@ fn list_services_impl(filter: &str) -> Vec<ServiceEntry> {
 #[cfg(not(windows))]
 fn list_services_impl(_filter: &str) -> Vec<ServiceEntry> {
     Vec::new()
+}
+
+// ---------------------------------------------------------------------------
+// R2 monitor collector → proto mapping (Windows). Non-Windows stubs keep the
+// crate building on other targets (the RPCs are unreachable there — the pipe
+// transport is Windows-only).
+// ---------------------------------------------------------------------------
+
+/// The proto `L4Protocol` discriminant for a collector protocol.
+#[cfg(windows)]
+fn net_protocol_to_proto(p: NetL4Protocol) -> i32 {
+    let v = match p {
+        NetL4Protocol::Tcp => L4Protocol::Tcp,
+        NetL4Protocol::Udp => L4Protocol::Udp,
+    };
+    v as i32
+}
+
+/// The proto `TcpState` discriminant for a collector TCP state.
+#[cfg(windows)]
+fn net_state_to_proto(s: NetTcpState) -> i32 {
+    let v = match s {
+        NetTcpState::Unspecified => TcpState::Unspecified,
+        NetTcpState::Closed => TcpState::TcpClosed,
+        NetTcpState::Listen => TcpState::TcpListen,
+        NetTcpState::SynSent => TcpState::TcpSynSent,
+        NetTcpState::SynRcvd => TcpState::TcpSynRcvd,
+        NetTcpState::Established => TcpState::TcpEstablished,
+        NetTcpState::FinWait1 => TcpState::TcpFinWait1,
+        NetTcpState::FinWait2 => TcpState::TcpFinWait2,
+        NetTcpState::CloseWait => TcpState::TcpCloseWait,
+        NetTcpState::Closing => TcpState::TcpClosing,
+        NetTcpState::LastAck => TcpState::TcpLastAck,
+        NetTcpState::TimeWait => TcpState::TcpTimeWait,
+        NetTcpState::DeleteTcb => TcpState::TcpDeleteTcb,
+    };
+    v as i32
+}
+
+#[cfg(windows)]
+fn connection_to_proto(c: CollectorConnection) -> ProtoConnection {
+    ProtoConnection {
+        pid: c.pid,
+        image_name: c.image_name,
+        protocol: net_protocol_to_proto(c.protocol),
+        local_addr: c.local_addr,
+        local_port: c.local_port as u32,
+        remote_addr: c.remote_addr,
+        remote_port: c.remote_port as u32,
+        remote_domain: c.remote_domain,
+        state: net_state_to_proto(c.state),
+        is_ipv6: c.is_ipv6,
+    }
+}
+
+#[cfg(windows)]
+fn listening_port_to_proto(p: CollectorListeningPort) -> ProtoListeningPort {
+    ProtoListeningPort {
+        protocol: net_protocol_to_proto(p.protocol),
+        bind_addr: p.bind_addr,
+        port: p.port as u32,
+        pid: p.pid,
+        image_name: p.image_name,
+        is_ipv6: p.is_ipv6,
+    }
+}
+
+#[cfg(windows)]
+fn list_connections_impl(include_listening: bool) -> Vec<ProtoConnection> {
+    list_connections(include_listening)
+        .into_iter()
+        .map(connection_to_proto)
+        .collect()
+}
+
+#[cfg(not(windows))]
+fn list_connections_impl(_include_listening: bool) -> Vec<ProtoConnection> {
+    Vec::new()
+}
+
+#[cfg(windows)]
+fn list_listening_ports_impl() -> Vec<ProtoListeningPort> {
+    list_listening_ports()
+        .into_iter()
+        .map(listening_port_to_proto)
+        .collect()
+}
+
+#[cfg(not(windows))]
+fn list_listening_ports_impl() -> Vec<ProtoListeningPort> {
+    Vec::new()
+}
+
+#[cfg(windows)]
+fn task_to_proto(t: CollectorScheduledTask) -> ProtoScheduledTask {
+    ProtoScheduledTask {
+        name: t.name,
+        path: t.path,
+        folder: t.folder,
+        enabled: t.enabled,
+        triggers: t.triggers,
+        action: t.action,
+        last_run_ms: t.last_run_ms,
+        next_run_ms: t.next_run_ms,
+        last_result: t.last_result,
+        author: t.author,
+        run_as_highest: t.run_as_highest,
+        runs_on_idle: t.runs_on_idle,
+        wakes_to_run: t.wakes_to_run,
+    }
+}
+
+#[cfg(windows)]
+fn list_scheduled_tasks_impl(filter: &str) -> Vec<ProtoScheduledTask> {
+    enumerate_tasks(filter)
+        .into_iter()
+        .map(task_to_proto)
+        .collect()
+}
+
+#[cfg(not(windows))]
+fn list_scheduled_tasks_impl(_filter: &str) -> Vec<ProtoScheduledTask> {
+    Vec::new()
+}
+
+#[cfg(windows)]
+fn boot_to_proto(b: CollectorBootRecord) -> ProtoBootRecord {
+    ProtoBootRecord {
+        boot_ms: b.boot_ms,
+        boot_duration_ms: b.boot_duration_ms,
+        main_path_ms: b.main_path_ms,
+        post_boot_ms: b.post_boot_ms,
+        degraded: b.degraded,
+    }
+}
+
+#[cfg(windows)]
+fn list_boots_impl(limit: u32) -> ListBootsReply {
+    let a = analyze_boots(limit);
+    ListBootsReply {
+        available: a.available,
+        unavailable_reason: a.unavailable_reason,
+        boots: a.boots.into_iter().map(boot_to_proto).collect(),
+    }
+}
+
+#[cfg(not(windows))]
+fn list_boots_impl(_limit: u32) -> ListBootsReply {
+    ListBootsReply {
+        available: false,
+        unavailable_reason: "boot analysis is Windows-only".to_string(),
+        boots: Vec::new(),
+    }
+}
+
+#[cfg(windows)]
+fn battery_to_proto(r: BatteryReading) -> GetBatteryStatusReply {
+    GetBatteryStatusReply {
+        available: r.available,
+        unavailable_reason: r.unavailable_reason,
+        status: if r.available {
+            Some(ProtoBatteryStatus {
+                present: r.present,
+                charging: r.charging,
+                on_ac: r.on_ac,
+                percent: r.percent,
+                rate_mw: r.rate_mw,
+                remaining_mwh: r.remaining_mwh,
+                full_charge_mwh: r.full_charge_mwh,
+                design_mwh: r.design_mwh,
+                health_percent: r.health_percent,
+                cycle_count: r.cycle_count,
+                est_runtime_s: r.est_runtime_s,
+            })
+        } else {
+            None
+        },
+    }
+}
+
+#[cfg(windows)]
+fn get_battery_status_impl() -> GetBatteryStatusReply {
+    battery_to_proto(battery_status())
+}
+
+#[cfg(not(windows))]
+fn get_battery_status_impl() -> GetBatteryStatusReply {
+    GetBatteryStatusReply {
+        available: false,
+        unavailable_reason: "battery status is Windows-only".to_string(),
+        status: None,
+    }
+}
+
+#[cfg(windows)]
+fn thermal_to_proto(r: ThermalReading) -> GetThermalReply {
+    GetThermalReply {
+        available: r.available,
+        unavailable_reason: r.unavailable_reason,
+        sensors: r
+            .sensors
+            .into_iter()
+            .map(|s| ProtoThermalSensor {
+                name: s.name,
+                celsius: s.celsius,
+                source: s.source,
+            })
+            .collect(),
+    }
+}
+
+#[cfg(windows)]
+fn get_thermal_impl() -> GetThermalReply {
+    thermal_to_proto(thermal_status())
+}
+
+#[cfg(not(windows))]
+fn get_thermal_impl() -> GetThermalReply {
+    GetThermalReply {
+        available: false,
+        unavailable_reason: "thermal sensors are Windows-only".to_string(),
+        sensors: Vec::new(),
+    }
 }
 
 /// A poisoned-store-mutex status (a prior handler panicked mid-query).
