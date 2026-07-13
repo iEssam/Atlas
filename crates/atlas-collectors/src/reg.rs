@@ -13,9 +13,10 @@
 use std::ptr;
 
 use crate::ffi::{
-    RegCloseKey, RegEnumKeyExW, RegEnumValueW, RegOpenKeyExW, RegQueryValueExW, DWORD,
-    ERROR_MORE_DATA, ERROR_NO_MORE_ITEMS, ERROR_SUCCESS, HKEY, KEY_READ, REG_BINARY, REG_DWORD,
-    REG_EXPAND_SZ, REG_QWORD, REG_SZ,
+    RegCloseKey, RegEnumKeyExW, RegEnumValueW, RegNotifyChangeKeyValue, RegOpenKeyExW,
+    RegQueryValueExW, DWORD, ERROR_MORE_DATA, ERROR_NO_MORE_ITEMS, ERROR_SUCCESS, HANDLE, HKEY,
+    KEY_READ, REG_BINARY, REG_DWORD, REG_EXPAND_SZ, REG_NOTIFY_CHANGE_LAST_SET,
+    REG_NOTIFY_CHANGE_NAME, REG_NOTIFY_THREAD_AGNOSTIC, REG_QWORD, REG_SZ,
 };
 
 /// A raw registry value read from the store, typed enough for the two callers.
@@ -115,6 +116,35 @@ impl RegKey {
     /// Opens an immediate subkey by name (same view as this key by default).
     pub fn open_subkey(&self, name: &str) -> Option<RegKey> {
         RegKey::open(self.handle, name, 0)
+    }
+
+    /// Arms an asynchronous change notification on this key (and, when
+    /// `watch_subtree`, its descendants): `event` is signaled when a subkey is
+    /// added/removed or a value is written. One-shot — re-arm after each signal.
+    /// Returns whether the registration succeeded. Read-only: watching never
+    /// modifies the key. The key must have been opened with `KEY_NOTIFY` rights,
+    /// which `KEY_READ` already includes.
+    ///
+    /// `event` is an opaque Win32 event `HANDLE` from `CreateEventW`; it is only
+    /// handed to the registry API, never dereferenced here, so the
+    /// not-unsafe-ptr-arg-deref lint is a false positive.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub fn arm_notify(&self, event: HANDLE, watch_subtree: bool) -> bool {
+        let filter =
+            REG_NOTIFY_CHANGE_NAME | REG_NOTIFY_CHANGE_LAST_SET | REG_NOTIFY_THREAD_AGNOSTIC;
+        // SAFETY: `self.handle` is a live KEY_READ handle; `event` is a live
+        // auto-reset event; the async form returns immediately and signals the
+        // event on change.
+        let rc = unsafe {
+            RegNotifyChangeKeyValue(
+                self.handle,
+                if watch_subtree { 1 } else { 0 },
+                filter,
+                event,
+                1, // fAsynchronous = TRUE
+            )
+        };
+        rc == ERROR_SUCCESS
     }
 
     /// Enumerates every `(name, value)` pair under this key. Best-effort — a

@@ -62,6 +62,13 @@ pub use v0::{
     SnapshotReply, SnapshotRequest, StartupEntry, StartupSource, SystemGauges, TcpState,
     ThermalSensor, ThreadRow, TimeRange,
 };
+// R2 advanced privacy alerts (AtlasQuery, PRD §9.10.3).
+pub use v0::{
+    CreatePrivacyAlertRuleReply, CreatePrivacyAlertRuleRequest, DeletePrivacyAlertRuleReply,
+    DeletePrivacyAlertRuleRequest, FiredAlert, ListFiredAlertsReply, ListFiredAlertsRequest,
+    ListPrivacyAlertRulesReply, ListPrivacyAlertRulesRequest, PrivacyAlertCondition,
+    PrivacyAlertRule, UpdatePrivacyAlertRuleReply, UpdatePrivacyAlertRuleRequest,
+};
 // R2 rules engine + profiles (AtlasRules service, PRD §9.7).
 pub use v0::{
     CoreAffinityMode, CreateProfileReply, CreateProfileRequest, CreateRuleReply, CreateRuleRequest,
@@ -160,3 +167,9 @@ pub const CAP_BATTERY_STATUS: &str = "battery_status";
 /// (`GetThermal`, PRD §9.6.7). Advertised only when at least one thermal sensor
 /// is exposed.
 pub const CAP_THERMAL_SENSORS: &str = "thermal_sensors";
+
+/// R2: the service runs the advanced-privacy-alerts engine (PRD §9.10.3) — the
+/// ConsentStore change-watcher + rule evaluator recording fired alerts, plus the
+/// alert-rule CRUD + `ListFiredAlerts` surface on AtlasQuery. Store-backed
+/// (rule persistence + fired-alert history); always available on Windows here.
+pub const CAP_PRIVACY_ALERTS: &str = "privacy_alerts";

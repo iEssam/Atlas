@@ -75,7 +75,10 @@ pub use policy::{
 #[cfg(windows)]
 pub use power::{battery_status, thermal_status, BatteryReading, ThermalReading, ThermalSensor};
 #[cfg(windows)]
-pub use privacy::{enumerate_privacy_usage, Capability, PrivacyUsage};
+pub use privacy::{
+    diff_transitions, enumerate_privacy_usage, exe_basename, foreground_matches,
+    unmunge_nonpackaged, Capability, PrivacyTransition, PrivacyUsage, PrivacyWatcher,
+};
 #[cfg(windows)]
 pub use resources::{find_resource_owners, ResourceOwner, ResourceOwnersResult};
 pub use sampler::{ProcKey, ProcSample, SampleSet, Sampler, SystemSample};

@@ -291,6 +291,40 @@ CREATE TABLE IF NOT EXISTS profile_rule (
 CREATE INDEX IF NOT EXISTS ix_profile_rule_profile ON profile_rule(profile_id);
 "#;
 
+// Additive v9 migration (docs/phases.md R2 / PRD §9.10.3): advanced privacy
+// alerts. `privacy_alert_rule` is the persisted alert-rule store — each row is a
+// data document: which capability to watch (0 = all), the condition discriminant
+// (proto `PrivacyAlertCondition`), and a duration threshold for ALERT_LONGER_THAN.
+// `fired_alert` is the append-only log the ConsentStore change-watcher's evaluator
+// writes when a rule matches a transition; `detail` is a FACTUAL, never accusatory
+// one-liner. Rules persist across restarts; fired alerts are history the
+// `ListFiredAlerts` RPC reads back. Created IF NOT EXISTS so a v8 database
+// upgrades in place. The privacy_event table (v6) is finally populated by the
+// same watcher, so its usage history stops being empty.
+const SCHEMA_V9: &str = r#"
+CREATE TABLE IF NOT EXISTS privacy_alert_rule (
+    id                INTEGER PRIMARY KEY,
+    name              TEXT    NOT NULL,
+    enabled           INTEGER NOT NULL,
+    capability        INTEGER NOT NULL,   -- 0=all, 1=camera, 2=microphone, 3=location
+    condition         INTEGER NOT NULL,   -- proto PrivacyAlertCondition discriminant
+    threshold_seconds INTEGER NOT NULL,   -- for ALERT_LONGER_THAN
+    created_ms        INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_privacy_alert_rule_enabled ON privacy_alert_rule(enabled);
+
+CREATE TABLE IF NOT EXISTS fired_alert (
+    id           INTEGER PRIMARY KEY,
+    rule_id      INTEGER NOT NULL,
+    ts_ms        INTEGER NOT NULL,
+    capability   INTEGER NOT NULL,   -- 1=camera, 2=microphone, 3=location
+    app_id       TEXT    NOT NULL,
+    display_name TEXT    NOT NULL,
+    detail       TEXT    NOT NULL    -- factual, never accusatory
+);
+CREATE INDEX IF NOT EXISTS ix_fired_alert_ts ON fired_alert(ts_ms);
+"#;
+
 /// Whether `table` already has a column named `column`, via `PRAGMA table_info`.
 /// Used to make the v3 `ADD COLUMN` migration idempotent (SQLite lacks
 /// `ADD COLUMN IF NOT EXISTS`).
@@ -512,6 +546,36 @@ pub struct ProfileRow {
     pub rule_ids: Vec<i64>,
 }
 
+/// One persisted advanced-privacy-alert rule (schema v9, PRD §9.10.3). Mirrors
+/// the proto `PrivacyAlertRule`: `capability` is the proto `CapabilityKind`
+/// discriminant (0 = all), `condition` the `PrivacyAlertCondition` discriminant,
+/// and `threshold_seconds` applies only to ALERT_LONGER_THAN.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PrivacyAlertRuleRow {
+    pub id: i64,
+    pub name: String,
+    pub enabled: bool,
+    pub capability: i32,
+    pub condition: i32,
+    pub threshold_seconds: u32,
+    pub created_ms: i64,
+}
+
+/// One recorded fired privacy alert (schema v9). `capability` is the proto
+/// `CapabilityKind` discriminant; `detail` is a factual, never-accusatory string.
+/// `rule_name` is resolved by join at read time (empty when the rule was deleted).
+#[derive(Debug, Clone, PartialEq)]
+pub struct FiredAlertRow {
+    pub id: i64,
+    pub rule_id: i64,
+    pub rule_name: String,
+    pub ts_ms: i64,
+    pub capability: i32,
+    pub app_id: String,
+    pub display_name: String,
+    pub detail: String,
+}
+
 pub struct Store {
     conn: Connection,
 }
@@ -587,6 +651,10 @@ impl Store {
         if version < 8 {
             self.conn.execute_batch(SCHEMA_V8)?;
             self.conn.execute_batch("PRAGMA user_version = 8;")?;
+        }
+        if version < 9 {
+            self.conn.execute_batch(SCHEMA_V9)?;
+            self.conn.execute_batch("PRAGMA user_version = 9;")?;
         }
         // FTS5 objects are built (idempotently, IF NOT EXISTS) on every open
         // once the module is confirmed present, independent of user_version: a
@@ -1698,6 +1766,177 @@ impl Store {
         Ok(n > 0)
     }
 
+    // -----------------------------------------------------------------------
+    // R2 advanced-privacy-alerts CRUD (schema v9, PRD §9.10.3). Rules persist
+    // across restarts; the ConsentStore change-watcher's evaluator (in `serve`)
+    // reads enabled rules and records `fired_alert` rows. The AtlasQuery service
+    // serves the full CRUD + fired-alert read surface.
+    // -----------------------------------------------------------------------
+
+    const PRIVACY_ALERT_RULE_COLS: &'static str =
+        "id, name, enabled, capability, condition, threshold_seconds, created_ms";
+
+    fn map_privacy_alert_rule(row: &rusqlite::Row) -> rusqlite::Result<PrivacyAlertRuleRow> {
+        Ok(PrivacyAlertRuleRow {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            enabled: row.get::<_, i64>(2)? != 0,
+            capability: row.get::<_, i64>(3)? as i32,
+            condition: row.get::<_, i64>(4)? as i32,
+            threshold_seconds: row.get::<_, i64>(5)? as u32,
+            created_ms: row.get(6)?,
+        })
+    }
+
+    /// Inserts an alert rule (its `id` is ignored; `created_ms` stamped now when
+    /// 0) and returns the new row id.
+    pub fn create_privacy_alert_rule(&self, r: &PrivacyAlertRuleRow) -> Result<i64> {
+        let created = if r.created_ms == 0 {
+            now_ms()
+        } else {
+            r.created_ms
+        };
+        self.conn.execute(
+            "INSERT INTO privacy_alert_rule
+                 (name, enabled, capability, condition, threshold_seconds, created_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                r.name,
+                r.enabled as i64,
+                r.capability,
+                r.condition,
+                r.threshold_seconds as i64,
+                created,
+            ],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Fetches one alert rule by id.
+    pub fn get_privacy_alert_rule(&self, id: i64) -> Result<Option<PrivacyAlertRuleRow>> {
+        let sql = format!(
+            "SELECT {} FROM privacy_alert_rule WHERE id = ?1",
+            Self::PRIVACY_ALERT_RULE_COLS
+        );
+        let row = self
+            .conn
+            .query_row(&sql, params![id], Self::map_privacy_alert_rule)
+            .optional()?;
+        Ok(row)
+    }
+
+    /// Lists all alert rules, newest first.
+    pub fn list_privacy_alert_rules(&self) -> Result<Vec<PrivacyAlertRuleRow>> {
+        let sql = format!(
+            "SELECT {} FROM privacy_alert_rule ORDER BY id ASC",
+            Self::PRIVACY_ALERT_RULE_COLS
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map([], Self::map_privacy_alert_rule)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Lists only enabled alert rules (the evaluator's input each transition).
+    pub fn list_enabled_privacy_alert_rules(&self) -> Result<Vec<PrivacyAlertRuleRow>> {
+        let sql = format!(
+            "SELECT {} FROM privacy_alert_rule WHERE enabled = 1 ORDER BY id ASC",
+            Self::PRIVACY_ALERT_RULE_COLS
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map([], Self::map_privacy_alert_rule)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Updates an alert rule in place (by `id`). Returns whether a row changed.
+    pub fn update_privacy_alert_rule(&self, r: &PrivacyAlertRuleRow) -> Result<bool> {
+        let n = self.conn.execute(
+            "UPDATE privacy_alert_rule SET
+                 name = ?2, enabled = ?3, capability = ?4, condition = ?5,
+                 threshold_seconds = ?6
+             WHERE id = ?1",
+            params![
+                r.id,
+                r.name,
+                r.enabled as i64,
+                r.capability,
+                r.condition,
+                r.threshold_seconds as i64,
+            ],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// Deletes an alert rule. Returns whether a row went.
+    pub fn delete_privacy_alert_rule(&self, id: i64) -> Result<bool> {
+        let n = self
+            .conn
+            .execute("DELETE FROM privacy_alert_rule WHERE id = ?1", params![id])?;
+        Ok(n > 0)
+    }
+
+    /// Records one fired alert (the evaluator's output). `id` is assigned by the
+    /// store; the passed `id`/`rule_name` are ignored on insert.
+    pub fn record_fired_alert(&self, a: &FiredAlertRow) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO fired_alert
+                 (rule_id, ts_ms, capability, app_id, display_name, detail)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                a.rule_id,
+                a.ts_ms,
+                a.capability,
+                a.app_id,
+                a.display_name,
+                a.detail,
+            ],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Lists fired alerts in `[from_ms, to_ms]`, most recent first, capped at
+    /// `limit`. Returns `(rows, truncated)`; `rule_name` comes from a LEFT JOIN so
+    /// a deleted rule leaves it empty rather than dropping the alert.
+    pub fn list_fired_alerts(
+        &self,
+        from_ms: i64,
+        to_ms: i64,
+        limit: u32,
+    ) -> Result<(Vec<FiredAlertRow>, bool)> {
+        let fetch = limit as i64 + 1;
+        let mut stmt = self.conn.prepare(
+            "SELECT f.id, f.rule_id, COALESCE(r.name, ''), f.ts_ms, f.capability,
+                    f.app_id, f.display_name, f.detail
+               FROM fired_alert f
+               LEFT JOIN privacy_alert_rule r ON r.id = f.rule_id
+              WHERE f.ts_ms >= ?1 AND f.ts_ms <= ?2
+              ORDER BY f.ts_ms DESC, f.id DESC
+              LIMIT ?3",
+        )?;
+        let rows = stmt.query_map(params![from_ms, to_ms, fetch], |r| {
+            Ok(FiredAlertRow {
+                id: r.get(0)?,
+                rule_id: r.get(1)?,
+                rule_name: r.get(2)?,
+                ts_ms: r.get(3)?,
+                capability: r.get::<_, i64>(4)? as i32,
+                app_id: r.get(5)?,
+                display_name: r.get(6)?,
+                detail: r.get(7)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        let truncated = out.len() as i64 > limit as i64;
+        out.truncate(limit as usize);
+        Ok((out, truncated))
+    }
+
     /// Inserts a profile plus its rule links, returning the new profile id.
     pub fn create_profile(
         &mut self,
@@ -1998,7 +2237,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 8, "migration walks v1 up to the current schema");
+        assert_eq!(version, 9, "migration walks v1 up to the current schema");
 
         store
             .write_self_sample(&SelfSampleRow {
@@ -2074,7 +2313,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 8, "migration walks a v2 db to the current schema");
+        assert_eq!(version, 9, "migration walks a v2 db to the current schema");
         assert!(column_exists(&store.conn, "process_instance", "exit_status").unwrap());
 
         // Pre-existing row survived and has a NULL exit_status.
@@ -2190,7 +2429,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 8);
+        assert_eq!(version, 9);
     }
 
     fn sample_rule(name: &str, image: &str) -> RuleRow {
@@ -2601,5 +2840,78 @@ mod tests {
         // Newest overall is the mic event at 9_999.
         assert_eq!(rows[0].ts_ms, 9_999);
         assert_eq!(rows[0].capability, 2);
+    }
+
+    #[test]
+    fn privacy_alert_rule_crud() {
+        let store = Store::open_in_memory().unwrap();
+        let id = store
+            .create_privacy_alert_rule(&PrivacyAlertRuleRow {
+                id: 0,
+                name: "mic any-use".into(),
+                enabled: true,
+                capability: 2, // microphone
+                condition: 1,  // ALERT_ANY_USE
+                threshold_seconds: 0,
+                created_ms: 0, // stamped now
+            })
+            .unwrap();
+        assert!(id > 0);
+
+        let got = store.get_privacy_alert_rule(id).unwrap().unwrap();
+        assert_eq!(got.name, "mic any-use");
+        assert!(got.created_ms > 0, "created_ms stamped");
+
+        // Update: disable + switch to ALERT_LONGER_THAN with a threshold.
+        let mut updated = got.clone();
+        updated.enabled = false;
+        updated.condition = 5;
+        updated.threshold_seconds = 30;
+        assert!(store.update_privacy_alert_rule(&updated).unwrap());
+        assert!(store.list_enabled_privacy_alert_rules().unwrap().is_empty());
+        assert_eq!(store.list_privacy_alert_rules().unwrap().len(), 1);
+
+        assert!(store.delete_privacy_alert_rule(id).unwrap());
+        assert!(store.list_privacy_alert_rules().unwrap().is_empty());
+    }
+
+    #[test]
+    fn fired_alert_records_and_reads_with_rule_name() {
+        let store = Store::open_in_memory().unwrap();
+        let rule_id = store
+            .create_privacy_alert_rule(&PrivacyAlertRuleRow {
+                id: 0,
+                name: "cam background".into(),
+                enabled: true,
+                capability: 1,
+                condition: 2,
+                threshold_seconds: 0,
+                created_ms: 1,
+            })
+            .unwrap();
+        store
+            .record_fired_alert(&FiredAlertRow {
+                id: 0,
+                rule_id,
+                rule_name: String::new(), // ignored on insert
+                ts_ms: 5_000,
+                capability: 1,
+                app_id: "C:#cam.exe".into(),
+                display_name: "cam.exe".into(),
+                detail: "camera used in the background".into(),
+            })
+            .unwrap();
+
+        let (rows, truncated) = store.list_fired_alerts(0, 10_000, 10).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(!truncated);
+        assert_eq!(rows[0].rule_name, "cam background", "name joined from rule");
+        assert_eq!(rows[0].detail, "camera used in the background");
+
+        // Deleting the rule leaves the fired alert but blanks the joined name.
+        store.delete_privacy_alert_rule(rule_id).unwrap();
+        let (rows, _) = store.list_fired_alerts(0, 10_000, 10).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].rule_name, "");
     }
 }
