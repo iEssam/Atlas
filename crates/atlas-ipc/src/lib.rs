@@ -42,15 +42,18 @@ pub use v0::{
     ActionRisk, Bookmark, CapabilitiesReply, CapabilitiesRequest, CapabilityKind, Confidence,
     ContributingFactor, CreateBookmarkReply, CreateBookmarkRequest, DiagnoseReply, DiagnoseRequest,
     Diagnosis, EventRow, EvidenceItem, ExecuteActionReply, ExecuteActionRequest,
-    GenerateReportReply, GenerateReportRequest, Incident, IncidentKind, ListBookmarksReply,
-    ListBookmarksRequest, ListEventsReply, ListEventsRequest, ListIncidentsReply,
-    ListIncidentsRequest, ListPrivacyEventsReply, ListPrivacyEventsRequest, ListPrivacyUsageReply,
-    ListPrivacyUsageRequest, ListServicesReply, ListServicesRequest, ListStartupReply,
-    ListStartupRequest, MetricKind, PrepareActionReply, PrepareActionRequest, PrivacyEvent,
-    PrivacyUsage, ProcessActionKind, ProcessHit, ProcessRole, ProcessRow, QueryRangeReply,
-    QueryRangeRequest, RangeBucket, RedactionOptions, ReportFormat, SearchHit, SearchReply,
+    FindResourceOwnersReply, FindResourceOwnersRequest, GenerateReportReply, GenerateReportRequest,
+    HandleRow, Incident, IncidentKind, ListBookmarksReply, ListBookmarksRequest, ListEventsReply,
+    ListEventsRequest, ListHandlesReply, ListHandlesRequest, ListIncidentsReply,
+    ListIncidentsRequest, ListModulesReply, ListModulesRequest, ListPrivacyEventsReply,
+    ListPrivacyEventsRequest, ListPrivacyUsageReply, ListPrivacyUsageRequest, ListServicesReply,
+    ListServicesRequest, ListStartupReply, ListStartupRequest, ListThreadsReply,
+    ListThreadsRequest, MetricKind, ModuleRow, PrepareActionReply, PrepareActionRequest,
+    PrivacyEvent, PrivacyUsage, ProcessActionKind, ProcessDetail, ProcessDetailReply,
+    ProcessDetailRequest, ProcessHit, ProcessRole, ProcessRow, QueryRangeReply, QueryRangeRequest,
+    RangeBucket, RedactionOptions, ReportFormat, ResourceOwner, SearchHit, SearchReply,
     SearchRequest, ServiceEntry, ServiceStartType, ServiceState, Severity, SnapshotReply,
-    SnapshotRequest, StartupEntry, StartupSource, SystemGauges, TimeRange,
+    SnapshotRequest, StartupEntry, StartupSource, SystemGauges, ThreadRow, TimeRange,
 };
 
 /// Capability flag advertised by [`v0::CapabilitiesReply`] when the service can
@@ -96,3 +99,13 @@ pub const CAP_DIAGNOSTICS: &str = "diagnostics";
 /// M8: the service exports diagnosis reports (text/JSON/CSV/HTML) with a
 /// redaction pass (`GenerateReport`, PRD §9.18).
 pub const CAP_REPORTS: &str = "reports";
+
+/// R2: the service answers the on-demand deep process inspector — process
+/// detail, handles, modules, threads (`GetProcessDetail` / `ListHandles` /
+/// `ListModules` / `ListThreads`, PRD §9.4). Cross-user handle/module coverage
+/// may be limited without elevation; replies carry explicit coverage flags.
+pub const CAP_PROCESS_INSPECTOR: &str = "process_inspector";
+
+/// R2: the service answers resource-ownership ("what is using this file")
+/// queries via the Restart Manager (`FindResourceOwners`, PRD §9.5).
+pub const CAP_RESOURCE_OWNERSHIP: &str = "resource_ownership";

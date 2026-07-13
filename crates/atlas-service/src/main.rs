@@ -224,6 +224,40 @@ enum Cmd {
         #[arg(long)]
         filter: Option<String>,
     },
+    /// Deep-inspect a process by pid (R2): identity + optional sections.
+    ///
+    /// Prints the full process detail (path, command line, user, integrity,
+    /// architecture, signature, versions — PRD §9.4). Add `--handles`,
+    /// `--modules`, and/or `--threads` for those on-demand sections. Runs
+    /// unprivileged; cross-user/protected fields degrade with `limited`/
+    /// `names_limited` rather than failing. Inspect your own service pid or a
+    /// notepad you spawned.
+    Inspect {
+        /// Target process id.
+        #[arg(long)]
+        pid: u32,
+        /// Also list the process's open handles (types + resolved names).
+        #[arg(long)]
+        handles: bool,
+        /// Also list the process's loaded modules (version + signed).
+        #[arg(long)]
+        modules: bool,
+        /// Also list the process's threads (state, start address, times).
+        #[arg(long)]
+        threads: bool,
+        /// Cap on handle rows (0 = default).
+        #[arg(long, default_value_t = 0)]
+        handle_limit: u32,
+    },
+    /// Find what is using a file or folder (R2, PRD §9.5).
+    ///
+    /// Restart-Manager resource-ownership search: prints the processes/services
+    /// holding `path`. Unprivileged for user-accessible files. To verify, open a
+    /// file in one shell and `locks <that path>` from another.
+    Locks {
+        /// The file or folder path to look up.
+        path: String,
+    },
     /// Measure Atlas's own collection overhead against the PRD budgets (M3).
     ///
     /// Runs the real record pipeline against a TEMP database for `--duration`
@@ -435,6 +469,14 @@ fn main() -> Result<()> {
         Cmd::Privacy => cmd_privacy(),
         Cmd::Startup => cmd_startup(),
         Cmd::Services { filter } => cmd_services(filter.unwrap_or_default()),
+        Cmd::Inspect {
+            pid,
+            handles,
+            modules,
+            threads,
+            handle_limit,
+        } => cmd_inspect(pid, handles, modules, threads, handle_limit),
+        Cmd::Locks { path } => cmd_locks(&path),
         Cmd::Serve { pipe, db } => cmd_serve(pipe, db.unwrap_or_else(default_db_path)),
         Cmd::ClientSnapshot { pipe, top_n, watch } => cmd_client_snapshot(pipe, top_n, watch),
         Cmd::RingRead { pipe, limit, watch } => cmd_ring_read(pipe, limit, watch),
@@ -2812,6 +2854,185 @@ fn cmd_services(filter: String) -> Result<()> {
 #[cfg(not(windows))]
 fn cmd_services(_filter: String) -> Result<()> {
     anyhow::bail!("the `services` command requires Windows (Service Control Manager)");
+}
+
+/// `inspect`: deep-inspect a process by pid (R2). Prints the detail plus any
+/// requested sections. Windows-only (the inspector is Win32/NT FFI).
+#[cfg(windows)]
+fn cmd_inspect(
+    pid: u32,
+    handles: bool,
+    modules: bool,
+    threads: bool,
+    handle_limit: u32,
+) -> Result<()> {
+    let res = atlas_collectors::process_detail(pid, 0);
+    if !res.available {
+        println!("Process {pid} unavailable: {}", res.unavailable_reason);
+        return Ok(());
+    }
+    let d = res.detail.expect("available detail present");
+    println!("== Process {} ({}) ==", d.pid, d.image_name);
+    println!("  parent pid       : {}", d.parent_pid);
+    println!("  image path       : {}", show(&d.image_path));
+    println!("  command line     : {}", show(&d.command_line));
+    println!("  working directory: {}", show(&d.working_directory));
+    println!(
+        "  user             : {} ({})",
+        show(&d.user_name),
+        show(&d.user_sid)
+    );
+    println!("  session          : {}", d.session_id);
+    println!(
+        "  integrity        : {}   elevated: {}",
+        show(&d.integrity_level),
+        d.elevated
+    );
+    println!("  architecture     : {}", show(&d.architecture));
+    println!(
+        "  signature        : {}   publisher: {}",
+        show(&d.signature_status),
+        show(&d.publisher)
+    );
+    println!(
+        "  file version     : {}   product: {}",
+        show(&d.file_version),
+        show(&d.product_name)
+    );
+    println!(
+        "  threads/handles  : {} / {}",
+        d.thread_count, d.handle_count
+    );
+    println!("  start time (ms)  : {}", d.start_time_ms);
+    println!("  package identity : {}", show(&d.package_identity));
+    println!(
+        "  coverage         : {}",
+        if d.limited {
+            "LIMITED (some fields need elevation / cross-user)"
+        } else {
+            "full"
+        }
+    );
+
+    if threads {
+        let ts = atlas_collectors::list_threads(pid);
+        println!("\n-- Threads ({}) --", ts.len());
+        println!(
+            "{:>7} {:<14} {:<14} {:>4} {:>18} {:>10}",
+            "TID", "STATE", "WAIT", "PRIO", "START ADDR", "CTXSW"
+        );
+        for t in ts.iter().take(200) {
+            println!(
+                "{:>7} {:<14} {:<14} {:>4} {:>#18x} {:>10}",
+                t.tid, t.state, t.wait_reason, t.priority, t.start_address, t.context_switches
+            );
+        }
+    }
+
+    if modules {
+        let res = atlas_collectors::list_modules(pid);
+        if !res.available {
+            println!("\n-- Modules unavailable: {} --", res.unavailable_reason);
+        } else {
+            println!("\n-- Modules ({}) --", res.modules.len());
+            println!(
+                "{:<32} {:<10} {:>18} {:>10} VERSION",
+                "NAME", "SIGNED", "BASE", "SIZE KB"
+            );
+            for m in res.modules.iter().take(500) {
+                println!(
+                    "{:<32} {:<10} {:>#18x} {:>10} {}",
+                    truncate(&m.name, 32),
+                    if m.signed { "signed" } else { "unsigned" },
+                    m.base_address,
+                    m.size / 1024,
+                    show(&m.version)
+                );
+            }
+        }
+    }
+
+    if handles {
+        let res = atlas_collectors::list_handles(pid, "", handle_limit);
+        println!(
+            "\n-- Handles ({}{}{}) --",
+            res.handles.len(),
+            if res.truncated { ", truncated" } else { "" },
+            if res.names_limited {
+                ", names_limited"
+            } else {
+                ""
+            }
+        );
+        println!("{:>18} {:<16} {:>10} NAME", "HANDLE", "TYPE", "ACCESS");
+        for h in res.handles.iter().take(500) {
+            println!(
+                "{:>#18x} {:<16} {:>#10x} {}",
+                h.handle,
+                truncate(&h.type_name, 16),
+                h.granted_access,
+                truncate(&h.name, 80)
+            );
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn cmd_inspect(
+    _pid: u32,
+    _handles: bool,
+    _modules: bool,
+    _threads: bool,
+    _handle_limit: u32,
+) -> Result<()> {
+    anyhow::bail!("the `inspect` command requires Windows (process inspector FFI)");
+}
+
+/// `locks`: find what is using a file/folder via the Restart Manager (R2).
+/// Windows-only.
+#[cfg(windows)]
+fn cmd_locks(path: &str) -> Result<()> {
+    let res = atlas_collectors::find_resource_owners(path);
+    if !res.available {
+        println!(
+            "Resource-ownership search unavailable: {}",
+            res.unavailable_reason
+        );
+        return Ok(());
+    }
+    if res.owners.is_empty() {
+        println!("No process is currently using '{path}'.");
+        return Ok(());
+    }
+    println!("{} owner(s) of '{path}':", res.owners.len());
+    println!("{:>7} {:<8} {:<28} DESCRIPTION", "PID", "KIND", "IMAGE");
+    for o in &res.owners {
+        println!(
+            "{:>7} {:<8} {:<28} {}",
+            o.pid,
+            if o.is_service { "service" } else { "app" },
+            truncate(&o.image_name, 28),
+            truncate(&o.description, 60)
+        );
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn cmd_locks(_path: &str) -> Result<()> {
+    anyhow::bail!("the `locks` command requires Windows (Restart Manager)");
+}
+
+/// Renders an empty string as a dim placeholder for the inspect output.
+#[cfg(windows)]
+fn show(s: &str) -> &str {
+    if s.is_empty() {
+        "-"
+    } else {
+        s
+    }
 }
 
 /// `action`: prepare (and optionally execute) a safe process action against the

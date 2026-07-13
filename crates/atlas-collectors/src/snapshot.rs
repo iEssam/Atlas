@@ -8,7 +8,7 @@ use anyhow::{bail, Result};
 
 use crate::ffi::{
     NtQuerySystemInformation, STATUS_INFO_LENGTH_MISMATCH, SYSTEM_PROCESS_INFORMATION,
-    SYSTEM_PROCESS_INFORMATION_CLASS,
+    SYSTEM_PROCESS_INFORMATION_CLASS, SYSTEM_THREAD_INFORMATION,
 };
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -41,11 +41,13 @@ const INITIAL_BUF_BYTES: usize = 1 << 20;
 const GROW_SLACK_BYTES: usize = 256 << 10;
 const MAX_ATTEMPTS: usize = 8;
 
-pub fn snapshot_processes() -> Result<Vec<ProcessSnapshot>> {
+/// Runs the growing-buffer `NtQuerySystemInformation(SystemProcessInformation)`
+/// dance and returns the filled buffer plus the number of bytes the kernel
+/// actually wrote. Shared by the process snapshot and the per-process thread
+/// enumeration (both walk the same buffer, which carries a trailing
+/// `SYSTEM_THREAD_INFORMATION` array after each process record).
+fn query_process_information() -> Result<(Vec<u8>, usize)> {
     let mut buf: Vec<u8> = vec![0u8; INITIAL_BUF_BYTES];
-    let mut used: usize = 0;
-    let mut filled = false;
-
     for _ in 0..MAX_ATTEMPTS {
         let mut ret_len: u32 = 0;
         let status = unsafe {
@@ -66,14 +68,14 @@ pub fn snapshot_processes() -> Result<Vec<ProcessSnapshot>> {
         if status < 0 {
             bail!("NtQuerySystemInformation failed: 0x{:08X}", status as u32);
         }
-        used = (ret_len as usize).min(buf.len());
-        filled = true;
-        break;
+        let used = (ret_len as usize).min(buf.len());
+        return Ok((buf, used));
     }
-    if !filled {
-        bail!("process list kept growing after {MAX_ATTEMPTS} attempts");
-    }
+    bail!("process list kept growing after {MAX_ATTEMPTS} attempts");
+}
 
+pub fn snapshot_processes() -> Result<Vec<ProcessSnapshot>> {
+    let (buf, used) = query_process_information()?;
     let base = buf.as_ptr() as usize;
     let mut out = Vec::with_capacity(512);
     let mut offset = 0usize;
@@ -137,6 +139,74 @@ pub fn snapshot_processes() -> Result<Vec<ProcessSnapshot>> {
     Ok(out)
 }
 
+/// One thread of a process, parsed from the `SYSTEM_THREAD_INFORMATION` array
+/// the process snapshot syscall already returns (no extra permissions, no
+/// per-thread `OpenThread`). `state`/`wait_reason` are the raw kernel codes; the
+/// inspector maps them to text.
+#[derive(Debug, Clone)]
+pub struct ThreadSample {
+    pub tid: u32,
+    pub start_address: u64,
+    pub state: u32,
+    pub wait_reason: u32,
+    pub priority: i32,
+    pub kernel_time_100ns: i64,
+    pub user_time_100ns: i64,
+    pub context_switches: u32,
+}
+
+/// Enumerates the threads of `pid` from the process-information buffer's
+/// trailing `SYSTEM_THREAD_INFORMATION` array. Returns `Ok(None)` when the pid
+/// is not present in the snapshot (exited / never existed). Unprivileged: this
+/// reads the same system buffer the 1 Hz snapshot already uses.
+pub fn snapshot_thread_infos(pid: u32) -> Result<Option<Vec<ThreadSample>>> {
+    let (buf, used) = query_process_information()?;
+    let mut offset = 0usize;
+
+    loop {
+        if offset + size_of::<SYSTEM_PROCESS_INFORMATION>() > used {
+            break;
+        }
+        let rec: SYSTEM_PROCESS_INFORMATION =
+            unsafe { std::ptr::read_unaligned(buf.as_ptr().add(offset).cast()) };
+        let rec_pid = rec.UniqueProcessId as usize as u32;
+        let n_threads = rec.NumberOfThreads as usize;
+
+        if rec_pid == pid {
+            let mut threads = Vec::with_capacity(n_threads);
+            // The thread array is packed immediately after the fixed process
+            // record; bound every read against the region the kernel filled.
+            let arr_base = offset + size_of::<SYSTEM_PROCESS_INFORMATION>();
+            for i in 0..n_threads {
+                let t_off = arr_base + i * size_of::<SYSTEM_THREAD_INFORMATION>();
+                if t_off + size_of::<SYSTEM_THREAD_INFORMATION>() > used {
+                    break;
+                }
+                let t: SYSTEM_THREAD_INFORMATION =
+                    unsafe { std::ptr::read_unaligned(buf.as_ptr().add(t_off).cast()) };
+                threads.push(ThreadSample {
+                    tid: t.ClientId.UniqueThread as usize as u32,
+                    start_address: t.StartAddress as usize as u64,
+                    state: t.ThreadState,
+                    wait_reason: t.WaitReason,
+                    priority: t.Priority,
+                    kernel_time_100ns: t.KernelTime,
+                    user_time_100ns: t.UserTime,
+                    context_switches: t.ContextSwitches,
+                });
+            }
+            return Ok(Some(threads));
+        }
+
+        if rec.NextEntryOffset == 0 {
+            break;
+        }
+        offset += rec.NextEntryOffset as usize;
+    }
+
+    Ok(None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -180,6 +250,40 @@ mod tests {
         assert!(me.working_set > 0);
         assert!(me.thread_count > 0);
         assert!(!me.image_name.is_empty());
+    }
+
+    /// Locks the hand-written SYSTEM_THREAD_INFORMATION layout to the documented
+    /// 64-bit offsets (phnt/DDK). The thread array stride depends on this size;
+    /// a drift here would misalign every thread past the first.
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn system_thread_information_layout() {
+        use crate::ffi::{CLIENT_ID, SYSTEM_THREAD_INFORMATION};
+        assert_eq!(offset_of!(SYSTEM_THREAD_INFORMATION, CreateTime), 0x10);
+        assert_eq!(offset_of!(SYSTEM_THREAD_INFORMATION, StartAddress), 0x20);
+        assert_eq!(offset_of!(SYSTEM_THREAD_INFORMATION, ClientId), 0x28);
+        assert_eq!(offset_of!(SYSTEM_THREAD_INFORMATION, Priority), 0x38);
+        assert_eq!(offset_of!(SYSTEM_THREAD_INFORMATION, ThreadState), 0x44);
+        assert_eq!(offset_of!(SYSTEM_THREAD_INFORMATION, WaitReason), 0x48);
+        assert_eq!(size_of::<SYSTEM_THREAD_INFORMATION>(), 0x50);
+        assert_eq!(size_of::<CLIENT_ID>(), 16);
+    }
+
+    #[test]
+    fn snapshot_threads_lists_current_process() {
+        let me = std::process::id();
+        let threads = snapshot_thread_infos(me)
+            .expect("thread enumeration should succeed unprivileged")
+            .expect("current process must be present in the snapshot");
+        assert!(!threads.is_empty(), "current process has threads");
+        // Our own tids are real; at least one should be nonzero.
+        assert!(threads.iter().any(|t| t.tid != 0));
+    }
+
+    #[test]
+    fn snapshot_threads_absent_pid_is_none() {
+        // pids are multiples of 4 and far below u32::MAX; this one cannot exist.
+        assert!(snapshot_thread_infos(0xFFFF_FFF0).unwrap().is_none());
     }
 
     #[test]
