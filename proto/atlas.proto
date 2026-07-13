@@ -194,6 +194,133 @@ message ListBookmarksReply {
   repeated Bookmark bookmarks = 1;
 }
 
+// ---------------------------------------------------------------------------
+// M7: privacy activity, startup inventory, services (read-only surface).
+// ---------------------------------------------------------------------------
+
+// Privacy-sensitive capabilities tracked via the Windows CapabilityAccessManager
+// ConsentStore (PRD §9.10). "where Windows exposes it" — the service labels
+// unavailable capabilities via capability_flags rather than faking data.
+enum CapabilityKind {
+  CAPABILITY_KIND_UNSPECIFIED = 0;
+  CAMERA = 1;
+  MICROPHONE = 2;
+  LOCATION = 3;
+}
+
+// Current per-(app, capability) usage from the ConsentStore. in_use is true
+// when a start has no matching stop (LastUsedTimeStop == 0).
+message PrivacyUsage {
+  CapabilityKind capability = 1;
+  // ConsentStore key (packaged app id or the moniker for a desktop app).
+  string app_id = 2;
+  string display_name = 3;
+  bool packaged = 4;
+  int64 last_start_ms = 5;
+  // 0 when currently in use.
+  int64 last_stop_ms = 6;
+  bool in_use = 7;
+}
+
+message ListPrivacyUsageRequest {
+  // Empty = all capabilities.
+  repeated CapabilityKind capabilities = 1;
+}
+
+message ListPrivacyUsageReply {
+  repeated PrivacyUsage usages = 1;
+}
+
+// Recorded usage transitions (start/stop), from the service's watched history.
+message PrivacyEvent {
+  int64 ts_ms = 1;
+  CapabilityKind capability = 2;
+  string app_id = 3;
+  string display_name = 4;
+  // true = start, false = stop.
+  bool started = 5;
+}
+
+message ListPrivacyEventsRequest {
+  TimeRange range = 1;
+  uint32 limit = 2;
+}
+
+message ListPrivacyEventsReply {
+  repeated PrivacyEvent events = 1;
+  bool truncated = 2;
+}
+
+enum StartupSource {
+  STARTUP_SOURCE_UNSPECIFIED = 0;
+  RUN_KEY_MACHINE = 1;
+  RUN_KEY_USER = 2;
+  STARTUP_FOLDER_MACHINE = 3;
+  STARTUP_FOLDER_USER = 4;
+  SCHEDULED_TASK = 5;
+  SERVICE = 6;
+  PACKAGED_TASK = 7;
+}
+
+message StartupEntry {
+  string name = 1;
+  StartupSource source = 2;
+  string command = 3;
+  string publisher = 4;
+  // StartupApproved / task / service enabled state where determinable.
+  bool enabled = 5;
+  // "machine" or "user".
+  string scope = 6;
+}
+
+message ListStartupRequest {}
+
+message ListStartupReply {
+  repeated StartupEntry entries = 1;
+}
+
+enum ServiceState {
+  SERVICE_STATE_UNSPECIFIED = 0;
+  SERVICE_STOPPED = 1;
+  SERVICE_START_PENDING = 2;
+  SERVICE_STOP_PENDING = 3;
+  SERVICE_RUNNING = 4;
+  SERVICE_CONTINUE_PENDING = 5;
+  SERVICE_PAUSE_PENDING = 6;
+  SERVICE_PAUSED = 7;
+}
+
+enum ServiceStartType {
+  SERVICE_START_TYPE_UNSPECIFIED = 0;
+  START_BOOT = 1;
+  START_SYSTEM = 2;
+  START_AUTO = 3;
+  START_MANUAL = 4;
+  START_DISABLED = 5;
+}
+
+message ServiceEntry {
+  string name = 1;
+  string display_name = 2;
+  string description = 3;
+  ServiceState state = 4;
+  ServiceStartType start_type = 5;
+  // 0 when not running.
+  uint32 pid = 6;
+  string account = 7;
+  string binary_path = 8;
+  bool delayed_auto_start = 9;
+}
+
+message ListServicesRequest {
+  // Case-insensitive substring over name/display_name; empty = all.
+  string filter = 1;
+}
+
+message ListServicesReply {
+  repeated ServiceEntry services = 1;
+}
+
 service AtlasQuery {
   rpc GetCapabilities(CapabilitiesRequest) returns (CapabilitiesReply);
   rpc GetSnapshot(SnapshotRequest) returns (SnapshotReply);
@@ -203,6 +330,10 @@ service AtlasQuery {
   rpc Search(SearchRequest) returns (SearchReply);
   rpc CreateBookmark(CreateBookmarkRequest) returns (CreateBookmarkReply);
   rpc ListBookmarks(ListBookmarksRequest) returns (ListBookmarksReply);
+  rpc ListPrivacyUsage(ListPrivacyUsageRequest) returns (ListPrivacyUsageReply);
+  rpc ListPrivacyEvents(ListPrivacyEventsRequest) returns (ListPrivacyEventsReply);
+  rpc ListStartup(ListStartupRequest) returns (ListStartupReply);
+  rpc ListServices(ListServicesRequest) returns (ListServicesReply);
 }
 
 // ---------------------------------------------------------------------------
