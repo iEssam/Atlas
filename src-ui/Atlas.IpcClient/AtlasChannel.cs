@@ -422,6 +422,87 @@ public sealed class AtlasChannel : IDisposable
             cancellationToken: cancellationToken).ResponseAsync);
 
     // ----------------------------------------------------------------------
+    // R2: monitors — network, scheduled tasks, boot analysis, battery, thermal
+    // (AtlasQuery, PRD §9.12, §9.9.2, §9.6.6, §9.6.7). All read-only. Same
+    // Unimplemented→Unsupported guard so the new pages/cards degrade gracefully
+    // against an older service that serves these RPCs as Unimplemented (the
+    // server side lands after the UI — task brief). The hardware-dependent
+    // replies (boots / battery / thermal) additionally carry their own in-band
+    // <c>available</c> + <c>unavailable_reason</c>, which callers surface
+    // honestly (absent sensors are information, not an error); that is orthogonal
+    // to the transport-level Unsupported.
+    // ----------------------------------------------------------------------
+
+    /// <summary>
+    /// Active network connections (per PID). Set <paramref name="includeListening"/>
+    /// to also fold in listening/bound endpoints; otherwise only established/active
+    /// connections are returned. Remote domains are populated from the DNS cache
+    /// where available and left empty otherwise.
+    /// </summary>
+    public Task<RpcOutcome<ListConnectionsReply>> ListConnectionsAsync(
+        bool includeListening = false,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _client.ListConnectionsAsync(
+            new ListConnectionsRequest { IncludeListening = includeListening },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>
+    /// The listening/bound TCP and UDP ports with their owning process. The
+    /// server-side complement of the Network page's "what is listening?" view.
+    /// </summary>
+    public Task<RpcOutcome<ListListeningPortsReply>> ListListeningPortsAsync(
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _client.ListListeningPortsAsync(
+            new ListListeningPortsRequest(),
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>
+    /// The Windows scheduled-task inventory. <paramref name="filter"/> is a
+    /// case-insensitive substring over name/path (empty = all). Read-only.
+    /// </summary>
+    public Task<RpcOutcome<ListScheduledTasksReply>> ListScheduledTasksAsync(
+        string filter = "",
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _client.ListScheduledTasksAsync(
+            new ListScheduledTasksRequest { Filter = filter ?? string.Empty },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>
+    /// Recent boot records (duration + degraded flag), newest first.
+    /// <paramref name="limit"/> of 0 uses the server default. The reply may report
+    /// <c>available = false</c> ("diagnostics-performance log unavailable") — a
+    /// plain, expected state on machines where the log is off, not an error.
+    /// </summary>
+    public Task<RpcOutcome<ListBootsReply>> ListBootsAsync(
+        uint limit = 0,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _client.ListBootsAsync(
+            new ListBootsRequest { Limit = limit },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>
+    /// The battery status. On a desktop the reply reports <c>available = false</c>
+    /// with "no battery present" — a calm, expected fact the UI states plainly, not
+    /// an error.
+    /// </summary>
+    public Task<RpcOutcome<GetBatteryStatusReply>> GetBatteryStatusAsync(
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _client.GetBatteryStatusAsync(
+            new GetBatteryStatusRequest(),
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>
+    /// Per-sensor temperatures. Many machines expose none; the reply then reports
+    /// <c>available = false</c> ("no thermal sensors exposed") — the honest state,
+    /// surfaced without implying a problem (task brief §4).
+    /// </summary>
+    public Task<RpcOutcome<GetThermalReply>> GetThermalAsync(
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _client.GetThermalAsync(
+            new GetThermalRequest(),
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    // ----------------------------------------------------------------------
     // M6: safe process actions (AtlasControl) — two-phase prepare/execute.
     // ----------------------------------------------------------------------
 

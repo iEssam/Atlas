@@ -1,0 +1,213 @@
+<Page
+    x:Class="Atlas.App.Views.SensorsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vm="using:Atlas.App.ViewModels"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <ScrollViewer>
+        <Grid Padding="24" RowSpacing="16">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <!-- Title + refresh -->
+            <Grid Grid.Row="0">
+                <StackPanel Orientation="Horizontal" Spacing="12">
+                    <TextBlock Text="Sensors" Style="{StaticResource TitleTextBlockStyle}" />
+                    <ProgressRing IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
+                                  Width="16" Height="16" VerticalAlignment="Center" />
+                    <TextBlock VerticalAlignment="Bottom"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               Text="Battery, thermal and startup history" />
+                </StackPanel>
+                <Button HorizontalAlignment="Right" Content="Refresh"
+                        AutomationProperties.Name="Refresh sensors"
+                        Click="Refresh_Click" />
+            </Grid>
+
+            <!-- Battery card -->
+            <Border Grid.Row="1"
+                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1" CornerRadius="8" Padding="20,16">
+                <StackPanel Spacing="10">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <FontIcon Glyph="&#xE83F;" FontSize="18" VerticalAlignment="Center" />
+                        <TextBlock Text="Battery" Style="{StaticResource SubtitleTextBlockStyle}" />
+                    </StackPanel>
+
+                    <!-- Unsupported (service too old) -->
+                    <TextBlock Text="{x:Bind ViewModel.BatteryNote, Mode=OneWay}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               TextWrapping="Wrap"
+                               Visibility="{x:Bind ViewModel.BatteryUnsupported, Mode=OneWay}" />
+
+                    <!-- Absent (no battery — desktop) — calm, not an error -->
+                    <StackPanel Orientation="Horizontal" Spacing="8"
+                                Visibility="{x:Bind ViewModel.BatteryAbsent, Mode=OneWay}">
+                        <FontIcon Glyph="&#xE7F4;" FontSize="14"
+                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                  VerticalAlignment="Center" />
+                        <TextBlock Text="{x:Bind ViewModel.BatteryNote, Mode=OneWay}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+
+                    <!-- Present -->
+                    <StackPanel Spacing="8"
+                                Visibility="{x:Bind ViewModel.BatteryPresent, Mode=OneWay}">
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                            <TextBlock Text="{x:Bind ViewModel.BatteryPercentText, Mode=OneWay}"
+                                       Style="{StaticResource TitleTextBlockStyle}" />
+                            <TextBlock Text="{x:Bind ViewModel.BatteryStateText, Mode=OneWay}"
+                                       VerticalAlignment="Bottom" Margin="0,0,0,4"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        </StackPanel>
+                        <ProgressBar Minimum="0" Maximum="100"
+                                     Value="{x:Bind ViewModel.BatteryPercentValue, Mode=OneWay}" />
+                        <StackPanel Orientation="Horizontal" Spacing="20" Margin="0,4,0,0">
+                            <TextBlock Text="{x:Bind ViewModel.BatteryHealthText, Mode=OneWay}"
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            <TextBlock Text="{x:Bind ViewModel.BatteryCycleText, Mode=OneWay}"
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        </StackPanel>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- Thermal card -->
+            <Border Grid.Row="2"
+                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1" CornerRadius="8" Padding="20,16">
+                <StackPanel Spacing="10">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <FontIcon Glyph="&#xE9CA;" FontSize="18" VerticalAlignment="Center" />
+                        <TextBlock Text="Thermal" Style="{StaticResource SubtitleTextBlockStyle}" />
+                    </StackPanel>
+
+                    <!-- Unsupported -->
+                    <TextBlock Text="{x:Bind ViewModel.ThermalNote, Mode=OneWay}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               TextWrapping="Wrap"
+                               Visibility="{x:Bind ViewModel.ThermalUnsupported, Mode=OneWay}" />
+
+                    <!-- Absent (no sensors exposed) — honest, no alarm -->
+                    <StackPanel Orientation="Horizontal" Spacing="8"
+                                Visibility="{x:Bind ViewModel.ThermalAbsent, Mode=OneWay}">
+                        <FontIcon Glyph="&#xE946;" FontSize="14"
+                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                  VerticalAlignment="Center" />
+                        <TextBlock Text="{x:Bind ViewModel.ThermalNote, Mode=OneWay}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+
+                    <!-- Sensor list -->
+                    <ItemsControl ItemsSource="{x:Bind ViewModel.Sensors, Mode=OneWay}"
+                                  Visibility="{x:Bind ViewModel.ThermalPresent, Mode=OneWay}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:ThermalSensorItem">
+                                <Grid ColumnSpacing="12" Padding="0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" MinWidth="90" />
+                                        <ColumnDefinition Width="1.4*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="{x:Bind Name}"
+                                               TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Grid.Column="1" Text="{x:Bind TemperatureText}"
+                                               HorizontalTextAlignment="Right" />
+                                    <TextBlock Grid.Column="2" Text="{x:Bind SourceText}"
+                                               TextTrimming="CharacterEllipsis"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- Startup history (boots) card -->
+            <Border Grid.Row="3"
+                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1" CornerRadius="8" Padding="20,16">
+                <StackPanel Spacing="10">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <FontIcon Glyph="&#xE7E8;" FontSize="18" VerticalAlignment="Center" />
+                        <TextBlock Text="Startup history" Style="{StaticResource SubtitleTextBlockStyle}" />
+                    </StackPanel>
+
+                    <!-- Unsupported / absent (same calm treatment) -->
+                    <TextBlock Text="{x:Bind ViewModel.BootsNote, Mode=OneWay}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               TextWrapping="Wrap"
+                               Visibility="{x:Bind ViewModel.BootsUnsupported, Mode=OneWay}" />
+                    <StackPanel Orientation="Horizontal" Spacing="8"
+                                Visibility="{x:Bind ViewModel.BootsAbsent, Mode=OneWay}">
+                        <FontIcon Glyph="&#xE946;" FontSize="14"
+                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                  VerticalAlignment="Center" />
+                        <TextBlock Text="{x:Bind ViewModel.BootsNote, Mode=OneWay}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+
+                    <!-- Boot list -->
+                    <StackPanel Spacing="0"
+                                Visibility="{x:Bind ViewModel.BootsPresent, Mode=OneWay}">
+                        <Grid ColumnSpacing="12" Padding="0,0,0,6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="1.6*" />
+                                <ColumnDefinition Width="Auto" MinWidth="90" />
+                                <ColumnDefinition Width="1.4*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Boot"
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            <TextBlock Grid.Column="1" Text="Duration"
+                                       HorizontalTextAlignment="Right"
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            <TextBlock Grid.Column="2" Text="Status"
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        </Grid>
+                        <ItemsControl ItemsSource="{x:Bind ViewModel.Boots, Mode=OneWay}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="vm:BootItem">
+                                    <Grid ColumnSpacing="12" Padding="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="1.6*" />
+                                            <ColumnDefinition Width="Auto" MinWidth="90" />
+                                            <ColumnDefinition Width="1.4*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{x:Bind TimeText}" />
+                                        <TextBlock Grid.Column="1" Text="{x:Bind DurationText}"
+                                                   HorizontalTextAlignment="Right" />
+                                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8"
+                                                    VerticalAlignment="Center">
+                                            <Ellipse Width="8" Height="8"
+                                                     Fill="{x:Bind DegradedToken, Converter={StaticResource MonitorTokenToBrush}}" />
+                                            <TextBlock Text="{x:Bind DegradedText}"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        </StackPanel>
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </Grid>
+    </ScrollViewer>
+</Page>

@@ -1,0 +1,217 @@
+<Page
+    x:Class="Atlas.App.Views.ScheduledTasksPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vm="using:Atlas.App.ViewModels"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <Grid Padding="24" RowSpacing="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Title -->
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="12">
+            <TextBlock Text="Scheduled Tasks" Style="{StaticResource TitleTextBlockStyle}" />
+            <TextBlock VerticalAlignment="Bottom"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Text="Windows Task Scheduler" />
+        </StackPanel>
+
+        <!-- Filter -->
+        <TextBox Grid.Row="1"
+                 AutomationProperties.Name="Filter scheduled tasks by name or path"
+                 PlaceholderText="Filter by name or path…"
+                 Text="{x:Bind ViewModel.Filter, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+
+        <!-- Status line + read-only note -->
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="12">
+            <ProgressRing IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
+                          Width="16" Height="16" />
+            <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Text="{x:Bind ViewModel.StatusText, Mode=OneWay}" />
+            <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       ToolTipService.ToolTip="Enabling, disabling and running tasks is coming soon."
+                       Text="• Read-only" />
+        </StackPanel>
+
+        <!-- Table / empty / unavailable -->
+        <Grid Grid.Row="3">
+            <!-- Unavailable placeholder -->
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
+                        Visibility="{x:Bind ViewModel.IsUnavailable, Mode=OneWay}">
+                <FontIcon Glyph="&#xE7BA;" FontSize="28"
+                          Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                          HorizontalAlignment="Center" />
+                <TextBlock Text="Scheduled tasks unavailable"
+                           Style="{StaticResource SubtitleTextBlockStyle}"
+                           HorizontalAlignment="Center" />
+                <TextBlock Text="The connected service is too old to list scheduled tasks."
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                           TextWrapping="Wrap" MaxWidth="400"
+                           HorizontalTextAlignment="Center" />
+            </StackPanel>
+
+            <!-- Empty placeholder -->
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
+                        Visibility="{x:Bind ViewModel.IsEmpty, Mode=OneWay}">
+                <FontIcon Glyph="&#xE721;" FontSize="28"
+                          Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                          HorizontalAlignment="Center" />
+                <TextBlock Text="No tasks match"
+                           Style="{StaticResource SubtitleTextBlockStyle}"
+                           HorizontalAlignment="Center" />
+            </StackPanel>
+
+            <Grid Visibility="{x:Bind ViewModel.IsUnavailable, Mode=OneWay, Converter={StaticResource InverseBoolToVisibility}}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <!-- Column header -->
+                <Grid Grid.Row="0" Padding="16,4,16,8" ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="2*" />
+                        <ColumnDefinition Width="1.6*" />
+                        <ColumnDefinition Width="Auto" MinWidth="80" />
+                        <ColumnDefinition Width="Auto" MinWidth="90" />
+                        <ColumnDefinition Width="Auto" MinWidth="110" />
+                        <ColumnDefinition Width="Auto" MinWidth="110" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="Name"
+                               Style="{StaticResource CaptionTextBlockStyle}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <TextBlock Grid.Column="1" Text="Folder"
+                               Style="{StaticResource CaptionTextBlockStyle}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <TextBlock Grid.Column="2" Text="Enabled"
+                               Style="{StaticResource CaptionTextBlockStyle}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <TextBlock Grid.Column="3" Text="Last run"
+                               Style="{StaticResource CaptionTextBlockStyle}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <TextBlock Grid.Column="4" Text="Next run"
+                               Style="{StaticResource CaptionTextBlockStyle}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <TextBlock Grid.Column="5" Text="Last result"
+                               Style="{StaticResource CaptionTextBlockStyle}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                </Grid>
+
+                <!-- Virtualized rows -->
+                <ListView Grid.Row="1"
+                          AutomationProperties.Name="Scheduled tasks table"
+                          ItemsSource="{x:Bind ViewModel.Tasks, Mode=OneWay}"
+                          SelectedItem="{x:Bind ViewModel.SelectedTask, Mode=TwoWay}"
+                          SelectionMode="Single">
+                    <ListView.ItemContainerStyle>
+                        <Style TargetType="ListViewItem">
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                            <Setter Property="Padding" Value="8,4" />
+                            <Setter Property="MinHeight" Value="0" />
+                        </Style>
+                    </ListView.ItemContainerStyle>
+                    <ListView.ItemTemplate>
+                        <DataTemplate x:DataType="vm:ScheduledTaskItem">
+                            <Grid ColumnSpacing="12" Padding="8,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="2*" />
+                                    <ColumnDefinition Width="1.6*" />
+                                    <ColumnDefinition Width="Auto" MinWidth="80" />
+                                    <ColumnDefinition Width="Auto" MinWidth="90" />
+                                    <ColumnDefinition Width="Auto" MinWidth="110" />
+                                    <ColumnDefinition Width="Auto" MinWidth="110" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" VerticalAlignment="Center"
+                                           Text="{x:Bind Name}"
+                                           TextTrimming="CharacterEllipsis" />
+                                <TextBlock Grid.Column="1" VerticalAlignment="Center"
+                                           Text="{x:Bind Folder}"
+                                           TextTrimming="CharacterEllipsis"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock Grid.Column="2" VerticalAlignment="Center"
+                                           Text="{x:Bind EnabledText}" />
+                                <TextBlock Grid.Column="3" VerticalAlignment="Center"
+                                           Text="{x:Bind LastRunText}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock Grid.Column="4" VerticalAlignment="Center"
+                                           Text="{x:Bind NextRunText}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="8"
+                                            VerticalAlignment="Center">
+                                    <Ellipse Width="8" Height="8"
+                                             Fill="{x:Bind LastResultToken, Converter={StaticResource MonitorTokenToBrush}}" />
+                                    <TextBlock Text="{x:Bind LastResultText}" />
+                                </StackPanel>
+                            </Grid>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+            </Grid>
+        </Grid>
+
+        <!-- Detail pane for the selected task -->
+        <Border Grid.Row="4"
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                BorderThickness="1" CornerRadius="8" Padding="16,12"
+                Margin="0,4,0,0"
+                Visibility="{x:Bind ViewModel.HasSelection, Mode=OneWay}">
+            <StackPanel Spacing="6">
+                <TextBlock Text="{x:Bind ViewModel.SelectedTask.Name, Mode=OneWay}"
+                           Style="{StaticResource BodyStrongTextBlockStyle}" />
+                <TextBlock Text="{x:Bind ViewModel.SelectedTask.Path, Mode=OneWay}"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                           TextWrapping="Wrap" />
+
+                <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
+                    <TextBlock Text="Action:"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <TextBlock Text="{x:Bind ViewModel.SelectedTask.ActionText, Mode=OneWay}"
+                               FontFamily="Consolas"
+                               TextWrapping="Wrap"
+                               IsTextSelectionEnabled="True" />
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <TextBlock Text="Triggers:"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <TextBlock Text="{x:Bind ViewModel.SelectedTask.TriggersText, Mode=OneWay}"
+                               TextWrapping="Wrap" />
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <TextBlock Text="Author:"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <TextBlock Text="{x:Bind ViewModel.SelectedTask.AuthorText, Mode=OneWay}" />
+                </StackPanel>
+
+                <!-- Behaviour flags -->
+                <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
+                    <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                            CornerRadius="4" Padding="8,3">
+                        <TextBlock Text="{x:Bind ViewModel.SelectedTask.RunLevelText, Mode=OneWay}"
+                                   Style="{StaticResource CaptionTextBlockStyle}" />
+                    </Border>
+                    <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                            CornerRadius="4" Padding="8,3">
+                        <TextBlock Text="{x:Bind ViewModel.SelectedTask.IdleText, Mode=OneWay}"
+                                   Style="{StaticResource CaptionTextBlockStyle}" />
+                    </Border>
+                    <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                            CornerRadius="4" Padding="8,3">
+                        <TextBlock Text="{x:Bind ViewModel.SelectedTask.WakeText, Mode=OneWay}"
+                                   Style="{StaticResource CaptionTextBlockStyle}" />
+                    </Border>
+                </StackPanel>
+            </StackPanel>
+        </Border>
+    </Grid>
+</Page>

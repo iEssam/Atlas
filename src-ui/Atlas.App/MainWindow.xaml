@@ -47,6 +47,21 @@
                     <FontIcon Glyph="&#xE9F5;" />
                 </NavigationViewItem.Icon>
             </NavigationViewItem>
+            <NavigationViewItem Content="Network" Tag="network">
+                <NavigationViewItem.Icon>
+                    <FontIcon Glyph="&#xE968;" />
+                </NavigationViewItem.Icon>
+            </NavigationViewItem>
+            <NavigationViewItem Content="Scheduled Tasks" Tag="scheduledtasks">
+                <NavigationViewItem.Icon>
+                    <FontIcon Glyph="&#xE823;" />
+                </NavigationViewItem.Icon>
+            </NavigationViewItem>
+            <NavigationViewItem Content="Sensors" Tag="sensors">
+                <NavigationViewItem.Icon>
+                    <FontIcon Glyph="&#xE9CA;" />
+                </NavigationViewItem.Icon>
+            </NavigationViewItem>
             <NavigationViewItem Content="File Lock Search" Tag="filelock">
                 <NavigationViewItem.Icon>
                     <FontIcon Glyph="&#xE8E5;" />
