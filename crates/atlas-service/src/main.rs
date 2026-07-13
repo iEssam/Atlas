@@ -13,6 +13,9 @@ mod diagnostics;
 #[cfg(windows)]
 mod ipc;
 mod report;
+mod rules;
+#[cfg(windows)]
+mod rules_service;
 mod service_ctl;
 mod soak;
 
@@ -107,6 +110,11 @@ enum Cmd {
         /// coexisting.
         #[arg(long)]
         db: Option<PathBuf>,
+        /// Stop cleanly after this many seconds (default: run until Ctrl+C). A
+        /// clean stop runs the rules engine's shutdown restore, so it is the
+        /// verification path for reversibility.
+        #[arg(long)]
+        duration: Option<u64>,
     },
     /// Connect to a running `serve` over the pipe and print a snapshot (M4).
     ///
@@ -378,6 +386,128 @@ enum Cmd {
         #[arg(long, default_value_t = soak::DEFAULT_WARMUP_SECS)]
         warmup_secs: f64,
     },
+    /// Manage performance rules (R2, PRD §9.7): add/list/enable/disable/rm/simulate.
+    ///
+    /// Rules persist in the store; a running `serve` applies enabled rules on
+    /// each ~1 s tick and reverses them when disabled/removed. `simulate` is a
+    /// pure dry-run against the current snapshot (applies nothing) and needs no
+    /// `serve`.
+    Rule {
+        #[arg(long)]
+        db: Option<PathBuf>,
+        #[command(subcommand)]
+        cmd: RuleCmd,
+    },
+    /// List the live interventions a running `serve` is currently applying (R2).
+    ///
+    /// Connects to `serve` over the pipe and calls ListInterventions — the
+    /// in-memory reversal ledger only exists inside the running service.
+    Interventions {
+        /// Pipe discriminator; must match the server's `serve --pipe`.
+        #[arg(long)]
+        pipe: Option<String>,
+    },
+    /// Manage rule profiles (R2, PRD §9.7.4): add/list/activate/deactivate.
+    ///
+    /// A profile is a named bundle of rules plus a power mode. Activating enables
+    /// its rules (and deactivates other profiles' exclusive rules); a running
+    /// `serve` applies the resulting enabled-set on its next tick.
+    Profile {
+        #[arg(long)]
+        db: Option<PathBuf>,
+        #[command(subcommand)]
+        cmd: ProfileCmd,
+    },
+    /// Print a process's current priority / affinity / EcoQoS + trigger inputs
+    /// (R2 verification helper). Reads via the collector policy FFI; unprivileged
+    /// for same-user targets, degrades on cross-user/protected ones.
+    Policy {
+        /// Target process id.
+        #[arg(long)]
+        pid: u32,
+    },
+}
+
+/// Shared rule-authoring arguments for `rule add` and `rule simulate`. All
+/// fields are optional at parse time (so `simulate --id N` needs no `--match`);
+/// `--match` is validated as required at runtime for authoring.
+#[derive(clap::Args, Clone)]
+struct RuleArgs {
+    /// Case-insensitive image name to match, e.g. `chrome.exe` (required for
+    /// `add`, and for `simulate` without `--id`).
+    #[arg(long = "match")]
+    match_image: Option<String>,
+    /// Friendly rule name (defaults to the match image).
+    #[arg(long)]
+    name: Option<String>,
+    /// Priority class: idle | below-normal | normal | above-normal | high.
+    #[arg(long)]
+    priority: Option<String>,
+    /// Affinity mode: all | prefer-p | prefer-e | custom (custom needs --mask).
+    #[arg(long)]
+    affinity: Option<String>,
+    /// Custom affinity bitmask (hex, e.g. 0xF) when --affinity custom.
+    #[arg(long)]
+    mask: Option<String>,
+    /// Enable EcoQoS (efficiency mode) on matching processes.
+    #[arg(long)]
+    eco: bool,
+    /// Trigger: while-running | ac | dc | fullscreen (default while-running).
+    #[arg(long)]
+    trigger: Option<String>,
+    /// Precedence — higher wins on conflict (default 0).
+    #[arg(long, default_value_t = 0)]
+    precedence: i32,
+}
+
+#[derive(Subcommand)]
+enum RuleCmd {
+    /// Add a rule (enabled unless --disabled).
+    Add {
+        #[command(flatten)]
+        args: RuleArgs,
+        /// Create the rule disabled.
+        #[arg(long)]
+        disabled: bool,
+    },
+    /// List all rules.
+    List,
+    /// Enable a rule by id.
+    Enable { id: i64 },
+    /// Disable a rule by id.
+    Disable { id: i64 },
+    /// Delete a rule by id.
+    Rm { id: i64 },
+    /// Dry-run a rule against the current snapshot (applies nothing). Either an
+    /// existing `--id`, or the same authoring flags as `add`.
+    Simulate {
+        /// Simulate an existing saved rule by id.
+        #[arg(long)]
+        id: Option<i64>,
+        #[command(flatten)]
+        args: Option<RuleArgs>,
+    },
+}
+
+#[derive(Subcommand)]
+enum ProfileCmd {
+    /// Add a profile bundling the given rule ids.
+    Add {
+        /// Profile name.
+        name: String,
+        /// Rule id to include (repeatable).
+        #[arg(long = "rule")]
+        rules: Vec<i64>,
+        /// Power mode: "" | PowerSaver | Balanced | HighPerformance.
+        #[arg(long, default_value = "")]
+        power_mode: String,
+    },
+    /// List all profiles.
+    List,
+    /// Activate a profile by id (enables its rules; applies its power mode).
+    Activate { id: i64 },
+    /// Deactivate a profile by id (disables its rules).
+    Deactivate { id: i64 },
 }
 
 #[derive(Subcommand)]
@@ -477,7 +607,9 @@ fn main() -> Result<()> {
             handle_limit,
         } => cmd_inspect(pid, handles, modules, threads, handle_limit),
         Cmd::Locks { path } => cmd_locks(&path),
-        Cmd::Serve { pipe, db } => cmd_serve(pipe, db.unwrap_or_else(default_db_path)),
+        Cmd::Serve { pipe, db, duration } => {
+            cmd_serve(pipe, db.unwrap_or_else(default_db_path), duration)
+        }
         Cmd::ClientSnapshot { pipe, top_n, watch } => cmd_client_snapshot(pipe, top_n, watch),
         Cmd::RingRead { pipe, limit, watch } => cmd_ring_read(pipe, limit, watch),
         Cmd::Overhead {
@@ -504,6 +636,10 @@ fn main() -> Result<()> {
             handle_threshold,
             warmup_secs,
         ),
+        Cmd::Rule { db, cmd } => cmd_rule(db.unwrap_or_else(default_db_path), cmd),
+        Cmd::Interventions { pipe } => cmd_interventions(pipe),
+        Cmd::Profile { db, cmd } => cmd_profile(db.unwrap_or_else(default_db_path), cmd),
+        Cmd::Policy { pid } => cmd_policy(pid),
         Cmd::Incidents { db, minutes, limit } => {
             cmd_incidents(db.unwrap_or_else(default_db_path), minutes, limit)
         }
@@ -1557,17 +1693,23 @@ fn ring_discriminator(pipe: Option<String>) -> String {
 
 /// `serve`: host AtlasQuery + AtlasControl over the named pipe until Ctrl+C.
 #[cfg(windows)]
-fn cmd_serve(pipe: Option<String>, db: PathBuf) -> Result<()> {
+fn cmd_serve(pipe: Option<String>, db: PathBuf, duration: Option<u64>) -> Result<()> {
     let stop = install_ctrlc();
-    serve_loop(pipe, db, stop)
+    serve_loop(pipe, db, stop, duration)
 }
 
 /// The serve core, driven by an externally owned `stop` flag so it can be hosted
 /// both by the `serve` CLI command (Ctrl+C flag) and by the Windows service body
-/// (SCM STOP/SHUTDOWN flag). Blocks until `stop` flips, then drains cleanly.
+/// (SCM STOP/SHUTDOWN flag). Blocks until `stop` flips (or `duration` elapses),
+/// then drains cleanly — a clean stop runs the rules engine's shutdown restore.
 #[cfg(windows)]
-fn serve_loop(pipe: Option<String>, db: PathBuf, stop: Arc<AtomicBool>) -> Result<()> {
-    use atlas_ipc::{AtlasControlServer, AtlasQueryServer};
+fn serve_loop(
+    pipe: Option<String>,
+    db: PathBuf,
+    stop: Arc<AtomicBool>,
+    duration: Option<u64>,
+) -> Result<()> {
+    use atlas_ipc::{AtlasControlServer, AtlasQueryServer, AtlasRulesServer};
 
     let pipe_disc = pipe.clone();
     let name = resolve_pipe_name(pipe);
@@ -1581,25 +1723,44 @@ fn serve_loop(pipe: Option<String>, db: PathBuf, stop: Arc<AtomicBool>) -> Resul
     rt.block_on(async move {
         let service = ipc::QueryService::start(&ring_disc, db)?;
         let handle = std::sync::Arc::new(service);
-        // The broker shares the query service's store handle so both the audit
-        // log and the history queries use the same connection.
+        // The broker + rules service share the query service's store handle so the
+        // audit log, history queries, and rule persistence use one connection.
         let broker = std::sync::Arc::new(broker::BrokerService::new(handle.store()));
+        let rules = std::sync::Arc::new(rules_service::RulesService::new(
+            handle.store(),
+            handle.rules_engine(),
+        ));
         let router = tonic::transport::Server::builder()
             .add_service(AtlasQueryServer::from_arc(handle.clone()))
-            .add_service(AtlasControlServer::from_arc(broker));
+            .add_service(AtlasControlServer::from_arc(broker))
+            .add_service(AtlasRulesServer::from_arc(rules));
 
-        tracing::info!(pipe = %name, "AtlasQuery + AtlasControl serving");
-        println!("Serving AtlasQuery + AtlasControl on {name}");
+        tracing::info!(pipe = %name, "AtlasQuery + AtlasControl + AtlasRules serving");
+        println!("Serving AtlasQuery + AtlasControl + AtlasRules on {name}");
 
-        // Shut down when the shared stop flag flips (Ctrl+C in the CLI path, or
-        // the SCM STOP/SHUTDOWN control in the service path). Poll at ~10 Hz.
+        // Optional self-stop after `duration` seconds (verification path): flip
+        // the shared stop flag so the shutdown future below fires cleanly.
+        if let Some(secs) = duration {
+            let stop_timer = stop.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(secs)).await;
+                tracing::info!(secs, "serve duration elapsed; stopping");
+                stop_timer.store(true, Ordering::SeqCst);
+            });
+        }
+
+        // Shut down when the shared stop flag flips (Ctrl+C in the CLI path, the
+        // SCM STOP/SHUTDOWN control, or the duration timer). Poll at ~10 Hz.
         let shutdown = async move {
             while !stop.load(Ordering::SeqCst) {
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
         };
         let result = atlas_ipc::serve(&name, router, shutdown).await;
+        // Flip the sampler stop flag and block until the sampler thread has
+        // restored every intervention before we return.
         handle.shutdown();
+        handle.join_sampler();
         result
     })?;
 
@@ -1788,7 +1949,7 @@ fn render_ring(snap: &atlas_ipc::RingSnapshot, limit: usize) {
 }
 
 #[cfg(not(windows))]
-fn cmd_serve(_pipe: Option<String>) -> Result<()> {
+fn cmd_serve(_pipe: Option<String>, _db: PathBuf, _duration: Option<u64>) -> Result<()> {
     anyhow::bail!("the `serve` command requires Windows named pipes");
 }
 
@@ -2255,8 +2416,9 @@ fn hosted_service_workload(stop: Arc<AtomicBool>) -> Result<()> {
         .name("atlas-svc-record".into())
         .spawn(move || record_loop(rec_db, 1.0, 15, None, rec_stop))?;
 
-    // Serve on this thread until `stop` flips.
-    let serve_res = serve_loop(None, db, stop.clone());
+    // Serve on this thread until `stop` flips (the SCM owns the lifetime, so no
+    // duration cap here).
+    let serve_res = serve_loop(None, db, stop.clone(), None);
 
     // Make sure the collection thread is told to stop, then join it.
     stop.store(true, Ordering::SeqCst);
@@ -3117,6 +3279,410 @@ fn cmd_action(db_path: PathBuf, pid: u32, action: &str, yes: bool) -> Result<()>
 #[cfg(not(windows))]
 fn cmd_action(_db_path: PathBuf, _pid: u32, _action: &str, _yes: bool) -> Result<()> {
     anyhow::bail!("the `action` command requires Windows process-action APIs");
+}
+
+// ---------------------------------------------------------------------------
+// R2 rules-engine dev commands (docs/phases.md R2). CRUD + simulate operate on
+// the store directly; `interventions` is a pipe client (the ledger lives inside
+// the running `serve`); `policy` reads a process's current state via the FFI.
+// ---------------------------------------------------------------------------
+
+/// Parses a priority-class name into the proto `PriorityClass` discriminant.
+#[cfg(windows)]
+fn parse_priority(s: &str) -> Result<i32> {
+    use atlas_ipc::PriorityClass as P;
+    let v = match s.to_ascii_lowercase().as_str() {
+        "idle" => P::PriorityIdle,
+        "below-normal" | "below_normal" | "belownormal" | "below" => P::PriorityBelowNormal,
+        "normal" => P::PriorityNormal,
+        "above-normal" | "above_normal" | "abovenormal" | "above" => P::PriorityAboveNormal,
+        "high" => P::PriorityHigh,
+        other => {
+            anyhow::bail!("unknown priority '{other}' (idle|below-normal|normal|above-normal|high)")
+        }
+    };
+    Ok(v as i32)
+}
+
+/// Parses a trigger name into the proto `RuleTrigger` discriminant.
+#[cfg(windows)]
+fn parse_trigger(s: &str) -> Result<i32> {
+    use atlas_ipc::RuleTrigger as T;
+    let v = match s.to_ascii_lowercase().as_str() {
+        "while-running" | "while" | "always" | "running" => T::WhileRunning,
+        "ac" | "ac-power" | "on-ac" => T::OnAcPower,
+        "dc" | "dc-power" | "on-dc" | "battery" => T::OnDcPower,
+        "fullscreen" | "foreground" => T::OnFullscreen,
+        other => {
+            anyhow::bail!("unknown trigger '{other}' (while-running|ac|dc|fullscreen)")
+        }
+    };
+    Ok(v as i32)
+}
+
+/// Parses an affinity-mode name into the proto `CoreAffinityMode` discriminant.
+#[cfg(windows)]
+fn parse_affinity(s: &str) -> Result<i32> {
+    use atlas_ipc::CoreAffinityMode as A;
+    let v = match s.to_ascii_lowercase().as_str() {
+        "all" | "all-cores" => A::AllCores,
+        "prefer-p" | "p" | "p-cores" => A::PreferPCores,
+        "prefer-e" | "e" | "e-cores" => A::PreferECores,
+        "custom" | "mask" => A::CustomMask,
+        other => {
+            anyhow::bail!("unknown affinity '{other}' (all|prefer-p|prefer-e|custom)")
+        }
+    };
+    Ok(v as i32)
+}
+
+/// Parses a hex/decimal affinity bitmask (`0xF`, `15`).
+#[cfg(windows)]
+fn parse_mask(s: &str) -> Result<u64> {
+    let t = s.trim();
+    let v = if let Some(hex) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
+        u64::from_str_radix(hex, 16)?
+    } else {
+        t.parse::<u64>()?
+    };
+    Ok(v)
+}
+
+/// Builds a store `RuleRow` from the shared authoring args.
+#[cfg(windows)]
+fn build_rule_row(args: &RuleArgs, enabled: bool) -> Result<atlas_store::RuleRow> {
+    let match_image = args.match_image.clone().unwrap_or_default();
+    if match_image.trim().is_empty() {
+        anyhow::bail!("--match is required (an empty match would sweep nothing)");
+    }
+    let priority_class = match &args.priority {
+        Some(s) => parse_priority(s)?,
+        None => 0,
+    };
+    let (affinity_mode, affinity_mask) = match &args.affinity {
+        Some(s) => {
+            let mode = parse_affinity(s)?;
+            let mask = if mode == atlas_ipc::CoreAffinityMode::CustomMask as i32 {
+                let m = args
+                    .mask
+                    .as_deref()
+                    .ok_or_else(|| anyhow::anyhow!("--affinity custom needs --mask"))?;
+                parse_mask(m)?
+            } else {
+                0
+            };
+            (mode, mask)
+        }
+        None => (0, 0),
+    };
+    let trigger = match &args.trigger {
+        Some(s) => parse_trigger(s)?,
+        None => atlas_ipc::RuleTrigger::WhileRunning as i32,
+    };
+    Ok(atlas_store::RuleRow {
+        id: 0,
+        name: args.name.clone().unwrap_or_else(|| match_image.clone()),
+        enabled,
+        match_image,
+        trigger,
+        priority_class,
+        affinity_mode,
+        affinity_mask,
+        eco_qos: args.eco,
+        precedence: args.precedence,
+        created_ms: 0,
+    })
+}
+
+/// A one-line human description of a rule row for the CLI listing.
+#[cfg(windows)]
+fn describe_rule(r: &atlas_store::RuleRow) -> String {
+    let trig = match rules::Trigger::from_disc(r.trigger) {
+        rules::Trigger::WhileRunning => "while-running",
+        rules::Trigger::OnAcPower => "on-AC",
+        rules::Trigger::OnDcPower => "on-DC",
+        rules::Trigger::OnFullscreen => "fullscreen",
+    };
+    let prio = rules::Priority::from_disc(r.priority_class).label();
+    let aff = rules::Affinity::from_row(r.affinity_mode, r.affinity_mask).label();
+    format!(
+        "match={} trigger={} priority={} affinity={} eco={} precedence={}",
+        r.match_image, trig, prio, aff, r.eco_qos, r.precedence
+    )
+}
+
+#[cfg(windows)]
+fn cmd_rule(db_path: PathBuf, cmd: RuleCmd) -> Result<()> {
+    match cmd {
+        RuleCmd::Add { args, disabled } => {
+            let store = Store::open(&db_path)?;
+            let row = build_rule_row(&args, !disabled)?;
+            let id = store.create_rule(&row)?;
+            println!(
+                "added rule #{id} ({}): {}",
+                if disabled { "disabled" } else { "enabled" },
+                describe_rule(&row)
+            );
+        }
+        RuleCmd::List => {
+            let store = Store::open(&db_path)?;
+            let rules = store.list_rules()?;
+            if rules.is_empty() {
+                println!("No rules. Add one with `rule add --match <image> --priority below-normal --eco`.");
+            } else {
+                for r in rules {
+                    println!(
+                        "#{:<4} {:<8} {}",
+                        r.id,
+                        if r.enabled { "ENABLED" } else { "disabled" },
+                        describe_rule(&r)
+                    );
+                }
+            }
+        }
+        RuleCmd::Enable { id } => {
+            let store = Store::open(&db_path)?;
+            let ok = store.set_rule_enabled(id, true)?;
+            println!(
+                "{}",
+                if ok {
+                    format!("rule #{id} enabled")
+                } else {
+                    format!("no rule #{id}")
+                }
+            );
+        }
+        RuleCmd::Disable { id } => {
+            let store = Store::open(&db_path)?;
+            let ok = store.set_rule_enabled(id, false)?;
+            println!(
+                "{}",
+                if ok {
+                    format!("rule #{id} disabled")
+                } else {
+                    format!("no rule #{id}")
+                }
+            );
+        }
+        RuleCmd::Rm { id } => {
+            let store = Store::open(&db_path)?;
+            let ok = store.delete_rule(id)?;
+            println!(
+                "{}",
+                if ok {
+                    format!("rule #{id} deleted")
+                } else {
+                    format!("no rule #{id}")
+                }
+            );
+        }
+        RuleCmd::Simulate { id, args } => cmd_rule_simulate(db_path, id, args)?,
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn cmd_rule_simulate(db_path: PathBuf, id: Option<i64>, args: Option<RuleArgs>) -> Result<()> {
+    let store: ipc::SharedStore =
+        std::sync::Arc::new(std::sync::Mutex::new(Store::open(&db_path)?));
+
+    // Resolve the rule to simulate: a saved rule by id, or one built from flags.
+    let sim_row = match (id, args) {
+        (Some(id), _) => store
+            .lock()
+            .unwrap()
+            .get_rule(id)?
+            .ok_or_else(|| anyhow::anyhow!("no rule #{id}"))?,
+        (None, Some(a)) => build_rule_row(&a, true)?,
+        (None, None) => anyhow::bail!("provide --id <n> or the authoring flags (--match ...)"),
+    };
+    let sim = rules::ResolvableRule::from_row(&sim_row);
+    let others: Vec<rules::ResolvableRule> = store
+        .lock()
+        .unwrap()
+        .list_enabled_rules()?
+        .iter()
+        .filter(|r| sim_row.id == 0 || r.id != sim_row.id)
+        .map(rules::ResolvableRule::from_row)
+        .collect();
+
+    let engine = rules::RulesEngine::new(store);
+    let result = engine.simulate(&sim, &others);
+
+    println!("=== Simulate rule: {} ===", describe_rule(&sim_row));
+    if result.targets.is_empty() {
+        println!("No live process currently matches this rule.");
+    }
+    for t in &result.targets {
+        if t.blocked {
+            println!(
+                "  pid {:<6} {:<28} BLOCKED — {}",
+                t.pid, t.image_name, t.blocked_reason
+            );
+        } else {
+            println!(
+                "  pid {:<6} {:<28} priority {} -> {} | affinity {} -> {} | eco change: {}",
+                t.pid,
+                t.image_name,
+                t.current_priority,
+                t.new_priority,
+                t.current_affinity,
+                t.new_affinity,
+                t.eco_qos_change
+            );
+        }
+    }
+    if result.conflicts.is_empty() {
+        println!("Conflicts: none");
+    } else {
+        println!("Conflicts:");
+        for c in &result.conflicts {
+            println!("  - {c}");
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn cmd_interventions(pipe: Option<String>) -> Result<()> {
+    let name = resolve_pipe_name(pipe);
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    rt.block_on(async move {
+        let channel = atlas_ipc::connect(&name)
+            .await
+            .map_err(|e| anyhow::anyhow!("connect to {name}: {e} (is `serve` running?)"))?;
+        let mut client = atlas_ipc::AtlasRulesClient::new(channel);
+        let reply = client
+            .list_interventions(atlas_ipc::ListInterventionsRequest {})
+            .await?
+            .into_inner();
+        if reply.interventions.is_empty() {
+            println!("No live interventions.");
+        } else {
+            println!("Live interventions ({}):", reply.interventions.len());
+            for i in reply.interventions {
+                println!(
+                    "  pid {:<6} {:<28} applied [{}] by rule #{} \"{}\"",
+                    i.pid, i.image_name, i.applied, i.rule_id, i.rule_name
+                );
+            }
+        }
+        Ok::<(), anyhow::Error>(())
+    })?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn cmd_profile(db_path: PathBuf, cmd: ProfileCmd) -> Result<()> {
+    match cmd {
+        ProfileCmd::Add {
+            name,
+            rules,
+            power_mode,
+        } => {
+            let mut store = Store::open(&db_path)?;
+            let id = store.create_profile(&name, &power_mode, false, &rules)?;
+            println!(
+                "added profile #{id} '{name}' (power_mode='{power_mode}', {} rule(s))",
+                rules.len()
+            );
+        }
+        ProfileCmd::List => {
+            let store = Store::open(&db_path)?;
+            let profiles = store.list_profiles()?;
+            if profiles.is_empty() {
+                println!("No profiles.");
+            } else {
+                for p in profiles {
+                    println!(
+                        "#{:<4} {:<8} '{}' power_mode='{}' rules={:?}",
+                        p.id,
+                        if p.active { "ACTIVE" } else { "inactive" },
+                        p.name,
+                        p.power_mode,
+                        p.rule_ids
+                    );
+                }
+            }
+        }
+        ProfileCmd::Activate { id } => {
+            let store = Store::open(&db_path)?;
+            match rules_service::set_profile_active_impl(&store, id, true)? {
+                Some(msg) => println!("{msg}"),
+                None => println!("no profile #{id}"),
+            }
+        }
+        ProfileCmd::Deactivate { id } => {
+            let store = Store::open(&db_path)?;
+            match rules_service::set_profile_active_impl(&store, id, false)? {
+                Some(msg) => println!("{msg}"),
+                None => println!("no profile #{id}"),
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn cmd_policy(pid: u32) -> Result<()> {
+    use atlas_collectors::{
+        eco_is_on, foreground_pid, get_affinity, get_eco_qos, get_priority_class, power_is_ac,
+        priority_class_name,
+    };
+    let prio = get_priority_class(pid)
+        .map(priority_class_name)
+        .unwrap_or("<unreadable>");
+    let aff = get_affinity(pid)
+        .map(|a| {
+            format!(
+                "process=0x{:x} system=0x{:x}",
+                a.process_mask, a.system_mask
+            )
+        })
+        .unwrap_or_else(|| "<unreadable>".to_string());
+    let eco = match get_eco_qos(pid) {
+        Some(s) => {
+            if eco_is_on(&s) {
+                "on"
+            } else {
+                "off"
+            }
+        }
+        None => "<unreadable>",
+    };
+    println!("Process {pid} policy:");
+    println!("  priority : {prio}");
+    println!("  affinity : {aff}");
+    println!("  EcoQoS   : {eco}");
+    println!(
+        "Environment: power={} foreground_pid={}",
+        match power_is_ac() {
+            Some(true) => "AC",
+            Some(false) => "battery",
+            None => "unknown",
+        },
+        foreground_pid()
+    );
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn cmd_rule(_db_path: PathBuf, _cmd: RuleCmd) -> Result<()> {
+    anyhow::bail!("the `rule` command requires Windows");
+}
+#[cfg(not(windows))]
+fn cmd_interventions(_pipe: Option<String>) -> Result<()> {
+    anyhow::bail!("the `interventions` command requires Windows");
+}
+#[cfg(not(windows))]
+fn cmd_profile(_db_path: PathBuf, _cmd: ProfileCmd) -> Result<()> {
+    anyhow::bail!("the `profile` command requires Windows");
+}
+#[cfg(not(windows))]
+fn cmd_policy(_pid: u32) -> Result<()> {
+    anyhow::bail!("the `policy` command requires Windows");
 }
 
 fn cmd_db_top(db_path: PathBuf, minutes: u64, limit: u32) -> Result<()> {

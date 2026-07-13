@@ -250,6 +250,47 @@ CREATE TABLE IF NOT EXISTS incident (
 CREATE INDEX IF NOT EXISTS ix_incident_start ON incident(start_ms);
 "#;
 
+// Additive v8 migration (docs/phases.md Phase 2 / R2): the performance rules
+// engine (PRD §9.7). `rule` is the persisted rule store — each row is a data
+// document (never code): an image-name match + a trigger + the reversible action
+// set (priority class / core affinity / EcoQoS) + a precedence for conflict
+// resolution. `profile` is a named, activatable bundle with an optional power
+// mode; `profile_rule` links profiles to the rules they toggle. All three
+// persist across restarts so rules/profiles survive a service bounce. The action
+// enums (trigger/priority_class/affinity_mode) carry the proto discriminants so
+// the store stays wire-shaped. Created IF NOT EXISTS so a v7 database upgrades in
+// place. `affinity_mask` is a u64 processor bitmask stored bit-for-bit as i64.
+const SCHEMA_V8: &str = r#"
+CREATE TABLE IF NOT EXISTS rule (
+    id             INTEGER PRIMARY KEY,
+    name           TEXT    NOT NULL,
+    enabled        INTEGER NOT NULL,
+    match_image    TEXT    NOT NULL,
+    trigger        INTEGER NOT NULL,   -- proto RuleTrigger discriminant
+    priority_class INTEGER NOT NULL,   -- proto PriorityClass discriminant
+    affinity_mode  INTEGER NOT NULL,   -- proto CoreAffinityMode discriminant
+    affinity_mask  INTEGER NOT NULL,   -- u64 processor bitmask (bit-cast to i64)
+    eco_qos        INTEGER NOT NULL,   -- 1 = enable EcoQoS
+    precedence     INTEGER NOT NULL,   -- higher wins on conflict
+    created_ms     INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_rule_enabled ON rule(enabled);
+
+CREATE TABLE IF NOT EXISTS profile (
+    id         INTEGER PRIMARY KEY,
+    name       TEXT    NOT NULL,
+    power_mode TEXT    NOT NULL,   -- "" | PowerSaver | Balanced | HighPerformance
+    active     INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS profile_rule (
+    profile_id INTEGER NOT NULL REFERENCES profile(id) ON DELETE CASCADE,
+    rule_id    INTEGER NOT NULL REFERENCES rule(id)    ON DELETE CASCADE,
+    UNIQUE(profile_id, rule_id)
+);
+CREATE INDEX IF NOT EXISTS ix_profile_rule_profile ON profile_rule(profile_id);
+"#;
+
 /// Whether `table` already has a column named `column`, via `PRAGMA table_info`.
 /// Used to make the v3 `ADD COLUMN` migration idempotent (SQLite lacks
 /// `ADD COLUMN IF NOT EXISTS`).
@@ -439,6 +480,38 @@ pub struct TopProcessRow {
     pub windows: u32,
 }
 
+/// One persisted performance rule (docs/phases.md R2, PRD §9.7). Field-for-field
+/// with the proto `Rule` + flattened `RuleAction`: the enum fields carry the
+/// proto discriminants (`RuleTrigger` / `PriorityClass` / `CoreAffinityMode`) so
+/// the store row maps straight onto the wire type. `affinity_mask` is the u64
+/// processor bitmask (only meaningful when `affinity_mode` = CUSTOM_MASK).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RuleRow {
+    pub id: i64,
+    pub name: String,
+    pub enabled: bool,
+    pub match_image: String,
+    pub trigger: i32,
+    pub priority_class: i32,
+    pub affinity_mode: i32,
+    pub affinity_mask: u64,
+    pub eco_qos: bool,
+    pub precedence: i32,
+    pub created_ms: i64,
+}
+
+/// One persisted profile: a named, activatable bundle of rule ids plus an
+/// optional power mode (PRD §9.7.4). `rule_ids` is the set of rules the profile
+/// toggles; `active` records whether it is currently applied.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProfileRow {
+    pub id: i64,
+    pub name: String,
+    pub power_mode: String,
+    pub active: bool,
+    pub rule_ids: Vec<i64>,
+}
+
 pub struct Store {
     conn: Connection,
 }
@@ -454,6 +527,9 @@ impl Store {
         // the accepted durability/write-cost point for telemetry data.
         conn.query_row("PRAGMA journal_mode=WAL", [], |r| r.get::<_, String>(0))?;
         conn.execute_batch("PRAGMA synchronous=NORMAL;")?;
+        // Enforce the profile_rule → rule/profile foreign keys so deleting a rule
+        // or profile cascades its link rows (R2 rules engine, schema v8).
+        conn.execute_batch("PRAGMA foreign_keys=ON;")?;
         conn.busy_timeout(Duration::from_secs(5))?;
         let store = Store { conn };
         store.migrate()?;
@@ -461,9 +537,9 @@ impl Store {
     }
 
     pub fn open_in_memory() -> Result<Self> {
-        let store = Store {
-            conn: Connection::open_in_memory()?,
-        };
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("PRAGMA foreign_keys=ON;")?;
+        let store = Store { conn };
         store.migrate()?;
         Ok(store)
     }
@@ -507,6 +583,10 @@ impl Store {
         if version < 7 {
             self.conn.execute_batch(SCHEMA_V7)?;
             self.conn.execute_batch("PRAGMA user_version = 7;")?;
+        }
+        if version < 8 {
+            self.conn.execute_batch(SCHEMA_V8)?;
+            self.conn.execute_batch("PRAGMA user_version = 8;")?;
         }
         // FTS5 objects are built (idempotently, IF NOT EXISTS) on every open
         // once the module is confirmed present, independent of user_version: a
@@ -1484,6 +1564,277 @@ impl Store {
             })
             .collect())
     }
+
+    // -----------------------------------------------------------------------
+    // R2 rules-engine CRUD (schema v8, PRD §9.7). Rules and profiles persist
+    // across restarts; the applier loop (in `serve`) reads enabled rules each
+    // tick, and the AtlasRules service serves the full CRUD surface.
+    // -----------------------------------------------------------------------
+
+    /// Inserts a rule (its `id` is ignored; `created_ms` is stamped now when 0)
+    /// and returns the new row id.
+    pub fn create_rule(&self, r: &RuleRow) -> Result<i64> {
+        let created = if r.created_ms == 0 {
+            now_ms()
+        } else {
+            r.created_ms
+        };
+        self.conn.execute(
+            "INSERT INTO rule
+                 (name, enabled, match_image, trigger, priority_class,
+                  affinity_mode, affinity_mask, eco_qos, precedence, created_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                r.name,
+                r.enabled as i64,
+                r.match_image,
+                r.trigger,
+                r.priority_class,
+                r.affinity_mode,
+                r.affinity_mask as i64,
+                r.eco_qos as i64,
+                r.precedence,
+                created,
+            ],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    fn map_rule(row: &rusqlite::Row) -> rusqlite::Result<RuleRow> {
+        Ok(RuleRow {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            enabled: row.get::<_, i64>(2)? != 0,
+            match_image: row.get(3)?,
+            trigger: row.get::<_, i64>(4)? as i32,
+            priority_class: row.get::<_, i64>(5)? as i32,
+            affinity_mode: row.get::<_, i64>(6)? as i32,
+            affinity_mask: row.get::<_, i64>(7)? as u64,
+            eco_qos: row.get::<_, i64>(8)? != 0,
+            precedence: row.get::<_, i64>(9)? as i32,
+            created_ms: row.get(10)?,
+        })
+    }
+
+    const RULE_COLS: &'static str =
+        "id, name, enabled, match_image, trigger, priority_class, affinity_mode, \
+         affinity_mask, eco_qos, precedence, created_ms";
+
+    /// Fetches one rule by id.
+    pub fn get_rule(&self, id: i64) -> Result<Option<RuleRow>> {
+        let sql = format!("SELECT {} FROM rule WHERE id = ?1", Self::RULE_COLS);
+        let row = self
+            .conn
+            .query_row(&sql, params![id], Self::map_rule)
+            .optional()?;
+        Ok(row)
+    }
+
+    /// Lists all rules, ordered by precedence descending then id ascending (the
+    /// order the resolver walks for a stable, documented conflict outcome).
+    pub fn list_rules(&self) -> Result<Vec<RuleRow>> {
+        let sql = format!(
+            "SELECT {} FROM rule ORDER BY precedence DESC, id ASC",
+            Self::RULE_COLS
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map([], Self::map_rule)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Lists only enabled rules (the applier's per-tick input).
+    pub fn list_enabled_rules(&self) -> Result<Vec<RuleRow>> {
+        let sql = format!(
+            "SELECT {} FROM rule WHERE enabled = 1 ORDER BY precedence DESC, id ASC",
+            Self::RULE_COLS
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map([], Self::map_rule)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Updates a rule in place (by `id`). Returns whether a row was affected.
+    pub fn update_rule(&self, r: &RuleRow) -> Result<bool> {
+        let n = self.conn.execute(
+            "UPDATE rule SET
+                 name = ?2, enabled = ?3, match_image = ?4, trigger = ?5,
+                 priority_class = ?6, affinity_mode = ?7, affinity_mask = ?8,
+                 eco_qos = ?9, precedence = ?10
+             WHERE id = ?1",
+            params![
+                r.id,
+                r.name,
+                r.enabled as i64,
+                r.match_image,
+                r.trigger,
+                r.priority_class,
+                r.affinity_mode,
+                r.affinity_mask as i64,
+                r.eco_qos as i64,
+                r.precedence,
+            ],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// Deletes a rule (its profile links cascade). Returns whether a row went.
+    pub fn delete_rule(&self, id: i64) -> Result<bool> {
+        let n = self
+            .conn
+            .execute("DELETE FROM rule WHERE id = ?1", params![id])?;
+        Ok(n > 0)
+    }
+
+    /// Toggles a rule's enabled flag. Returns whether a row was affected.
+    pub fn set_rule_enabled(&self, id: i64, enabled: bool) -> Result<bool> {
+        let n = self.conn.execute(
+            "UPDATE rule SET enabled = ?2 WHERE id = ?1",
+            params![id, enabled as i64],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// Inserts a profile plus its rule links, returning the new profile id.
+    pub fn create_profile(
+        &mut self,
+        name: &str,
+        power_mode: &str,
+        active: bool,
+        rule_ids: &[i64],
+    ) -> Result<i64> {
+        let tx = self.conn.transaction()?;
+        tx.execute(
+            "INSERT INTO profile (name, power_mode, active) VALUES (?1, ?2, ?3)",
+            params![name, power_mode, active as i64],
+        )?;
+        let id = tx.last_insert_rowid();
+        {
+            let mut link = tx.prepare(
+                "INSERT OR IGNORE INTO profile_rule (profile_id, rule_id) VALUES (?1, ?2)",
+            )?;
+            for rid in rule_ids {
+                link.execute(params![id, rid])?;
+            }
+        }
+        tx.commit()?;
+        Ok(id)
+    }
+
+    fn profile_rule_ids(&self, profile_id: i64) -> Result<Vec<i64>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT rule_id FROM profile_rule WHERE profile_id = ?1 ORDER BY rule_id")?;
+        let ids = stmt
+            .query_map(params![profile_id], |r| r.get::<_, i64>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(ids)
+    }
+
+    /// Fetches one profile (with its rule ids) by id.
+    pub fn get_profile(&self, id: i64) -> Result<Option<ProfileRow>> {
+        let base = self
+            .conn
+            .query_row(
+                "SELECT id, name, power_mode, active FROM profile WHERE id = ?1",
+                params![id],
+                |r| {
+                    Ok((
+                        r.get::<_, i64>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, i64>(3)? != 0,
+                    ))
+                },
+            )
+            .optional()?;
+        match base {
+            Some((id, name, power_mode, active)) => Ok(Some(ProfileRow {
+                id,
+                name,
+                power_mode,
+                active,
+                rule_ids: self.profile_rule_ids(id)?,
+            })),
+            None => Ok(None),
+        }
+    }
+
+    /// Lists all profiles (each with its rule ids), ordered by id.
+    pub fn list_profiles(&self) -> Result<Vec<ProfileRow>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, name, power_mode, active FROM profile ORDER BY id")?;
+        let bases = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, i64>(3)? != 0,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut out = Vec::with_capacity(bases.len());
+        for (id, name, power_mode, active) in bases {
+            out.push(ProfileRow {
+                id,
+                name,
+                power_mode,
+                active,
+                rule_ids: self.profile_rule_ids(id)?,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Updates a profile's fields and replaces its rule links. Returns whether
+    /// the profile existed.
+    pub fn update_profile(&mut self, p: &ProfileRow) -> Result<bool> {
+        let tx = self.conn.transaction()?;
+        let n = tx.execute(
+            "UPDATE profile SET name = ?2, power_mode = ?3, active = ?4 WHERE id = ?1",
+            params![p.id, p.name, p.power_mode, p.active as i64],
+        )?;
+        if n == 0 {
+            return Ok(false);
+        }
+        tx.execute(
+            "DELETE FROM profile_rule WHERE profile_id = ?1",
+            params![p.id],
+        )?;
+        {
+            let mut link = tx.prepare(
+                "INSERT OR IGNORE INTO profile_rule (profile_id, rule_id) VALUES (?1, ?2)",
+            )?;
+            for rid in &p.rule_ids {
+                link.execute(params![p.id, rid])?;
+            }
+        }
+        tx.commit()?;
+        Ok(true)
+    }
+
+    /// Deletes a profile (its links cascade). Returns whether a row went.
+    pub fn delete_profile(&self, id: i64) -> Result<bool> {
+        let n = self
+            .conn
+            .execute("DELETE FROM profile WHERE id = ?1", params![id])?;
+        Ok(n > 0)
+    }
+
+    /// Sets a profile's active flag. Returns whether a row was affected. Rule
+    /// enable/disable bundling is handled by the service, not here.
+    pub fn set_profile_active(&self, id: i64, active: bool) -> Result<bool> {
+        let n = self.conn.execute(
+            "UPDATE profile SET active = ?2 WHERE id = ?1",
+            params![id, active as i64],
+        )?;
+        Ok(n > 0)
+    }
 }
 
 /// Builds a case-insensitive substring LIKE pattern (`%needle%`) with the
@@ -1647,7 +1998,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 7, "migration walks v1 up to the current schema");
+        assert_eq!(version, 8, "migration walks v1 up to the current schema");
 
         store
             .write_self_sample(&SelfSampleRow {
@@ -1723,7 +2074,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 7, "migration walks a v2 db to the current schema");
+        assert_eq!(version, 8, "migration walks a v2 db to the current schema");
         assert!(column_exists(&store.conn, "process_instance", "exit_status").unwrap());
 
         // Pre-existing row survived and has a NULL exit_status.
@@ -1833,13 +2184,96 @@ mod tests {
     }
 
     #[test]
-    fn fresh_database_is_v7() {
+    fn fresh_database_is_v8() {
         let store = Store::open_in_memory().unwrap();
         let version: i64 = store
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, 8);
+    }
+
+    fn sample_rule(name: &str, image: &str) -> RuleRow {
+        RuleRow {
+            id: 0,
+            name: name.to_string(),
+            enabled: true,
+            match_image: image.to_string(),
+            trigger: 1,        // WHILE_RUNNING
+            priority_class: 2, // PRIORITY_BELOW_NORMAL
+            affinity_mode: 0,  // unchanged
+            affinity_mask: 0,
+            eco_qos: true,
+            precedence: 10,
+            created_ms: 0,
+        }
+    }
+
+    #[test]
+    fn rule_crud_roundtrip() {
+        let store = Store::open_in_memory().unwrap();
+        let id = store
+            .create_rule(&sample_rule("throttle chrome", "chrome.exe"))
+            .unwrap();
+        let got = store.get_rule(id).unwrap().unwrap();
+        assert_eq!(got.match_image, "chrome.exe");
+        assert!(got.enabled);
+        assert!(got.created_ms > 0, "created_ms stamped");
+
+        // Enabled list includes it; disabling removes it from the enabled list.
+        assert_eq!(store.list_enabled_rules().unwrap().len(), 1);
+        assert!(store.set_rule_enabled(id, false).unwrap());
+        assert!(store.list_enabled_rules().unwrap().is_empty());
+        assert_eq!(store.list_rules().unwrap().len(), 1, "still listed overall");
+
+        // Update mutates fields.
+        let mut upd = store.get_rule(id).unwrap().unwrap();
+        upd.precedence = 99;
+        upd.priority_class = 1; // idle
+        assert!(store.update_rule(&upd).unwrap());
+        let after = store.get_rule(id).unwrap().unwrap();
+        assert_eq!(after.precedence, 99);
+        assert_eq!(after.priority_class, 1);
+
+        // Delete removes it.
+        assert!(store.delete_rule(id).unwrap());
+        assert!(store.get_rule(id).unwrap().is_none());
+    }
+
+    #[test]
+    fn profile_crud_and_cascade() {
+        let mut store = Store::open_in_memory().unwrap();
+        let r1 = store.create_rule(&sample_rule("a", "a.exe")).unwrap();
+        let r2 = store.create_rule(&sample_rule("b", "b.exe")).unwrap();
+        let pid = store
+            .create_profile("Gaming", "HighPerformance", false, &[r1, r2])
+            .unwrap();
+
+        let p = store.get_profile(pid).unwrap().unwrap();
+        assert_eq!(p.name, "Gaming");
+        assert_eq!(p.rule_ids, vec![r1, r2]);
+        assert!(!p.active);
+
+        // Activation flag toggles.
+        assert!(store.set_profile_active(pid, true).unwrap());
+        assert!(store.get_profile(pid).unwrap().unwrap().active);
+
+        // Update replaces links.
+        let mut upd = store.get_profile(pid).unwrap().unwrap();
+        upd.rule_ids = vec![r2];
+        upd.power_mode = "Balanced".into();
+        assert!(store.update_profile(&upd).unwrap());
+        let after = store.get_profile(pid).unwrap().unwrap();
+        assert_eq!(after.rule_ids, vec![r2]);
+        assert_eq!(after.power_mode, "Balanced");
+
+        // Deleting a rule cascades its profile links (foreign_keys=ON).
+        assert!(store.delete_rule(r2).unwrap());
+        assert!(store.get_profile(pid).unwrap().unwrap().rule_ids.is_empty());
+
+        // Deleting the profile removes it.
+        assert!(store.delete_profile(pid).unwrap());
+        assert!(store.get_profile(pid).unwrap().is_none());
     }
 
     #[test]

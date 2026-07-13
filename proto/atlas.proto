@@ -668,3 +668,161 @@ service AtlasControl {
   rpc PrepareAction(PrepareActionRequest) returns (PrepareActionReply);
   rpc ExecuteAction(ExecuteActionRequest) returns (ExecuteActionReply);
 }
+
+// ---------------------------------------------------------------------------
+// R2: performance rules engine + profiles (PRD §9.7).
+// Persistent, reversible policies applied to matching processes. Enabling a
+// rule IS the consent (unlike the one-shot AtlasControl broker); every
+// application is reversible and audited, and protected-critical processes are
+// never touched. Actions are the safe, reversible subset: priority class,
+// core affinity / P-E steering, and EcoQoS efficiency mode.
+// ---------------------------------------------------------------------------
+
+enum RuleTrigger {
+  RULE_TRIGGER_UNSPECIFIED = 0;
+  // Apply to matching processes whenever they run.
+  WHILE_RUNNING = 1;
+  // ...only while on AC power.
+  ON_AC_POWER = 2;
+  // ...only while on battery.
+  ON_DC_POWER = 3;
+  // ...only while a matching process is the foreground/fullscreen app.
+  ON_FULLSCREEN = 4;
+}
+
+enum PriorityClass {
+  // Leave priority unchanged.
+  PRIORITY_CLASS_UNSPECIFIED = 0;
+  PRIORITY_IDLE = 1;
+  PRIORITY_BELOW_NORMAL = 2;
+  PRIORITY_NORMAL = 3;
+  PRIORITY_ABOVE_NORMAL = 4;
+  PRIORITY_HIGH = 5;
+  // No REALTIME — unsafe, deliberately unsupported.
+}
+
+enum CoreAffinityMode {
+  // Leave affinity unchanged.
+  CORE_AFFINITY_UNSPECIFIED = 0;
+  ALL_CORES = 1;
+  PREFER_P_CORES = 2;
+  PREFER_E_CORES = 3;
+  // Use affinity_mask verbatim.
+  CUSTOM_MASK = 4;
+}
+
+message RuleAction {
+  PriorityClass priority = 1;
+  CoreAffinityMode affinity_mode = 2;
+  // Processor affinity bitmask when affinity_mode = CUSTOM_MASK.
+  uint64 affinity_mask = 3;
+  // Enable EcoQoS (efficiency mode / ProcessPowerThrottling).
+  bool eco_qos = 4;
+}
+
+message Rule {
+  int64 id = 1;
+  string name = 2;
+  bool enabled = 3;
+  // Case-insensitive image-name match (e.g. "chrome.exe"). Empty matches none.
+  string match_image = 4;
+  RuleTrigger trigger = 5;
+  RuleAction action = 6;
+  // Higher precedence wins when rules conflict on the same process.
+  int32 precedence = 7;
+  int64 created_ms = 8;
+}
+
+message ListRulesRequest {}
+message ListRulesReply { repeated Rule rules = 1; }
+
+message GetRuleRequest { int64 id = 1; }
+message GetRuleReply { bool found = 1; Rule rule = 2; }
+
+message CreateRuleRequest { Rule rule = 1; } // id ignored
+message CreateRuleReply { int64 id = 1; }
+
+message UpdateRuleRequest { Rule rule = 1; }
+message UpdateRuleReply { bool ok = 1; string message = 2; }
+
+message DeleteRuleRequest { int64 id = 1; }
+message DeleteRuleReply { bool ok = 1; }
+
+message SetRuleEnabledRequest { int64 id = 1; bool enabled = 2; }
+message SetRuleEnabledReply { bool ok = 1; }
+
+// Dry-run preview (PRD §9.7.5) — never applies anything.
+message SimulateRuleRequest { Rule rule = 1; } // an unsaved rule is allowed
+
+message SimulatedTarget {
+  uint32 pid = 1;
+  string image_name = 2;
+  string current_priority = 3;
+  string new_priority = 4;
+  string current_affinity = 5;
+  string new_affinity = 6;
+  bool eco_qos_change = 7;
+  // Blocked because the target is protected-critical.
+  bool blocked = 8;
+  string blocked_reason = 9;
+}
+
+message SimulateRuleReply {
+  repeated SimulatedTarget targets = 1;
+  // Conflicts with other enabled rules (PRD §9.7.6).
+  repeated string conflicts = 2;
+}
+
+message Intervention {
+  int64 rule_id = 1;
+  string rule_name = 2;
+  uint32 pid = 3;
+  string image_name = 4;
+  // Human summary of what is currently applied.
+  string applied = 5;
+  int64 since_ms = 6;
+}
+
+message ListInterventionsRequest {}
+message ListInterventionsReply { repeated Intervention interventions = 1; }
+
+// Profiles (PRD §9.7.4): a named, activatable bundle of rules + a power mode.
+message Profile {
+  int64 id = 1;
+  string name = 2;
+  repeated int64 rule_ids = 3;
+  // "" / "PowerSaver" / "Balanced" / "HighPerformance".
+  string power_mode = 4;
+  bool active = 5;
+}
+
+message ListProfilesRequest {}
+message ListProfilesReply { repeated Profile profiles = 1; }
+
+message CreateProfileRequest { Profile profile = 1; }
+message CreateProfileReply { int64 id = 1; }
+
+message UpdateProfileRequest { Profile profile = 1; }
+message UpdateProfileReply { bool ok = 1; }
+
+message DeleteProfileRequest { int64 id = 1; }
+message DeleteProfileReply { bool ok = 1; }
+
+message SetProfileActiveRequest { int64 id = 1; bool active = 2; }
+message SetProfileActiveReply { bool ok = 1; string message = 2; }
+
+service AtlasRules {
+  rpc ListRules(ListRulesRequest) returns (ListRulesReply);
+  rpc GetRule(GetRuleRequest) returns (GetRuleReply);
+  rpc CreateRule(CreateRuleRequest) returns (CreateRuleReply);
+  rpc UpdateRule(UpdateRuleRequest) returns (UpdateRuleReply);
+  rpc DeleteRule(DeleteRuleRequest) returns (DeleteRuleReply);
+  rpc SetRuleEnabled(SetRuleEnabledRequest) returns (SetRuleEnabledReply);
+  rpc SimulateRule(SimulateRuleRequest) returns (SimulateRuleReply);
+  rpc ListInterventions(ListInterventionsRequest) returns (ListInterventionsReply);
+  rpc ListProfiles(ListProfilesRequest) returns (ListProfilesReply);
+  rpc CreateProfile(CreateProfileRequest) returns (CreateProfileReply);
+  rpc UpdateProfile(UpdateProfileRequest) returns (UpdateProfileReply);
+  rpc DeleteProfile(DeleteProfileRequest) returns (DeleteProfileReply);
+  rpc SetProfileActive(SetProfileActiveRequest) returns (SetProfileActiveReply);
+}
