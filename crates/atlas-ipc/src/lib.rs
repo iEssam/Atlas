@@ -39,16 +39,18 @@ pub use v0::atlas_control_server::{AtlasControl, AtlasControlServer};
 pub use v0::atlas_query_client::AtlasQueryClient;
 pub use v0::atlas_query_server::{AtlasQuery, AtlasQueryServer};
 pub use v0::{
-    ActionRisk, Bookmark, CapabilitiesReply, CapabilitiesRequest, CapabilityKind,
-    CreateBookmarkReply, CreateBookmarkRequest, EventRow, ExecuteActionReply, ExecuteActionRequest,
-    ListBookmarksReply, ListBookmarksRequest, ListEventsReply, ListEventsRequest,
-    ListPrivacyEventsReply, ListPrivacyEventsRequest, ListPrivacyUsageReply,
+    ActionRisk, Bookmark, CapabilitiesReply, CapabilitiesRequest, CapabilityKind, Confidence,
+    ContributingFactor, CreateBookmarkReply, CreateBookmarkRequest, DiagnoseReply, DiagnoseRequest,
+    Diagnosis, EventRow, EvidenceItem, ExecuteActionReply, ExecuteActionRequest,
+    GenerateReportReply, GenerateReportRequest, Incident, IncidentKind, ListBookmarksReply,
+    ListBookmarksRequest, ListEventsReply, ListEventsRequest, ListIncidentsReply,
+    ListIncidentsRequest, ListPrivacyEventsReply, ListPrivacyEventsRequest, ListPrivacyUsageReply,
     ListPrivacyUsageRequest, ListServicesReply, ListServicesRequest, ListStartupReply,
     ListStartupRequest, MetricKind, PrepareActionReply, PrepareActionRequest, PrivacyEvent,
     PrivacyUsage, ProcessActionKind, ProcessHit, ProcessRole, ProcessRow, QueryRangeReply,
-    QueryRangeRequest, RangeBucket, SearchHit, SearchReply, SearchRequest, ServiceEntry,
-    ServiceStartType, ServiceState, SnapshotReply, SnapshotRequest, StartupEntry, StartupSource,
-    SystemGauges, TimeRange,
+    QueryRangeRequest, RangeBucket, RedactionOptions, ReportFormat, SearchHit, SearchReply,
+    SearchRequest, ServiceEntry, ServiceStartType, ServiceState, Severity, SnapshotReply,
+    SnapshotRequest, StartupEntry, StartupSource, SystemGauges, TimeRange,
 };
 
 /// Capability flag advertised by [`v0::CapabilitiesReply`] when the service can
@@ -81,3 +83,16 @@ pub const CAP_STARTUP_INVENTORY: &str = "startup_inventory";
 /// M7: the service enumerates the Win32 services inventory via the SCM live from
 /// the OS (`ListServices`, PRD §9.9.1).
 pub const CAP_SERVICES_INVENTORY: &str = "services_inventory";
+
+/// M8: the service detects threshold+duration incidents (CPU saturation, memory
+/// pressure) over the recorded series and serves them (`ListIncidents`,
+/// PRD §9.3.7).
+pub const CAP_INCIDENT_DETECTION: &str = "incident_detection";
+
+/// M8: the service builds evidence-based diagnoses of incidents from recorded
+/// data — no LLM, no fabrication (`Diagnose`, PRD §9.15).
+pub const CAP_DIAGNOSTICS: &str = "diagnostics";
+
+/// M8: the service exports diagnosis reports (text/JSON/CSV/HTML) with a
+/// redaction pass (`GenerateReport`, PRD §9.18).
+pub const CAP_REPORTS: &str = "reports";

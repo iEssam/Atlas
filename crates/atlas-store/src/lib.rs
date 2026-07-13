@@ -225,6 +225,31 @@ CREATE TABLE IF NOT EXISTS privacy_event (
 CREATE INDEX IF NOT EXISTS ix_privacy_event_ts ON privacy_event(ts_ms);
 "#;
 
+// Additive v7 migration (docs/phases.md M8): detected incidents. Each row is one
+// threshold+duration incident the detectors found over the recorded series
+// (PRD §9.3.7): `kind`/`severity` carry the proto `IncidentKind`/`Severity`
+// discriminants, `start_ms`/`end_ms` bound the episode (`end_ms` NULL = still
+// ongoing at last observation), `peak_value` is the peak of the driving metric
+// (CPU percent or memory percent), and `summary` is the plain-language one-liner.
+//
+// `UNIQUE(kind, start_ms)` makes detection idempotent: re-running a detection
+// pass over an overlapping window upserts the same episode (extending its end /
+// peak) rather than spawning duplicates, since a run's start timestamp is stable.
+// Created with IF NOT EXISTS so a v6 database upgrades in place.
+const SCHEMA_V7: &str = r#"
+CREATE TABLE IF NOT EXISTS incident (
+    id         INTEGER PRIMARY KEY,
+    kind       INTEGER NOT NULL,   -- proto IncidentKind: 1=cpu, 2=memory, 3=disk
+    start_ms   INTEGER NOT NULL,
+    end_ms     INTEGER,            -- NULL = ongoing at last observation
+    severity   INTEGER NOT NULL,   -- proto Severity: 1=info, 2=warning, 3=critical
+    peak_value REAL    NOT NULL,
+    summary    TEXT    NOT NULL,
+    UNIQUE(kind, start_ms)
+);
+CREATE INDEX IF NOT EXISTS ix_incident_start ON incident(start_ms);
+"#;
+
 /// Whether `table` already has a column named `column`, via `PRAGMA table_info`.
 /// Used to make the v3 `ADD COLUMN` migration idempotent (SQLite lacks
 /// `ADD COLUMN IF NOT EXISTS`).
@@ -388,6 +413,22 @@ pub struct AuditRow {
     pub detail: String,
 }
 
+/// One detected incident (docs/phases.md M8, PRD §9.3.7). `kind` and `severity`
+/// carry the proto `IncidentKind`/`Severity` discriminants; `end_ms` is `None`
+/// while the incident is still ongoing at the last observation. `peak_value` is
+/// the peak of the driving metric over the window — CPU percent or memory
+/// percent (0..=100).
+#[derive(Debug, Clone, PartialEq)]
+pub struct IncidentRow {
+    pub id: i64,
+    pub kind: i32,
+    pub start_ms: i64,
+    pub end_ms: Option<i64>,
+    pub severity: i32,
+    pub peak_value: f64,
+    pub summary: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct TopProcessRow {
     pub pid: u32,
@@ -462,6 +503,10 @@ impl Store {
         if version < 6 {
             self.conn.execute_batch(SCHEMA_V6)?;
             self.conn.execute_batch("PRAGMA user_version = 6;")?;
+        }
+        if version < 7 {
+            self.conn.execute_batch(SCHEMA_V7)?;
+            self.conn.execute_batch("PRAGMA user_version = 7;")?;
         }
         // FTS5 objects are built (idempotently, IF NOT EXISTS) on every open
         // once the module is confirmed present, independent of user_version: a
@@ -1274,6 +1319,94 @@ impl Store {
         Ok(rows)
     }
 
+    /// Records or extends a detected incident (docs/phases.md M8). Idempotent by
+    /// `(kind, start_ms)`: a first sight inserts a new row; a re-detection of the
+    /// same episode (same kind + start) updates its `end_ms`, keeps the higher
+    /// `severity`/`peak_value`, and refreshes the `summary`. This lets the writer
+    /// re-run detection over overlapping windows (and again at shutdown) without
+    /// ever spawning duplicate incidents. Returns the incident's row id.
+    pub fn upsert_incident(
+        &self,
+        kind: i32,
+        start_ms: i64,
+        end_ms: Option<i64>,
+        severity: i32,
+        peak_value: f64,
+        summary: &str,
+    ) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO incident (kind, start_ms, end_ms, severity, peak_value, summary)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(kind, start_ms) DO UPDATE SET
+                 end_ms     = COALESCE(incident.end_ms, excluded.end_ms),
+                 severity   = MAX(incident.severity, excluded.severity),
+                 peak_value = MAX(incident.peak_value, excluded.peak_value),
+                 summary    = excluded.summary",
+            params![kind, start_ms, end_ms, severity, peak_value, summary],
+        )?;
+        let id = self.conn.query_row(
+            "SELECT id FROM incident WHERE kind = ?1 AND start_ms = ?2",
+            params![kind, start_ms],
+            |r| r.get(0),
+        )?;
+        Ok(id)
+    }
+
+    /// Lists incidents overlapping `[from_ms, to_ms]`, newest first, capped at
+    /// `limit`. An incident overlaps the window when it starts at or before `to`
+    /// and is either still ongoing (`end_ms IS NULL`) or ends at or after `from`.
+    /// Returns `(rows, truncated)` — one extra row is fetched to set `truncated`,
+    /// mirroring `list_events`.
+    pub fn list_incidents(
+        &self,
+        from_ms: i64,
+        to_ms: i64,
+        limit: u32,
+    ) -> Result<(Vec<IncidentRow>, bool)> {
+        let fetch = limit as i64 + 1;
+        let mut stmt = self.conn.prepare(
+            "SELECT id, kind, start_ms, end_ms, severity, peak_value, summary
+               FROM incident
+              WHERE start_ms <= ?2 AND (end_ms IS NULL OR end_ms >= ?1)
+              ORDER BY start_ms DESC
+              LIMIT ?3",
+        )?;
+        let rows = stmt
+            .query_map(params![from_ms, to_ms, fetch], Self::map_incident)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut out = rows;
+        let truncated = out.len() as i64 > limit as i64;
+        out.truncate(limit as usize);
+        Ok((out, truncated))
+    }
+
+    /// Fetches one incident by id (M8 `Diagnose`/`GenerateReport` resolve the
+    /// window from the incident record).
+    pub fn get_incident(&self, id: i64) -> Result<Option<IncidentRow>> {
+        let row = self
+            .conn
+            .query_row(
+                "SELECT id, kind, start_ms, end_ms, severity, peak_value, summary
+                   FROM incident WHERE id = ?1",
+                params![id],
+                Self::map_incident,
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    fn map_incident(r: &rusqlite::Row) -> rusqlite::Result<IncidentRow> {
+        Ok(IncidentRow {
+            id: r.get(0)?,
+            kind: r.get::<_, i64>(1)? as i32,
+            start_ms: r.get(2)?,
+            end_ms: r.get(3)?,
+            severity: r.get::<_, i64>(4)? as i32,
+            peak_value: r.get(5)?,
+            summary: r.get(6)?,
+        })
+    }
+
     /// Buckets a metric series over `[from_ms, to_ms]` into at most `buckets`
     /// min/max/avg/count spans (M6 `QueryRange`). Reads matching `sample_block`s,
     /// decodes them via atlas-tsdb, and folds every in-window point into its
@@ -1514,7 +1647,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 6, "migration walks v1 up to the current schema");
+        assert_eq!(version, 7, "migration walks v1 up to the current schema");
 
         store
             .write_self_sample(&SelfSampleRow {
@@ -1590,7 +1723,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 6, "migration walks a v2 db to the current schema");
+        assert_eq!(version, 7, "migration walks a v2 db to the current schema");
         assert!(column_exists(&store.conn, "process_instance", "exit_status").unwrap());
 
         // Pre-existing row survived and has a NULL exit_status.
@@ -1700,13 +1833,74 @@ mod tests {
     }
 
     #[test]
-    fn fresh_database_is_v6() {
+    fn fresh_database_is_v7() {
         let store = Store::open_in_memory().unwrap();
         let version: i64 = store
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 6);
+        assert_eq!(version, 7);
+    }
+
+    #[test]
+    fn incident_upsert_is_idempotent_and_lists_by_overlap() {
+        let store = Store::open_in_memory().unwrap();
+        // First sight of an ongoing CPU incident (end unknown).
+        let a = store
+            .upsert_incident(1, 10_000, None, 2, 88.0, "CPU high")
+            .unwrap();
+        // Re-detection of the same episode: same (kind, start) upserts in place,
+        // extends the end, keeps the higher peak/severity, refreshes summary.
+        let b = store
+            .upsert_incident(1, 10_000, Some(30_000), 3, 96.0, "CPU saturated (peak 96%)")
+            .unwrap();
+        assert_eq!(a, b, "same (kind,start) is one row");
+
+        let got = store.get_incident(a).unwrap().unwrap();
+        assert_eq!(got.end_ms, Some(30_000));
+        assert_eq!(got.severity, 3, "higher severity kept");
+        assert!((got.peak_value - 96.0).abs() < 1e-9, "higher peak kept");
+        assert_eq!(got.summary, "CPU saturated (peak 96%)");
+
+        // A downgrade attempt never lowers the recorded peak/severity.
+        store
+            .upsert_incident(1, 10_000, Some(30_000), 1, 50.0, "stale")
+            .unwrap();
+        let again = store.get_incident(a).unwrap().unwrap();
+        assert_eq!(again.severity, 3);
+        assert!((again.peak_value - 96.0).abs() < 1e-9);
+
+        // A distinct episode (different start) and a different kind are separate.
+        store
+            .upsert_incident(1, 90_000, None, 2, 87.0, "later CPU")
+            .unwrap();
+        store
+            .upsert_incident(2, 10_000, Some(20_000), 2, 91.0, "memory")
+            .unwrap();
+
+        // Overlap query: window [0, 40_000] catches the first CPU episode
+        // (10k-30k) and the memory episode (10k-20k) but not the later CPU one
+        // that starts at 90k. Newest-first ordering by start_ms.
+        let (rows, truncated) = store.list_incidents(0, 40_000, 10).unwrap();
+        assert!(!truncated);
+        assert_eq!(rows.len(), 2);
+        // The ongoing incident at 90k is excluded by start_ms <= to.
+        assert!(rows.iter().all(|r| r.start_ms <= 40_000));
+
+        // An ongoing incident (end NULL) that started before the window still
+        // shows up (it overlaps any later window).
+        let (rows2, _) = store.list_incidents(100_000, 200_000, 10).unwrap();
+        assert!(
+            rows2
+                .iter()
+                .any(|r| r.start_ms == 90_000 && r.end_ms.is_none()),
+            "ongoing incident overlaps a later window"
+        );
+
+        // Limit forces truncation.
+        let (limited, trunc) = store.list_incidents(0, 200_000, 1).unwrap();
+        assert_eq!(limited.len(), 1);
+        assert!(trunc);
     }
 
     #[test]
