@@ -56,7 +56,7 @@ Output: `installer/out/SystemAtlas-<version>-<arch>.msi` (**unsigned**).
 - **App** (§4.6): installs the self-contained WinUI `Atlas.App.exe` payload to
   the same directory (harvested with `<Files>`, see `harvest.md`) and adds an
   all-users Start Menu shortcut.
-- **Data dir** (§7, §14.4): creates `%ProgramData%\System Atlas\` with a DACL of
+- **Data dir** (§7, §14.4): creates `%ProgramData%\SystemAtlas\` with a DACL of
   SYSTEM=full, Administrators=full, Users=read/traverse. Per-user SID-keyed
   subfolders and inheritance-stripping are a documented **runtime** job for the
   service (see the ACL note in `Package.wxs`).

@@ -17,7 +17,7 @@
        "SystemAtlas" Windows service (auto-start, LocalSystem, crash-restart).
     2. Atlas.App.exe (+ its self-contained WinUI/WindowsAppSDK publish output)
        -> same directory, with an all-users Start Menu shortcut.
-    3. %ProgramData%\System Atlas\  data directory, ACL'd per tech-stack sec 7.
+    3. %ProgramData%\SystemAtlas\  data directory, ACL'd per tech-stack sec 7.
 
   Components that DO NOT EXIST YET (scaffolded as clearly-commented stubs so a
   maintainer can drop the binaries in without re-architecting the package):
@@ -100,15 +100,21 @@
       DIRECTORY LAYOUT
       ==================================================================
       %ProgramFiles%\System Atlas\        <- binaries (INSTALLFOLDER)
-      %ProgramData%\System Atlas\         <- data dir (DATAFOLDER, sec 7 ACL)
+      %ProgramData%\SystemAtlas\          <- data dir (DATAFOLDER, sec 7 ACL)
       Start Menu\Programs\System Atlas\   <- shortcut folder
     -->
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="System Atlas" />
     </StandardDirectory>
 
+    <!--
+      Data dir name has NO space: it must byte-match the path the service
+      actually writes (atlas-service default_service_db_path =
+      %ProgramData%\SystemAtlas\atlas.db), or the ACL below would protect a
+      different folder than the one the DB lives in.
+    -->
     <StandardDirectory Id="CommonAppDataFolder">
-      <Directory Id="DATAFOLDER" Name="System Atlas" />
+      <Directory Id="DATAFOLDER" Name="SystemAtlas" />
     </StandardDirectory>
 
     <StandardDirectory Id="ProgramMenuFolder">
@@ -161,7 +167,7 @@
           Start="auto"
           ErrorControl="normal"
           Account="LocalSystem"
-          Arguments="run-service"
+          Arguments="service run"
           Vital="yes">
         <!--
           Crash-restart recovery (tech-stack sec 8 "recovery/restart config",
@@ -251,7 +257,7 @@
       ==================================================================
       COMPONENT 4 - DATA DIRECTORY + ACL  (tech-stack sec 7 "Data protection")
       ==================================================================
-      Creates %ProgramData%\System Atlas\ and sets its ACL.
+      Creates %ProgramData%\SystemAtlas\ and sets its ACL.
 
       tech-stack sec 7 / sec 14.4: "database directory ACL'd to SYSTEM + the
       owning user; per-user data separation keyed by SID". Because this is a

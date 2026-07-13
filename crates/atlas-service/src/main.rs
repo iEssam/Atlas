@@ -2090,8 +2090,10 @@ fn round3(x: f64) -> f64 {
     (x * 1000.0).round() / 1000.0
 }
 
-/// The Windows service name (SCM key) and display name.
-const SERVICE_NAME: &str = "AtlasService";
+/// The Windows service name (SCM key) and display name. Must match the
+/// `ServiceInstall`/`ServiceControl` Name in installer/Package.wxs so the
+/// MSI-installed service and this CLI refer to the same service.
+const SERVICE_NAME: &str = "SystemAtlas";
 const SERVICE_DISPLAY_NAME: &str = "System Atlas Collection Service";
 
 /// Production store path for the service body: `%ProgramData%\SystemAtlas\atlas.db`
