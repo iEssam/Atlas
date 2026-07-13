@@ -82,11 +82,12 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 - [x] UI: Privacy (grouped, factual — no accusatory language), Startup (grouped by source, read-only), Services (virtualized, debounced filter, detail pane) pages; degrade gracefully until backend RPCs live
 - [ ] ConsentStore RegNotify change-watcher → recorded privacy history (table exists but stays empty until added); `NotifyServiceStatusChange` live service-state stream
 
-### M8 — Incidents, detectors, reports `[ ]`
+### M8 — Incidents, detectors, reports `[~]`
 
-- [ ] Threshold+duration incident detectors (CPU saturation, memory pressure, disk latency) (PRD §9.3.7 subset)
-- [ ] Diagnostic summary templates with confidence wording (PRD §9.15.2, no LLM required)
-- [ ] Report export: HTML/CSV with redaction pass (PRD §9.18)
+- [x] Threshold+duration detectors (`detectors.rs`, pure tested core): CPU saturation (≥85% ≥10s), memory pressure (≥90% ≥10s); data gaps never merge runs; ongoing = end 0; schema v7 `incident` table, idempotent upsert. Live-verified with a real CPU incident. Disk latency deferred — no latency metric exists yet; reserved, never faked
+- [x] Diagnostics engine (`diagnostics.rs`, evidence-only, no LLM): ranks factors by attribution share, maps to the PRD confidence ladder (insufficient/low/medium/high; crash-in-window ⇒ confirmed; temporal-overlap-only ⇒ low), emits alternatives + hedged recommendation/risk/reversibility/verification, returns available=false with a reason on thin evidence. Output explicitly labels factors "correlation, not proof" (PRD §3.2)
+- [x] Report export (`report.rs`): text/json/csv/html (self-contained, no external refs); single redactor pass before formatting so every format redacts identically (paths/command-lines/user/host). UI: Diagnostics page (calm confidence badges, first-class insufficient-evidence state) + report dialog with redaction toggles
+- [ ] Automatic incident recording windows / bookmark-on-detect and richer detectors (disk latency once a latency metric lands, GPU, thermal) — future
 
 ### M9 — Hardening & packaging `[ ]`
 
