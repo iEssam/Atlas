@@ -41,12 +41,12 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 - [x] Writer thread + bounded channel with backpressure: stalls drop the window and record a `gap_event` row (schema v2); window aggregates time-weighted for variable cadence
 - [x] **M-TSDB:** Gorilla-compressed sample blocks (delta-of-delta ts + XOR values, CRC-framed) stored as SQLite BLOBs; raw per-tick T0 resolution; measured 1.73 B/sample live → ~215 MB/day steady-state (vs ~520 interim). T1/T2 roll-up tiers + file-based chunk store remain future work (closes the gap to ~150 MB/day)
 
-### M3 — Process events & application grouping `[~]`
+### M3 — Process events & application grouping `[x]` ✅ (completed 2026-07-13)
 
 - [x] ETW session: `Microsoft-Windows-Kernel-Process` ProcessStart/ProcessStop via `ferrisetw` 1.2.0 (`ProcessEventWatcher` + `events` subcommand; elevation-aware). Live path covered by an `#[ignore]` test — needs one elevated validation run
 - [x] Image-load events (same provider, id 5, keyword 0x40) — opt-in via `WatcherOptions` / `events --images`
 - [x] Process lifecycle wired into `record`: event-driven wake (recv_timeout), `proc_event` table + `process_instance.exit_status` (schema v3), exact exit stamping by pid against live instances; clean degraded mode when not elevated. Command lines still unavailable from this provider — revisit with rundown/NT kernel logger later
-- [ ] Application identity & grouping heuristics: main/renderer/helper/service roles (PRD §9.2.1) — deferred to pair with the M5 UI, which is its first consumer
+- [x] Application identity & grouping heuristics (`atlas-collectors/grouping.rs`): pure `group_processes` — image-family + parent-chain walk assigns Main/Helper/Service roles + a per-tree group key; session-0 kept separate; surfaced on snapshot rows (ProcessRow.app_group/role). No command-line parsing (not collected)
 - [x] Overhead harness (`overhead --duration N`): runs the real record pipeline against a temp db, grades own CPU/WS against PRD budgets, reports tick timings + disk extrapolation + ETW live/degraded. Baseline 2026-07-13: 0.03% CPU avg, ~13 MB WS (PASS); disk ~520 MB/day (see M-TSDB). Becomes a CI gate at M9
 
 ### M4 — IPC contract `[x]` ✅ (completed 2026-07-13)
@@ -64,12 +64,14 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 - [x] Overview page v0 (gauge cards + top-5 consumers, measured values only)
 - [ ] NativeAOT publish profile — blocked on MVVMTK0045 (see decision note)
 
-### M6 — Timeline v0, search, safe actions `[ ]`
+### M6 — Timeline v0, search, safe actions `[~]`
 
-- [ ] Timeline view over stored samples/events (zoom, hover, missing-data rendering)
-- [ ] Global search (SQLite FTS5): name, path, PID, service (PRD §9.2.4 subset)
-- [ ] Safe end-task flow: close-normally → suspend → terminate ladder with consent tokens (PRD §9.22); broker v0 policy + audit log
-- [ ] Incident bookmarks with global hotkey (tray helper) (PRD §9.3.6)
+- [x] IPC contract extended (frozen up front, commit `4383260`): QueryRange/ListEvents/Search/bookmarks on AtlasQuery + new AtlasControl service + ProcessRow app_group/role
+- [x] History query backend: `query_range` decimates min/max/avg/count over decoded Gorilla blocks (empty buckets omitted); `list_events` over proc_event; schema v5. UI: Timeline page hand-draws a min/max band + avg line, event lane, bookmark markers; gaps render as breaks (PRD §11.3)
+- [x] Global search: FTS5 virtual tables (process image_name + pid, bookmark labels) with LIKE fallback; numeric queries also match pid; grouped results in the UI Search page
+- [x] Safe end-task flow (PRD §9.22): AtlasControl two-phase broker — PrepareAction assembles risk (critical/system/visible-windows/children/notes) + mints a single-use 30 s consent token bound to (pid, create_time, action); ExecuteAction re-checks a fresh snapshot then acts (close/suspend/resume/terminate via hand-written Win32/NT). Protected-critical list blocks lsass/csrss/services/etc. Append-only audit table. UI dialog gates Execute behind allowed+token, never defaults focus to the destructive button. Live-verified: suspend/resume/terminate on a throwaway, lsass DENIED with audit
+- [x] Incident bookmarks: `create_bookmark`/`list_bookmarks` + "Bookmark now" in the Timeline. Global hotkey (tray helper) still pending — needs the tray process (M9-adjacent)
+- [ ] Full C#↔Rust end-to-end of the new RPCs (GUI): blocked on the App Control policy launching Atlas.App.exe; backend verified via Rust dev commands, UI via fakes + Unimplemented-degradation live check
 
 ### M7 — Privacy, startup, services `[ ]`
 
@@ -116,6 +118,8 @@ Dynamic responsiveness protection · extended retention tiers + optional Parquet
 - **2026-07-13 — WinUI 3 builds under plain `dotnet` CLI**: no VS install or `dotnet workload` needed — Microsoft.WindowsAppSDK 1.6.250205002 + Microsoft.Windows.SDK.BuildTools PackageReferences with `<WindowsPackageType>None</WindowsPackageType>` (unpackaged). Do NOT add a custom `Program.cs` (the generated Main handles unpackaged bootstrap; `DisableXamlGeneratedMain` misbehaves under this SDK).
 - **2026-07-13 — NativeAOT for the UI is blocked** on CommunityToolkit.Mvvm 8.4.0: field-based `[ObservableProperty]` trips MVVMTK0045 (WinRT AOT marshalling), and the partial-property form fails codegen under this SDK (CS9248/CS8050). Suppressed via NoWarn for now; revisit with a newer toolkit before the M9 AOT/perf gates.
 - **2026-07-13 — Overhead baseline**: record pipeline 0.03% CPU avg / ~13 MB WS (both PASS); interim SQLite samples extrapolate to ~520 MB/day of disk writes vs the ~150 MB/day target — the M-TSDB Gorilla store is the planned fix and the harness now measures the before/after.
+- **2026-07-13 — Broker security model (M6, AtlasControl)**: two-phase. PrepareAction returns the risk picture + a single-use consent token (double-hash over run-nonce/counter/pid/create_time/action/now, 32-hex), 30 s expiry, held in a `Mutex<HashMap>`. ExecuteAction claims-and-marks-used under lock, checks expiry, then re-reads a fresh snapshot and refuses on pid/create_time mismatch or if the target is now critical. Protected-critical list: system, registry, smss, csrss, wininit, services, lsass, lsaiso, winlogon, fontdrvhost, dwm, svchost, spoolsv, explorer, ntoskrnl, memory compression, plus pid ≤ 4 and session-0 heuristic. Every prepare + execute audited (append-only text table). Actions via hand-written Win32/NT FFI (EnumWindows/PostMessage close, Nt{Suspend,Resume}Process, OpenProcess+TerminateProcess).
+- **2026-07-13 — ORCHESTRATION: crates/-touching agents MUST use isolated worktrees.** M6 round hit a working-tree collision: two agents ended up editing `crates/atlas-store/src/lib.rs` in the main tree simultaneously (a duplicate backend spawn). One detected the race and withdrew; the survivor reconciled the file to one coherent design and all gates passed — no committed damage (contract commit `4383260` was the floor). But the fix is structural: only ONE agent works the main tree at a time; every other agent (especially any touching `crates/`) runs in `isolation: worktree`. UI agents confined to `src-ui/` compose safely with one main-tree agent. Freeze shared contracts (`proto/`) in a maintainer commit BEFORE fanning out so no agent needs to edit them.
 - **2026-07-13 — sample_block wire format (ATB1)**: `magic "ATB1" | count u32 | start_ms i64 | end_ms i64 | bitlen u32 | bitstream | crc32`, little-endian frame; bitstream MSB-first — point 0 raw (64+64 bits); timestamps delta-of-delta with Gorilla bucket codes (`0`, `10`+7b, `110`+9b, `1110`+12b, `1111`+64b, zigzagged); values Gorilla XOR (`0` unchanged, `10` reuse window, `11`+5b leading+6b length). CRC-32 poly 0xEDB88320 hand-rolled. Duplicate timestamps kept; backwards timestamps rejected without wedging the head; corrupt blocks are typed errors, never panics.
 - **2026-07-13 — Blocks live in SQLite BLOBs, not chunk files** (maintainer decision): same compression win, SQLite keeps atomicity + retention trivial; `atlas-tsdb` stays byte-oriented (no rusqlite dep) so the tech-stack §4.2 file-based chunk store can swap in underneath the same API when tiering lands.
 - **2026-07-13 — App Control now also blocks freshly built UI exes**: this round's `Atlas.App.exe` was blocked from launching (error 4551) though the previous round's build ran. Local UI launch testing is unreliable until the policy exempts the repo's build outputs; data paths are verified via tests + the ring/DevCli harnesses instead.
