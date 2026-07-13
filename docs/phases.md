@@ -73,11 +73,14 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 - [x] Incident bookmarks: `create_bookmark`/`list_bookmarks` + "Bookmark now" in the Timeline. Global hotkey (tray helper) still pending — needs the tray process (M9-adjacent)
 - [ ] Full C#↔Rust end-to-end of the new RPCs (GUI): blocked on the App Control policy launching Atlas.App.exe; backend verified via Rust dev commands, UI via fakes + Unimplemented-degradation live check
 
-### M7 — Privacy, startup, services `[ ]`
+### M7 — Privacy, startup, services `[~]`
 
-- [ ] ConsentStore watcher: camera/mic/location events with app attribution (PRD §9.10)
-- [ ] Startup inventory: Run keys, Startup folders, StartupApproved, packaged StartupTask (PRD §9.8.1 core sources)
-- [ ] Services inventory: SCM enumeration + `NotifyServiceStatusChange` (PRD §9.9.1)
+- [x] ConsentStore reader (`atlas-collectors/privacy.rs`): camera/mic/location usage from `CapabilityAccessManager\ConsentStore` (HKLM+HKCU, packaged + NonPackaged, moniker→path unmunging); `in_use` = start set & no matching stop. Live-verified (34 rows unprivileged). `ListPrivacyUsage` RPC + `privacy` dev command
+- [x] Startup inventory (`atlas-collectors/startup.rs`): Run/RunOnce (HKLM+HKCU incl. WOW6432 views, deduped), machine+user Startup folders, StartupApproved enabled-bit. `ListStartup` RPC + `startup` dev command. Scheduled/packaged StartupTasks (Task Scheduler COM) deferred
+- [x] Services inventory (`atlas-collectors/services.rs`): SCM `EnumServicesStatusExW` + `QueryServiceConfig(2)W` → state/pid/start-type/account/binary/description/delayed-auto; per-service config failures degrade one field, never the list. `ListServices(filter)` RPC + `services` dev command
+- [x] Store schema v6: `privacy_event` history table + `ListPrivacyEvents` (startup/services are live-enumerated, not stored). Capability flags `privacy_events`/`startup_inventory`/`services_inventory` advertised
+- [x] UI: Privacy (grouped, factual — no accusatory language), Startup (grouped by source, read-only), Services (virtualized, debounced filter, detail pane) pages; degrade gracefully until backend RPCs live
+- [ ] ConsentStore RegNotify change-watcher → recorded privacy history (table exists but stays empty until added); `NotifyServiceStatusChange` live service-state stream
 
 ### M8 — Incidents, detectors, reports `[ ]`
 
