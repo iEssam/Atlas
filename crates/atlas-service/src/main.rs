@@ -200,6 +200,25 @@ enum Cmd {
         #[arg(long, default_value_t = 20)]
         limit: u32,
     },
+    /// Print the current privacy-capability usage from the ConsentStore (M7).
+    ///
+    /// Point-in-time read of camera/mic/location usage per app (PRD §9.10) —
+    /// the same data `ListPrivacyUsage` serves. Unprivileged.
+    Privacy,
+    /// Print the startup inventory grouped by source (M7).
+    ///
+    /// Run keys, Startup folders, and StartupApproved state (PRD §9.8.1) — the
+    /// same data `ListStartup` serves. Unprivileged.
+    Startup,
+    /// Print the Win32 services inventory as a table (M7).
+    ///
+    /// SCM enumeration + config (PRD §9.9.1) — the same data `ListServices`
+    /// serves. Unprivileged.
+    Services {
+        /// Case-insensitive substring over name/display_name (empty = all).
+        #[arg(long)]
+        filter: Option<String>,
+    },
     /// Measure Atlas's own collection overhead against the PRD budgets (M3).
     ///
     /// Runs the real record pipeline against a TEMP database for `--duration`
@@ -292,6 +311,9 @@ fn main() -> Result<()> {
             yes,
         } => cmd_action(db.unwrap_or_else(default_db_path), pid, &action, yes),
         Cmd::Audit { db, limit } => cmd_audit(db.unwrap_or_else(default_db_path), limit),
+        Cmd::Privacy => cmd_privacy(),
+        Cmd::Startup => cmd_startup(),
+        Cmd::Services { filter } => cmd_services(filter.unwrap_or_default()),
         Cmd::Serve { pipe, db } => cmd_serve(pipe, db.unwrap_or_else(default_db_path)),
         Cmd::ClientSnapshot { pipe, top_n, watch } => cmd_client_snapshot(pipe, top_n, watch),
         Cmd::RingRead { pipe, limit, watch } => cmd_ring_read(pipe, limit, watch),
@@ -2045,6 +2067,177 @@ fn cmd_audit(db_path: PathBuf, limit: u32) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// `privacy`: print the current ConsentStore privacy-capability usage (M7).
+/// Windows-only (registry read); a stub errors elsewhere.
+#[cfg(windows)]
+fn cmd_privacy() -> Result<()> {
+    use atlas_collectors::{enumerate_privacy_usage, Capability};
+    let usages = enumerate_privacy_usage(&[]);
+    if usages.is_empty() {
+        println!("No privacy-capability usage recorded in the ConsentStore.");
+        return Ok(());
+    }
+    fn cap_label(c: Capability) -> &'static str {
+        match c {
+            Capability::Camera => "camera",
+            Capability::Microphone => "microphone",
+            Capability::Location => "location",
+        }
+    }
+    println!("{} privacy usage row(s):", usages.len());
+    println!(
+        "{:<11} {:<6} {:<5} {:<40} {:<13} {:<13}",
+        "CAPABILITY", "PKG", "USE", "APP", "LAST START", "LAST STOP"
+    );
+    for u in &usages {
+        println!(
+            "{:<11} {:<6} {:<5} {:<40} {:<13} {:<13}",
+            cap_label(u.capability),
+            if u.packaged { "pkg" } else { "desk" },
+            if u.in_use { "yes" } else { "" },
+            truncate(&u.display_name, 40),
+            if u.last_start_ms == 0 {
+                "-".to_string()
+            } else {
+                format_ts(u.last_start_ms)
+            },
+            if u.last_stop_ms == 0 {
+                "-".to_string()
+            } else {
+                format_ts(u.last_stop_ms)
+            },
+        );
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn cmd_privacy() -> Result<()> {
+    anyhow::bail!("the `privacy` command requires Windows (ConsentStore registry)");
+}
+
+/// `startup`: print the startup inventory grouped by source (M7). Windows-only.
+#[cfg(windows)]
+fn cmd_startup() -> Result<()> {
+    use atlas_collectors::{enumerate_startup, CollectorStartupSource};
+    let entries = enumerate_startup();
+    if entries.is_empty() {
+        println!("No startup entries found.");
+        return Ok(());
+    }
+    fn source_label(s: CollectorStartupSource) -> &'static str {
+        match s {
+            CollectorStartupSource::RunKeyMachine => "Run key (machine)",
+            CollectorStartupSource::RunKeyUser => "Run key (user)",
+            CollectorStartupSource::StartupFolderMachine => "Startup folder (machine)",
+            CollectorStartupSource::StartupFolderUser => "Startup folder (user)",
+            CollectorStartupSource::ScheduledTask => "Scheduled task",
+            CollectorStartupSource::Service => "Service",
+            CollectorStartupSource::PackagedTask => "Packaged task",
+        }
+    }
+    // Group by source in the enum's declared order.
+    let order = [
+        CollectorStartupSource::RunKeyMachine,
+        CollectorStartupSource::RunKeyUser,
+        CollectorStartupSource::StartupFolderMachine,
+        CollectorStartupSource::StartupFolderUser,
+    ];
+    println!("{} startup entry/entries:", entries.len());
+    for src in order {
+        let group: Vec<_> = entries.iter().filter(|e| e.source == src).collect();
+        if group.is_empty() {
+            continue;
+        }
+        println!("\n== {} ({}) ==", source_label(src), group.len());
+        for e in group {
+            println!(
+                "  [{}] {:<28} {}",
+                if e.enabled { "on " } else { "off" },
+                truncate(&e.name, 28),
+                truncate(&e.command, 80)
+            );
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn cmd_startup() -> Result<()> {
+    anyhow::bail!("the `startup` command requires Windows (registry/Startup folders)");
+}
+
+/// `services`: print the Win32 services inventory as a table (M7). Windows-only.
+#[cfg(windows)]
+fn cmd_services(filter: String) -> Result<()> {
+    use atlas_collectors::{enumerate_services, CollectorServiceState, ServiceStartType};
+    let services = enumerate_services(&filter);
+    if services.is_empty() {
+        if filter.is_empty() {
+            println!("No services enumerated (unexpected — is the SCM reachable?).");
+        } else {
+            println!("No services match filter '{filter}'.");
+        }
+        return Ok(());
+    }
+    fn state_label(s: CollectorServiceState) -> &'static str {
+        match s {
+            CollectorServiceState::Stopped => "stopped",
+            CollectorServiceState::StartPending => "start-pend",
+            CollectorServiceState::StopPending => "stop-pend",
+            CollectorServiceState::Running => "running",
+            CollectorServiceState::ContinuePending => "cont-pend",
+            CollectorServiceState::PausePending => "pause-pend",
+            CollectorServiceState::Paused => "paused",
+            CollectorServiceState::Unspecified => "?",
+        }
+    }
+    fn start_label(s: ServiceStartType) -> &'static str {
+        match s {
+            ServiceStartType::Boot => "boot",
+            ServiceStartType::System => "system",
+            ServiceStartType::Auto => "auto",
+            ServiceStartType::Manual => "manual",
+            ServiceStartType::Disabled => "disabled",
+            ServiceStartType::Unspecified => "?",
+        }
+    }
+    println!(
+        "{} service(s){}:",
+        services.len(),
+        if filter.is_empty() {
+            String::new()
+        } else {
+            format!(" matching '{filter}'")
+        }
+    );
+    println!(
+        "{:<28} {:<11} {:<9} {:>7} {:<6} DISPLAY",
+        "NAME", "STATE", "START", "PID", "DELAY"
+    );
+    for s in &services {
+        println!(
+            "{:<28} {:<11} {:<9} {:>7} {:<6} {}",
+            truncate(&s.name, 28),
+            state_label(s.state),
+            start_label(s.start_type),
+            if s.pid == 0 {
+                "-".to_string()
+            } else {
+                s.pid.to_string()
+            },
+            if s.delayed_auto_start { "yes" } else { "" },
+            truncate(&s.display_name, 40),
+        );
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn cmd_services(_filter: String) -> Result<()> {
+    anyhow::bail!("the `services` command requires Windows (Service Control Manager)");
 }
 
 /// `action`: prepare (and optionally execute) a safe process action against the

@@ -139,6 +139,45 @@ impl AtlasQuery for FakeQuery {
             bookmarks: vec![],
         }))
     }
+
+    // The M7 privacy/startup/services RPCs are not exercised by this transport
+    // test; return empty replies so the fake satisfies the (frozen) trait.
+    async fn list_privacy_usage(
+        &self,
+        _req: Request<atlas_ipc::ListPrivacyUsageRequest>,
+    ) -> Result<Response<atlas_ipc::ListPrivacyUsageReply>, Status> {
+        Ok(Response::new(atlas_ipc::ListPrivacyUsageReply {
+            usages: vec![],
+        }))
+    }
+
+    async fn list_privacy_events(
+        &self,
+        _req: Request<atlas_ipc::ListPrivacyEventsRequest>,
+    ) -> Result<Response<atlas_ipc::ListPrivacyEventsReply>, Status> {
+        Ok(Response::new(atlas_ipc::ListPrivacyEventsReply {
+            events: vec![],
+            truncated: false,
+        }))
+    }
+
+    async fn list_startup(
+        &self,
+        _req: Request<atlas_ipc::ListStartupRequest>,
+    ) -> Result<Response<atlas_ipc::ListStartupReply>, Status> {
+        Ok(Response::new(atlas_ipc::ListStartupReply {
+            entries: vec![],
+        }))
+    }
+
+    async fn list_services(
+        &self,
+        _req: Request<atlas_ipc::ListServicesRequest>,
+    ) -> Result<Response<atlas_ipc::ListServicesReply>, Status> {
+        Ok(Response::new(atlas_ipc::ListServicesReply {
+            services: vec![],
+        }))
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

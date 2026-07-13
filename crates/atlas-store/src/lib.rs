@@ -207,6 +207,24 @@ CREATE TRIGGER IF NOT EXISTS bookmark_fts_ad AFTER DELETE ON bookmark BEGIN
 END;
 "#;
 
+// Additive v6 migration (docs/phases.md M7): privacy-capability usage history.
+// `privacy_event` is the append-only log of camera/mic/location start/stop
+// transitions the ConsentStore watcher records (PRD §9.10). Startup and services
+// inventories are enumerated LIVE from the OS on each request (they are current-
+// state, not history) and therefore get no tables here — only privacy has a
+// meaningful event timeline. Created with IF NOT EXISTS so a v5 database upgrades
+// in place.
+const SCHEMA_V6: &str = r#"
+CREATE TABLE IF NOT EXISTS privacy_event (
+    ts_ms        INTEGER NOT NULL,
+    capability   INTEGER NOT NULL,   -- 1=camera, 2=microphone, 3=location
+    app_id       TEXT    NOT NULL,
+    display_name TEXT    NOT NULL,
+    started      INTEGER NOT NULL    -- 1=start, 0=stop
+);
+CREATE INDEX IF NOT EXISTS ix_privacy_event_ts ON privacy_event(ts_ms);
+"#;
+
 /// Whether `table` already has a column named `column`, via `PRAGMA table_info`.
 /// Used to make the v3 `ADD COLUMN` migration idempotent (SQLite lacks
 /// `ADD COLUMN IF NOT EXISTS`).
@@ -264,6 +282,18 @@ pub struct ProcEventRow {
 /// `proc_event.kind` discriminants.
 pub const PROC_EVENT_START: u8 = 0;
 pub const PROC_EVENT_STOP: u8 = 1;
+
+/// One recorded privacy-capability usage transition (docs/phases.md M7,
+/// PRD §9.10). `capability` is 1=camera, 2=microphone, 3=location (matching the
+/// proto `CapabilityKind`); `started` is true for a start, false for a stop.
+#[derive(Debug, Clone)]
+pub struct PrivacyEventRow {
+    pub ts_ms: i64,
+    pub capability: i32,
+    pub app_id: String,
+    pub display_name: String,
+    pub started: bool,
+}
 
 /// One stored sample block returned from a range query, with its decoded
 /// points. The store validates and decodes the payload via `atlas-tsdb`, so
@@ -428,6 +458,10 @@ impl Store {
         if version < 5 {
             self.conn.execute_batch(SCHEMA_V5)?;
             self.conn.execute_batch("PRAGMA user_version = 5;")?;
+        }
+        if version < 6 {
+            self.conn.execute_batch(SCHEMA_V6)?;
+            self.conn.execute_batch("PRAGMA user_version = 6;")?;
         }
         // FTS5 objects are built (idempotently, IF NOT EXISTS) on every open
         // once the module is confirmed present, independent of user_version: a
@@ -921,6 +955,60 @@ impl Store {
                 image_name: r.get::<_, Option<String>>(5)?.unwrap_or_default(),
                 exit_status: exit.unwrap_or(0) as i32,
                 has_exit_status: exit.is_some(),
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        let truncated = out.len() as i64 > limit as i64;
+        out.truncate(limit as usize);
+        Ok((out, truncated))
+    }
+
+    /// Records one privacy-capability usage transition (docs/phases.md M7). The
+    /// ConsentStore watcher calls this when it observes an app start or stop
+    /// using camera/mic/location; `ListPrivacyEvents` reads them back.
+    pub fn record_privacy_event(&self, ev: &PrivacyEventRow) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO privacy_event (ts_ms, capability, app_id, display_name, started)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                ev.ts_ms,
+                ev.capability,
+                ev.app_id,
+                ev.display_name,
+                if ev.started { 1 } else { 0 },
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Lists recorded privacy-capability transitions in `[from_ms, to_ms]`, most
+    /// recent first, capped at `limit`. Returns `(rows, truncated)` where
+    /// `truncated` is true when more rows matched than the limit (one extra row
+    /// is fetched to detect this, mirroring `list_events`).
+    pub fn list_privacy_events(
+        &self,
+        from_ms: i64,
+        to_ms: i64,
+        limit: u32,
+    ) -> Result<(Vec<PrivacyEventRow>, bool)> {
+        let fetch = limit as i64 + 1;
+        let mut stmt = self.conn.prepare(
+            "SELECT ts_ms, capability, app_id, display_name, started
+               FROM privacy_event
+              WHERE ts_ms >= ?1 AND ts_ms <= ?2
+              ORDER BY ts_ms DESC
+              LIMIT ?3",
+        )?;
+        let rows = stmt.query_map(params![from_ms, to_ms, fetch], |r| {
+            Ok(PrivacyEventRow {
+                ts_ms: r.get(0)?,
+                capability: r.get::<_, i64>(1)? as i32,
+                app_id: r.get(2)?,
+                display_name: r.get(3)?,
+                started: r.get::<_, i64>(4)? != 0,
             })
         })?;
         let mut out = Vec::new();
@@ -1426,7 +1514,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 5, "migration walks v1 up to the current schema");
+        assert_eq!(version, 6, "migration walks v1 up to the current schema");
 
         store
             .write_self_sample(&SelfSampleRow {
@@ -1502,7 +1590,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 5, "migration walks a v2 db to the current schema");
+        assert_eq!(version, 6, "migration walks a v2 db to the current schema");
         assert!(column_exists(&store.conn, "process_instance", "exit_status").unwrap());
 
         // Pre-existing row survived and has a NULL exit_status.
@@ -1612,13 +1700,13 @@ mod tests {
     }
 
     #[test]
-    fn fresh_database_is_v5() {
+    fn fresh_database_is_v6() {
         let store = Store::open_in_memory().unwrap();
         let version: i64 = store
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 5);
+        assert_eq!(version, 6);
     }
 
     #[test]
@@ -1835,5 +1923,55 @@ mod tests {
             hits.processes.iter().any(|p| p.image_name == "chrome.exe"),
             "prefix match found chrome.exe"
         );
+    }
+
+    #[test]
+    fn privacy_event_round_trip_and_range() {
+        let store = Store::open_in_memory().unwrap();
+        // Three events: a start, its stop, and one outside the query window.
+        store
+            .record_privacy_event(&PrivacyEventRow {
+                ts_ms: 1_000,
+                capability: 1, // camera
+                app_id: "app.a".into(),
+                display_name: "App A".into(),
+                started: true,
+            })
+            .unwrap();
+        store
+            .record_privacy_event(&PrivacyEventRow {
+                ts_ms: 2_000,
+                capability: 1,
+                app_id: "app.a".into(),
+                display_name: "App A".into(),
+                started: false,
+            })
+            .unwrap();
+        store
+            .record_privacy_event(&PrivacyEventRow {
+                ts_ms: 9_999,
+                capability: 2, // microphone, outside window
+                app_id: "app.b".into(),
+                display_name: "App B".into(),
+                started: true,
+            })
+            .unwrap();
+
+        // Window [0, 5000] captures the first two, newest-first.
+        let (rows, truncated) = store.list_privacy_events(0, 5_000, 10).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(!truncated);
+        assert_eq!(rows[0].ts_ms, 2_000);
+        assert!(!rows[0].started);
+        assert_eq!(rows[1].ts_ms, 1_000);
+        assert!(rows[1].started);
+
+        // Limit smaller than the matches flags truncation.
+        let (rows, truncated) = store.list_privacy_events(0, 10_000, 1).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(truncated);
+        // Newest overall is the mic event at 9_999.
+        assert_eq!(rows[0].ts_ms, 9_999);
+        assert_eq!(rows[0].capability, 2);
     }
 }

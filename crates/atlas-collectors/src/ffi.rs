@@ -6,7 +6,7 @@
 //! tests in `snapshot.rs`. Migration to `windows-sys` is planned once the
 //! collector set grows (docs/phases.md, M3).
 
-#![allow(non_snake_case, clippy::upper_case_acronyms)]
+#![allow(non_snake_case, non_camel_case_types, clippy::upper_case_acronyms)]
 
 use std::ffi::c_void;
 
@@ -184,4 +184,251 @@ extern "system" {
     pub fn NtSuspendProcess(ProcessHandle: HANDLE) -> NTSTATUS;
     /// Resumes every thread of `ProcessHandle`. Requires PROCESS_SUSPEND_RESUME.
     pub fn NtResumeProcess(ProcessHandle: HANDLE) -> NTSTATUS;
+}
+
+// ---------------------------------------------------------------------------
+// Registry FFI (docs/phases.md M7). Backs the privacy (ConsentStore) and
+// startup (Run keys / StartupApproved) collectors. Hand-written advapi32 in the
+// same style as the collectors above — a handful of stable-ABI calls, no
+// `windows-sys` dependency. Reads only: no key is ever opened for write.
+// ---------------------------------------------------------------------------
+
+/// Registry key handle (`HKEY`). Predefined roots are constant pseudo-handles.
+pub type HKEY = *mut c_void;
+/// `LSTATUS` — registry API return code (ERROR_SUCCESS == 0 on success).
+pub type LSTATUS = i32;
+
+pub const ERROR_SUCCESS: LSTATUS = 0;
+pub const ERROR_NO_MORE_ITEMS: LSTATUS = 259;
+pub const ERROR_MORE_DATA: LSTATUS = 234;
+
+/// Predefined registry roots (pseudo-handles; never closed).
+pub const HKEY_CLASSES_ROOT: HKEY = 0x8000_0000_u32 as usize as HKEY;
+pub const HKEY_CURRENT_USER: HKEY = 0x8000_0001_u32 as usize as HKEY;
+pub const HKEY_LOCAL_MACHINE: HKEY = 0x8000_0002_u32 as usize as HKEY;
+
+/// `RegOpenKeyExW` desired-access rights.
+pub const KEY_READ: DWORD = 0x2_0019;
+/// Force the 64-bit view of the registry (ignore WOW6432 redirection).
+pub const KEY_WOW64_64KEY: DWORD = 0x0100;
+/// Force the 32-bit (WOW6432Node) view of the registry.
+pub const KEY_WOW64_32KEY: DWORD = 0x0200;
+
+/// Registry value types we care about.
+pub const REG_SZ: DWORD = 1;
+pub const REG_EXPAND_SZ: DWORD = 2;
+pub const REG_BINARY: DWORD = 3;
+pub const REG_DWORD: DWORD = 4;
+pub const REG_QWORD: DWORD = 11;
+
+#[link(name = "advapi32")]
+extern "system" {
+    /// Opens `lpSubKey` under `hKey` with `samDesired` access. On success writes
+    /// the opened handle to `*phkResult`; caller closes it with `RegCloseKey`.
+    pub fn RegOpenKeyExW(
+        hKey: HKEY,
+        lpSubKey: *const u16,
+        ulOptions: DWORD,
+        samDesired: DWORD,
+        phkResult: *mut HKEY,
+    ) -> LSTATUS;
+
+    /// Enumerates the `dwIndex`-th subkey of `hKey`. `lpName`/`lpcchName` receive
+    /// the subkey name (in UTF-16 units, excluding the NUL). Returns
+    /// ERROR_NO_MORE_ITEMS when the index is past the last subkey.
+    pub fn RegEnumKeyExW(
+        hKey: HKEY,
+        dwIndex: DWORD,
+        lpName: *mut u16,
+        lpcchName: *mut DWORD,
+        lpReserved: *mut DWORD,
+        lpClass: *mut u16,
+        lpcchClass: *mut DWORD,
+        lpftLastWriteTime: *mut FILETIME,
+    ) -> LSTATUS;
+
+    /// Enumerates the `dwIndex`-th value of `hKey`: name into `lpValueName`,
+    /// type into `lpType`, raw bytes into `lpData` (with `lpcbData` the byte
+    /// length in/out). Returns ERROR_NO_MORE_ITEMS past the last value.
+    pub fn RegEnumValueW(
+        hKey: HKEY,
+        dwIndex: DWORD,
+        lpValueName: *mut u16,
+        lpcchValueName: *mut DWORD,
+        lpReserved: *mut DWORD,
+        lpType: *mut DWORD,
+        lpData: *mut u8,
+        lpcbData: *mut DWORD,
+    ) -> LSTATUS;
+
+    /// Reads the named value under `hKey`: type into `lpType`, raw bytes into
+    /// `lpData` (`lpcbData` byte length in/out). Passing a NULL `lpData` returns
+    /// the required size in `*lpcbData`.
+    pub fn RegQueryValueExW(
+        hKey: HKEY,
+        lpValueName: *const u16,
+        lpReserved: *mut DWORD,
+        lpType: *mut DWORD,
+        lpData: *mut u8,
+        lpcbData: *mut DWORD,
+    ) -> LSTATUS;
+
+    /// Closes a key handle opened by `RegOpenKeyExW`.
+    pub fn RegCloseKey(hKey: HKEY) -> LSTATUS;
+}
+
+// ---------------------------------------------------------------------------
+// Service Control Manager FFI (docs/phases.md M7). Backs the services inventory.
+// Enumeration + config queries only — all satisfied by SC_MANAGER_ENUMERATE_-
+// SERVICE / GENERIC_READ, no elevation. Hand-written advapi32 in the collector
+// style. Structs are `#[repr(C)]`; the enum-status buffer is walked as a slice
+// of `ENUM_SERVICE_STATUS_PROCESSW` and the config blobs cast from a byte buffer.
+// ---------------------------------------------------------------------------
+
+/// `SC_HANDLE` — an open SCM or service handle.
+pub type SC_HANDLE = *mut c_void;
+
+/// `OpenSCManagerW` access: enumerate + query the active database (read-only).
+pub const SC_MANAGER_ENUMERATE_SERVICE: DWORD = 0x0004;
+pub const SC_MANAGER_CONNECT: DWORD = 0x0001;
+/// `OpenServiceW` access: query config + status (read-only).
+pub const SERVICE_QUERY_CONFIG: DWORD = 0x0001;
+pub const SERVICE_QUERY_STATUS: DWORD = 0x0004;
+
+/// `EnumServicesStatusExW` service-type mask: all Win32 services (own + shared
+/// process). Drivers are excluded — the inventory is Win32 services (PRD §9.9.1).
+pub const SERVICE_WIN32: DWORD = 0x0000_0030;
+/// `EnumServicesStatusExW` state mask: every state (active + inactive).
+pub const SERVICE_STATE_ALL: DWORD = 0x0000_0003;
+/// `EnumServicesStatusExW` info level: SC_ENUM_PROCESS_INFO.
+pub const SC_ENUM_PROCESS_INFO: DWORD = 0;
+
+/// `QueryServiceConfig2W` info levels.
+pub const SERVICE_CONFIG_DESCRIPTION: DWORD = 1;
+pub const SERVICE_CONFIG_DELAYED_AUTO_START_INFO: DWORD = 3;
+
+/// `SERVICE_STATUS_PROCESS.dwCurrentState` values (map to proto `ServiceState`).
+pub const SERVICE_STOPPED: DWORD = 1;
+pub const SERVICE_START_PENDING: DWORD = 2;
+pub const SERVICE_STOP_PENDING: DWORD = 3;
+pub const SERVICE_RUNNING: DWORD = 4;
+pub const SERVICE_CONTINUE_PENDING: DWORD = 5;
+pub const SERVICE_PAUSE_PENDING: DWORD = 6;
+pub const SERVICE_PAUSED: DWORD = 7;
+
+/// `QUERY_SERVICE_CONFIGW.dwStartType` values (map to proto `ServiceStartType`).
+pub const SERVICE_BOOT_START: DWORD = 0;
+pub const SERVICE_SYSTEM_START: DWORD = 1;
+pub const SERVICE_AUTO_START: DWORD = 2;
+pub const SERVICE_DEMAND_START: DWORD = 3;
+pub const SERVICE_DISABLED: DWORD = 4;
+
+/// `SERVICE_STATUS_PROCESS` — the process-aware status returned by
+/// `EnumServicesStatusExW` (carries the pid, unlike plain `SERVICE_STATUS`).
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct SERVICE_STATUS_PROCESS {
+    pub dwServiceType: DWORD,
+    pub dwCurrentState: DWORD,
+    pub dwControlsAccepted: DWORD,
+    pub dwWin32ExitCode: DWORD,
+    pub dwServiceSpecificExitCode: DWORD,
+    pub dwCheckPoint: DWORD,
+    pub dwWaitHint: DWORD,
+    pub dwProcessId: DWORD,
+    pub dwServiceFlags: DWORD,
+}
+
+/// `ENUM_SERVICE_STATUS_PROCESSW` — one entry in the `EnumServicesStatusExW`
+/// output buffer. The two name pointers point back into the same buffer.
+#[repr(C)]
+pub struct ENUM_SERVICE_STATUS_PROCESSW {
+    pub lpServiceName: *mut u16,
+    pub lpDisplayName: *mut u16,
+    pub ServiceStatusProcess: SERVICE_STATUS_PROCESS,
+}
+
+/// `QUERY_SERVICE_CONFIGW` — variable-length config blob; the string pointers
+/// point into the tail of the same buffer `QueryServiceConfigW` filled.
+#[repr(C)]
+pub struct QUERY_SERVICE_CONFIGW {
+    pub dwServiceType: DWORD,
+    pub dwStartType: DWORD,
+    pub dwErrorControl: DWORD,
+    pub lpBinaryPathName: *mut u16,
+    pub lpLoadOrderGroup: *mut u16,
+    pub dwTagId: DWORD,
+    pub lpDependencies: *mut u16,
+    pub lpServiceStartName: *mut u16,
+    pub lpDisplayName: *mut u16,
+}
+
+/// `SERVICE_DESCRIPTIONW` — the description blob from `QueryServiceConfig2W`.
+#[repr(C)]
+pub struct SERVICE_DESCRIPTIONW {
+    pub lpDescription: *mut u16,
+}
+
+/// `SERVICE_DELAYED_AUTO_START_INFO` — the delayed-auto-start flag from
+/// `QueryServiceConfig2W`.
+#[repr(C)]
+pub struct SERVICE_DELAYED_AUTO_START_INFO {
+    pub fDelayedAutostart: BOOL,
+}
+
+#[link(name = "advapi32")]
+extern "system" {
+    /// Opens the service control manager on `lpMachineName` (NULL = local) /
+    /// `lpDatabaseName` (NULL = active). Read enumeration needs only
+    /// SC_MANAGER_ENUMERATE_SERVICE | SC_MANAGER_CONNECT — no elevation.
+    pub fn OpenSCManagerW(
+        lpMachineName: *const u16,
+        lpDatabaseName: *const u16,
+        dwDesiredAccess: DWORD,
+    ) -> SC_HANDLE;
+
+    /// Opens a service by name for `dwDesiredAccess` (query rights here).
+    pub fn OpenServiceW(
+        hSCManager: SC_HANDLE,
+        lpServiceName: *const u16,
+        dwDesiredAccess: DWORD,
+    ) -> SC_HANDLE;
+
+    /// Enumerates services of `dwServiceType`/`dwServiceState`. On the first
+    /// call with a too-small buffer it sets `*pcbBytesNeeded` and fails with
+    /// ERROR_MORE_DATA; the caller re-allocates and retries.
+    pub fn EnumServicesStatusExW(
+        hSCManager: SC_HANDLE,
+        InfoLevel: DWORD,
+        dwServiceType: DWORD,
+        dwServiceState: DWORD,
+        lpServices: *mut u8,
+        cbBufSize: DWORD,
+        pcbBytesNeeded: *mut DWORD,
+        lpServicesReturned: *mut DWORD,
+        lpResumeHandle: *mut DWORD,
+        pszGroupName: *const u16,
+    ) -> BOOL;
+
+    /// Queries a service's static config (start type, binary path, account,
+    /// display name). Two-call size pattern like the enum above.
+    pub fn QueryServiceConfigW(
+        hService: SC_HANDLE,
+        lpServiceConfig: *mut u8,
+        cbBufSize: DWORD,
+        pcbBytesNeeded: *mut DWORD,
+    ) -> BOOL;
+
+    /// Queries an extended config attribute (`dwInfoLevel`): description or the
+    /// delayed-auto-start flag. Two-call size pattern.
+    pub fn QueryServiceConfig2W(
+        hService: SC_HANDLE,
+        dwInfoLevel: DWORD,
+        lpBuffer: *mut u8,
+        cbBufSize: DWORD,
+        pcbBytesNeeded: *mut DWORD,
+    ) -> BOOL;
+
+    /// Closes an SCM or service handle.
+    pub fn CloseServiceHandle(hSCObject: SC_HANDLE) -> BOOL;
 }
