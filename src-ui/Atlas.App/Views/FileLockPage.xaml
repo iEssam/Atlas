@@ -1,0 +1,170 @@
+<Page
+    x:Class="Atlas.App.Views.FileLockPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vm="using:Atlas.App.ViewModels"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <Grid Padding="24" RowSpacing="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Title -->
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="12">
+            <TextBlock Text="File Lock Search" Style="{StaticResource TitleTextBlockStyle}" />
+            <TextBlock VerticalAlignment="Bottom"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Text="Find what is using a file" />
+        </StackPanel>
+
+        <!-- Path input row -->
+        <Grid Grid.Row="1" ColumnSpacing="8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBox Grid.Column="0"
+                     x:Name="PathBox"
+                     AutomationProperties.Name="File path to search"
+                     PlaceholderText="Paste a full file path, or use Browse…"
+                     Text="{x:Bind ViewModel.PathInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                     KeyDown="OnPathKeyDown" />
+            <Button Grid.Column="1" Click="OnBrowseClick"
+                    AutomationProperties.Name="Browse for a file">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <FontIcon Glyph="&#xE838;" FontSize="14" />
+                    <TextBlock Text="Browse…" />
+                </StackPanel>
+            </Button>
+            <Button Grid.Column="2" Style="{StaticResource AccentButtonStyle}"
+                    Click="OnSearchClick"
+                    AutomationProperties.Name="Search for file owners">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <FontIcon Glyph="&#xE721;" FontSize="14" />
+                    <TextBlock Text="Search" />
+                </StackPanel>
+            </Button>
+        </Grid>
+
+        <!-- Status line -->
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="12">
+            <ProgressRing IsActive="{x:Bind ViewModel.IsSearching, Mode=OneWay}"
+                          Width="16" Height="16" />
+            <TextBlock VerticalAlignment="Center"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Text="{x:Bind ViewModel.StatusText, Mode=OneWay}" />
+        </StackPanel>
+
+        <!-- Future-facing hint about the safe release action -->
+        <InfoBar Grid.Row="3"
+                 IsOpen="{x:Bind ViewModel.ShowReleaseHint, Mode=OneWay}"
+                 IsClosable="False"
+                 Severity="Informational"
+                 Title="Read-only"
+                 Message="Releasing or closing a file through Atlas will arrive via the safe-action flow. For now, this shows you what is holding the file." />
+
+        <!-- Results / states -->
+        <Grid Grid.Row="4">
+            <!-- Unavailable (server too old / path not found / access denied) -->
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
+                        Visibility="{x:Bind ViewModel.IsUnavailable, Mode=OneWay}">
+                <FontIcon Glyph="&#xE7BA;" FontSize="28"
+                          Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                          HorizontalAlignment="Center" />
+                <TextBlock Text="Couldn't complete the search"
+                           Style="{StaticResource SubtitleTextBlockStyle}"
+                           HorizontalAlignment="Center" />
+                <TextBlock Text="{x:Bind ViewModel.UnavailableText, Mode=OneWay}"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                           TextWrapping="Wrap" MaxWidth="420" HorizontalTextAlignment="Center" />
+            </StackPanel>
+
+            <!-- Empty (nothing holding the file — a clean, positive result) -->
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
+                        Visibility="{x:Bind ViewModel.IsEmpty, Mode=OneWay}">
+                <FontIcon Glyph="&#xE73E;" FontSize="28"
+                          Foreground="{ThemeResource SystemFillColorSuccessBrush}"
+                          HorizontalAlignment="Center" />
+                <TextBlock Text="Nothing is using this file"
+                           Style="{StaticResource SubtitleTextBlockStyle}"
+                           HorizontalAlignment="Center" />
+                <TextBlock Text="{x:Bind ViewModel.EmptyText, Mode=OneWay}"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                           TextWrapping="Wrap" MaxWidth="420" HorizontalTextAlignment="Center" />
+            </StackPanel>
+
+            <!-- Owner list -->
+            <ListView AutomationProperties.Name="Processes using this file"
+                      ItemsSource="{x:Bind ViewModel.Owners, Mode=OneWay}"
+                      SelectionMode="None">
+                <ListView.ItemContainerStyle>
+                    <Style TargetType="ListViewItem">
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                        <Setter Property="Padding" Value="8,6" />
+                    </Style>
+                </ListView.ItemContainerStyle>
+                <ListView.ItemTemplate>
+                    <DataTemplate x:DataType="vm:ResourceOwnerItem">
+                        <Grid ColumnSpacing="12" Padding="8,6"
+                              Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                              BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                              BorderThickness="1" CornerRadius="6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+
+                            <FontIcon Grid.Column="0" Glyph="&#xE9F5;" FontSize="18"
+                                      VerticalAlignment="Center" Margin="4,0,4,0"
+                                      Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+                            <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <TextBlock Text="{x:Bind ImageName}"
+                                               Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                    <TextBlock Text="{x:Bind PidText}"
+                                               VerticalAlignment="Center"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                                            CornerRadius="4" Padding="6,1" VerticalAlignment="Center">
+                                        <TextBlock Text="{x:Bind KindText}" FontSize="11"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    </Border>
+                                </StackPanel>
+                                <TextBlock Text="{x:Bind Description}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           TextTrimming="CharacterEllipsis"
+                                           ToolTipService.ToolTip="{x:Bind ImagePath}" />
+                            </StackPanel>
+
+                            <!-- Future-facing safe-release hint (non-functional) -->
+                            <Button Grid.Column="2" IsEnabled="False" VerticalAlignment="Center"
+                                    Content="Release…"
+                                    AutomationProperties.Name="Release file (coming soon)"
+                                    ToolTipService.ToolTip="Closing or releasing a file will arrive via the safe-action flow." />
+
+                            <Button Grid.Column="3" VerticalAlignment="Center"
+                                    Click="OnInspectOwnerClick"
+                                    AutomationProperties.Name="Inspect this process">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <FontIcon Glyph="&#xE7B3;" FontSize="14" />
+                                    <TextBlock Text="Inspect" />
+                                </StackPanel>
+                            </Button>
+                        </Grid>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+            </ListView>
+        </Grid>
+    </Grid>
+</Page>

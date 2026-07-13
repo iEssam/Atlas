@@ -13,6 +13,7 @@
             <conv:ServiceSeverityToBrushConverter x:Key="ServiceSeverityToBrush" />
             <conv:ConfidenceToBrushConverter x:Key="ConfidenceToBrush" />
             <conv:SeverityToBrushConverter x:Key="SeverityToBrush" />
+            <conv:TrustTokenToBrushConverter x:Key="TrustTokenToBrush" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>

@@ -59,6 +59,42 @@ public sealed partial class LiveActivityPage : Page
     }
 
     /// <summary>
+    /// "Inspect" context-menu item: opens the Process Inspector for this row.
+    /// </summary>
+    private void ProcessInspect_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
+    {
+        if (sender is MenuFlyoutItem { DataContext: ProcessRowViewModel row })
+        {
+            OpenInspector(row);
+        }
+    }
+
+    /// <summary>Double-clicking a process row opens the Inspector (PRD §9.4).</summary>
+    private void ProcessRow_DoubleTapped(
+        object sender, Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs e)
+    {
+        if (sender is Microsoft.UI.Xaml.FrameworkElement { DataContext: ProcessRowViewModel row })
+        {
+            OpenInspector(row);
+        }
+    }
+
+    /// <summary>
+    /// Opens a standalone Inspector window for a process, keyed by its (pid,
+    /// create_time) identity so the server can guard against PID reuse.
+    /// </summary>
+    private void OpenInspector(ProcessRowViewModel row)
+    {
+        var who = Environment.GetEnvironmentVariable("ATLAS_PIPE");
+        var inspector = new InspectorWindow(
+            string.IsNullOrEmpty(who) ? null : who,
+            row.Pid,
+            row.CreateTime100ns,
+            row.ImageName);
+        inspector.Activate();
+    }
+
+    /// <summary>
     /// Right-click context menu on a process row: Close / Suspend / Resume /
     /// End. Opens the two-phase safe-action dialog (PRD §9.22). The real broker
     /// call goes over the live channel and degrades to "unavailable" until the

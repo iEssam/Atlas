@@ -341,6 +341,85 @@ public sealed class AtlasChannel : IDisposable
             cancellationToken: cancellationToken).ResponseAsync);
 
     // ----------------------------------------------------------------------
+    // R2: deep process inspector + resource ownership (AtlasQuery, PRD §9.4,
+    // §9.5). All on-demand, read-only. Same Unimplemented→Unsupported guard so
+    // the Inspector and File-Lock pages degrade gracefully against an older
+    // service that serves these RPCs as Unimplemented (the server side lands
+    // after the UI — task brief). Note these replies also carry their <em>own</em>
+    // in-band coverage flags (limited / names_limited / available) which callers
+    // surface honestly; that is orthogonal to the transport-level Unsupported.
+    // ----------------------------------------------------------------------
+
+    /// <summary>
+    /// Full detail for one process, identified by <paramref name="pid"/> and
+    /// guarded against PID reuse by <paramref name="createTime100ns"/> (0 =
+    /// best-effort by pid). The reply may report <c>available = false</c> ("process
+    /// exited" / "access denied") or <c>limited = true</c> (some fields needed
+    /// elevation); callers surface both rather than inventing data.
+    /// </summary>
+    public Task<RpcOutcome<ProcessDetailReply>> GetProcessDetailAsync(
+        uint pid,
+        long createTime100ns,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _client.GetProcessDetailAsync(
+            new ProcessDetailRequest { Pid = pid, CreateTime100Ns = createTime100ns },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>
+    /// A process's open handles. <paramref name="typeFilter"/> is an exact object
+    /// type ("File", "Key", "Event", …); empty returns all types.
+    /// <paramref name="limit"/> of 0 uses the server default. The reply's
+    /// <c>truncated</c> flag says whether more were elided and <c>names_limited</c>
+    /// whether some names couldn't be resolved without elevation.
+    /// </summary>
+    public Task<RpcOutcome<ListHandlesReply>> ListHandlesAsync(
+        uint pid,
+        string typeFilter = "",
+        uint limit = 0,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _client.ListHandlesAsync(
+            new ListHandlesRequest
+            {
+                Pid = pid,
+                TypeFilter = typeFilter ?? string.Empty,
+                Limit = limit,
+            },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>
+    /// A process's loaded modules (DLLs/images). The reply may report
+    /// <c>available = false</c> ("access denied (elevation may help)") for a
+    /// cross-user process; callers surface that instead of an empty list.
+    /// </summary>
+    public Task<RpcOutcome<ListModulesReply>> ListModulesAsync(
+        uint pid,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _client.ListModulesAsync(
+            new ListModulesRequest { Pid = pid },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>A process's threads (tid, start address, state, priority, times).</summary>
+    public Task<RpcOutcome<ListThreadsReply>> ListThreadsAsync(
+        uint pid,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _client.ListThreadsAsync(
+            new ListThreadsRequest { Pid = pid },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>
+    /// The processes currently holding <paramref name="path"/> open (PRD §9.5,
+    /// "find what is using this file", Restart Manager first). The reply
+    /// distinguishes <c>available = false</c> (path not found / access denied,
+    /// with a reason) from an empty owner list (nothing is holding the file).
+    /// </summary>
+    public Task<RpcOutcome<FindResourceOwnersReply>> FindResourceOwnersAsync(
+        string path,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _client.FindResourceOwnersAsync(
+            new FindResourceOwnersRequest { Path = path ?? string.Empty },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    // ----------------------------------------------------------------------
     // M6: safe process actions (AtlasControl) — two-phase prepare/execute.
     // ----------------------------------------------------------------------
 

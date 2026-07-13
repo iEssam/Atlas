@@ -47,6 +47,11 @@
                     <FontIcon Glyph="&#xE9F5;" />
                 </NavigationViewItem.Icon>
             </NavigationViewItem>
+            <NavigationViewItem Content="File Lock Search" Tag="filelock">
+                <NavigationViewItem.Icon>
+                    <FontIcon Glyph="&#xE8E5;" />
+                </NavigationViewItem.Icon>
+            </NavigationViewItem>
             <NavigationViewItem Content="Diagnostics" Tag="diagnostics">
                 <NavigationViewItem.Icon>
                     <FontIcon Glyph="&#xE9D9;" />

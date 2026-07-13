@@ -40,6 +40,7 @@ public sealed partial class MainWindow : Window
             "privacy" => typeof(PrivacyPage),
             "startup" => typeof(StartupPage),
             "services" => typeof(ServicesPage),
+            "filelock" => typeof(FileLockPage),
             "diagnostics" => typeof(DiagnosticsPage),
             _ => null,
         };

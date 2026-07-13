@@ -109,9 +109,15 @@
                 </ListView.ItemContainerStyle>
                 <ListView.ItemTemplate>
                     <DataTemplate x:DataType="vm:ProcessRowViewModel">
-                        <Grid ColumnSpacing="8">
+                        <Grid ColumnSpacing="8" DoubleTapped="ProcessRow_DoubleTapped">
                             <Grid.ContextFlyout>
                                 <MenuFlyout>
+                                    <MenuFlyoutItem Text="Inspect" Click="ProcessInspect_Click">
+                                        <MenuFlyoutItem.Icon>
+                                            <FontIcon Glyph="&#xE7B3;" />
+                                        </MenuFlyoutItem.Icon>
+                                    </MenuFlyoutItem>
+                                    <MenuFlyoutSeparator />
                                     <MenuFlyoutItem Text="Close window" Tag="close"
                                                     Click="ProcessAction_Click" />
                                     <MenuFlyoutItem Text="Suspend" Tag="suspend"
