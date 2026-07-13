@@ -30,6 +30,21 @@ message ProcessRow {
   uint64 write_bps = 10;
   uint32 handle_count = 11;
   uint32 thread_count = 12;
+  // Application grouping (PRD §9.2.1): processes sharing an application
+  // identity carry the same non-empty group key (heuristic: image family +
+  // parent chain). Empty = ungrouped.
+  string app_group = 13;
+  ProcessRole role = 14;
+}
+
+enum ProcessRole {
+  PROCESS_ROLE_UNSPECIFIED = 0;
+  // The root of its application group (its parent is outside the group).
+  PROCESS_ROLE_MAIN = 1;
+  // Same-group descendant of the main process (helper/renderer/worker —
+  // finer roles need command lines, which the collector doesn't have yet).
+  PROCESS_ROLE_HELPER = 2;
+  PROCESS_ROLE_SERVICE = 3;
 }
 
 message SystemGauges {
@@ -54,8 +69,196 @@ message SnapshotReply {
   repeated ProcessRow processes = 2;
 }
 
+// ---------------------------------------------------------------------------
+// M6: historical queries, search, bookmarks (read-only surface).
+// ---------------------------------------------------------------------------
+
+message TimeRange {
+  int64 from_ms = 1;
+  // Exclusive upper bound.
+  int64 to_ms = 2;
+}
+
+// Mirrors the service-internal metric catalogue; the server maps these to its
+// storage ids. Per-process metrics require scope != 0 (a process instance row
+// id); Sys* metrics use scope 0.
+enum MetricKind {
+  METRIC_KIND_UNSPECIFIED = 0;
+  CPU_PERMILLE = 1;
+  WORKING_SET = 2;
+  PRIVATE_BYTES = 3;
+  READ_BPS = 4;
+  WRITE_BPS = 5;
+  SYS_CPU_PERMILLE = 20;
+  SYS_MEM_USED = 21;
+  SYS_COMMIT_USED = 22;
+  SYS_PROCESS_COUNT = 23;
+}
+
+message QueryRangeRequest {
+  MetricKind metric = 1;
+  // Process instance row id; 0 for system-scope metrics.
+  int64 scope = 2;
+  TimeRange range = 3;
+  // Server-side decimation target: never returns more buckets than this
+  // (UI passes ~pixel width, PRD §11.3). 0 = server default (500).
+  uint32 buckets = 4;
+}
+
+message RangeBucket {
+  int64 start_ms = 1;
+  double min = 2;
+  double max = 3;
+  double avg = 4;
+  uint32 samples = 5;
+}
+
+message QueryRangeReply {
+  // Empty buckets are omitted — gaps render as missing data, never zero
+  // (PRD §11.3).
+  repeated RangeBucket buckets = 1;
+}
+
+message ListEventsRequest {
+  TimeRange range = 1;
+  // proc_event kinds to include (0=start, 1=stop); empty = all.
+  repeated uint32 kinds = 2;
+  uint32 limit = 3;
+}
+
+message EventRow {
+  int64 ts_ms = 1;
+  uint32 kind = 2;
+  uint32 pid = 3;
+  uint32 parent_pid = 4;
+  uint32 session_id = 5;
+  string image_name = 6;
+  // Only meaningful when has_exit_status is true (kind=stop).
+  int32 exit_status = 7;
+  bool has_exit_status = 8;
+}
+
+message ListEventsReply {
+  repeated EventRow events = 1;
+  bool truncated = 2;
+}
+
+message SearchRequest {
+  string query = 1;
+  uint32 limit = 2;
+}
+
+message ProcessHit {
+  int64 proc_row_id = 1;
+  uint32 pid = 2;
+  string image_name = 3;
+  int64 first_seen_ms = 4;
+  // 0 when still live.
+  int64 exit_seen_ms = 5;
+  bool live = 6;
+}
+
+message SearchHit {
+  oneof entity {
+    ProcessHit process = 1;
+    EventRow event = 2;
+    Bookmark bookmark = 3;
+  }
+}
+
+message SearchReply {
+  repeated SearchHit hits = 1;
+}
+
+message CreateBookmarkRequest {
+  int64 ts_ms = 1;
+  string label = 2;
+}
+
+message CreateBookmarkReply {
+  int64 id = 1;
+}
+
+message ListBookmarksRequest {
+  TimeRange range = 1;
+}
+
+message Bookmark {
+  int64 id = 1;
+  int64 ts_ms = 2;
+  string label = 3;
+  int64 created_ms = 4;
+}
+
+message ListBookmarksReply {
+  repeated Bookmark bookmarks = 1;
+}
+
 service AtlasQuery {
   rpc GetCapabilities(CapabilitiesRequest) returns (CapabilitiesReply);
   rpc GetSnapshot(SnapshotRequest) returns (SnapshotReply);
   rpc StreamSnapshots(SnapshotRequest) returns (stream SnapshotReply);
+  rpc QueryRange(QueryRangeRequest) returns (QueryRangeReply);
+  rpc ListEvents(ListEventsRequest) returns (ListEventsReply);
+  rpc Search(SearchRequest) returns (SearchReply);
+  rpc CreateBookmark(CreateBookmarkRequest) returns (CreateBookmarkReply);
+  rpc ListBookmarks(ListBookmarksRequest) returns (ListBookmarksReply);
+}
+
+// ---------------------------------------------------------------------------
+// M6: safe process actions — broker v0 (PRD §9.22, tech-stack §4.5).
+// Two-phase: Prepare returns the risk picture + a short-lived, single-use
+// consent token; Execute performs exactly the prepared action. Every
+// prepare/execute is audited server-side regardless of outcome.
+// ---------------------------------------------------------------------------
+
+enum ProcessActionKind {
+  PROCESS_ACTION_UNSPECIFIED = 0;
+  // Post WM_CLOSE to the process's top-level windows (close normally).
+  CLOSE_WINDOWS = 1;
+  SUSPEND = 2;
+  RESUME = 3;
+  TERMINATE = 4;
+}
+
+message PrepareActionRequest {
+  uint32 pid = 1;
+  // Guards against PID reuse between prepare and execute.
+  int64 create_time_100ns = 2;
+  ProcessActionKind action = 3;
+}
+
+message ActionRisk {
+  // On the protected-critical list (never allowed).
+  bool is_critical = 1;
+  // Owned by SYSTEM / session 0.
+  bool is_system = 2;
+  uint32 visible_windows = 3;
+  uint32 child_count = 4;
+  // Human-readable caveats ("children will become orphans", ...).
+  repeated string notes = 5;
+}
+
+message PrepareActionReply {
+  bool allowed = 1;
+  // Set when allowed=false.
+  string denial_reason = 2;
+  ActionRisk risk = 3;
+  // Opaque, single-use; empty when allowed=false.
+  string consent_token = 4;
+  int64 token_expires_ms = 5;
+}
+
+message ExecuteActionRequest {
+  string consent_token = 1;
+}
+
+message ExecuteActionReply {
+  bool success = 1;
+  string message = 2;
+}
+
+service AtlasControl {
+  rpc PrepareAction(PrepareActionRequest) returns (PrepareActionReply);
+  rpc ExecuteAction(ExecuteActionRequest) returns (ExecuteActionReply);
 }
