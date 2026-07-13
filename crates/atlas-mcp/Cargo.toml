@@ -1,0 +1,23 @@
+[package]
+name = "atlas-mcp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "atlas-mcp"
+path = "src/main.rs"
+
+[dependencies]
+# Read-only contract client + named-pipe transport. atlas-mcp NEVER builds the
+# AtlasControl / AtlasRules clients — only AtlasQuery (the read surface).
+atlas-ipc = { path = "../atlas-ipc" }
+anyhow = { workspace = true }
+clap = { workspace = true }
+# MCP / JSON-RPC 2.0 is hand-rolled over serde_json — no MCP SDK dependency.
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+# tokio runtime + tonic for driving the AtlasQuery RPCs over the pipe channel.
+tokio = { workspace = true }
+tonic = { workspace = true }

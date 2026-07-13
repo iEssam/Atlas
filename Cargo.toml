@@ -6,6 +6,7 @@ members = [
     "crates/atlas-tsdb",
     "crates/atlas-ipc",
     "crates/atlas-service",
+    "crates/atlas-mcp",
 ]
 
 [workspace.package]
