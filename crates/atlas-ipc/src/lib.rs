@@ -41,21 +41,26 @@ pub use v0::atlas_query_server::{AtlasQuery, AtlasQueryServer};
 pub use v0::atlas_rules_client::AtlasRulesClient;
 pub use v0::atlas_rules_server::{AtlasRules, AtlasRulesServer};
 pub use v0::{
-    ActionRisk, Bookmark, CapabilitiesReply, CapabilitiesRequest, CapabilityKind, Confidence,
-    ContributingFactor, CreateBookmarkReply, CreateBookmarkRequest, DiagnoseReply, DiagnoseRequest,
-    Diagnosis, EventRow, EvidenceItem, ExecuteActionReply, ExecuteActionRequest,
-    FindResourceOwnersReply, FindResourceOwnersRequest, GenerateReportReply, GenerateReportRequest,
-    HandleRow, Incident, IncidentKind, ListBookmarksReply, ListBookmarksRequest, ListEventsReply,
-    ListEventsRequest, ListHandlesReply, ListHandlesRequest, ListIncidentsReply,
-    ListIncidentsRequest, ListModulesReply, ListModulesRequest, ListPrivacyEventsReply,
-    ListPrivacyEventsRequest, ListPrivacyUsageReply, ListPrivacyUsageRequest, ListServicesReply,
+    ActionRisk, BatteryStatus, Bookmark, BootRecord, CapabilitiesReply, CapabilitiesRequest,
+    CapabilityKind, Confidence, Connection, ContributingFactor, CreateBookmarkReply,
+    CreateBookmarkRequest, DiagnoseReply, DiagnoseRequest, Diagnosis, EventRow, EvidenceItem,
+    ExecuteActionReply, ExecuteActionRequest, FindResourceOwnersReply, FindResourceOwnersRequest,
+    GenerateReportReply, GenerateReportRequest, GetBatteryStatusReply, GetBatteryStatusRequest,
+    GetThermalReply, GetThermalRequest, HandleRow, Incident, IncidentKind, L4Protocol,
+    ListBookmarksReply, ListBookmarksRequest, ListBootsReply, ListBootsRequest,
+    ListConnectionsReply, ListConnectionsRequest, ListEventsReply, ListEventsRequest,
+    ListHandlesReply, ListHandlesRequest, ListIncidentsReply, ListIncidentsRequest,
+    ListListeningPortsReply, ListListeningPortsRequest, ListModulesReply, ListModulesRequest,
+    ListPrivacyEventsReply, ListPrivacyEventsRequest, ListPrivacyUsageReply,
+    ListPrivacyUsageRequest, ListScheduledTasksReply, ListScheduledTasksRequest, ListServicesReply,
     ListServicesRequest, ListStartupReply, ListStartupRequest, ListThreadsReply,
-    ListThreadsRequest, MetricKind, ModuleRow, PrepareActionReply, PrepareActionRequest,
-    PrivacyEvent, PrivacyUsage, ProcessActionKind, ProcessDetail, ProcessDetailReply,
-    ProcessDetailRequest, ProcessHit, ProcessRole, ProcessRow, QueryRangeReply, QueryRangeRequest,
-    RangeBucket, RedactionOptions, ReportFormat, ResourceOwner, SearchHit, SearchReply,
-    SearchRequest, ServiceEntry, ServiceStartType, ServiceState, Severity, SnapshotReply,
-    SnapshotRequest, StartupEntry, StartupSource, SystemGauges, ThreadRow, TimeRange,
+    ListThreadsRequest, ListeningPort, MetricKind, ModuleRow, PrepareActionReply,
+    PrepareActionRequest, PrivacyEvent, PrivacyUsage, ProcessActionKind, ProcessDetail,
+    ProcessDetailReply, ProcessDetailRequest, ProcessHit, ProcessRole, ProcessRow, QueryRangeReply,
+    QueryRangeRequest, RangeBucket, RedactionOptions, ReportFormat, ResourceOwner, ScheduledTask,
+    SearchHit, SearchReply, SearchRequest, ServiceEntry, ServiceStartType, ServiceState, Severity,
+    SnapshotReply, SnapshotRequest, StartupEntry, StartupSource, SystemGauges, TcpState,
+    ThermalSensor, ThreadRow, TimeRange,
 };
 // R2 rules engine + profiles (AtlasRules service, PRD §9.7).
 pub use v0::{
@@ -131,3 +136,27 @@ pub const CAP_RULES_ENGINE: &str = "rules_engine";
 /// R2: the service supports rule profiles — named, activatable bundles of rules
 /// plus a power mode (`SetProfileActive`, PRD §9.7.4).
 pub const CAP_PROFILES: &str = "profiles";
+/// R2: the service enumerates TCP/UDP connections and listening ports (owner-pid
+/// tables + best-effort DNS-cache domains) — `ListConnections` /
+/// `ListListeningPorts` (PRD §9.12). A live OS read, always available on Windows.
+pub const CAP_NETWORK_INSPECTOR: &str = "network_inspector";
+
+/// R2: the service enumerates scheduled tasks via the Task Scheduler COM API
+/// (`ListScheduledTasks`, PRD §9.9.2). Advertised only when the enumeration
+/// actually returns tasks (COM/connection reachable).
+pub const CAP_SCHEDULED_TASKS: &str = "scheduled_tasks";
+
+/// R2: the service reports boot performance from the Diagnostics-Performance
+/// event log (`ListBoots`, PRD §9.8.4). Advertised only when that channel is
+/// readable (it often needs elevation); the reply also carries available +
+/// unavailable_reason for a precise per-call answer.
+pub const CAP_BOOT_ANALYSIS: &str = "boot_analysis";
+
+/// R2: the service reports battery status/health (`GetBatteryStatus`,
+/// PRD §9.6.6). Advertised only on a machine that has a battery.
+pub const CAP_BATTERY_STATUS: &str = "battery_status";
+
+/// R2: the service reports ACPI thermal-zone temperatures via WMI
+/// (`GetThermal`, PRD §9.6.7). Advertised only when at least one thermal sensor
+/// is exposed.
+pub const CAP_THERMAL_SENSORS: &str = "thermal_sensors";

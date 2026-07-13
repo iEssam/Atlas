@@ -266,6 +266,49 @@ enum Cmd {
         /// The file or folder path to look up.
         path: String,
     },
+    /// List TCP/UDP connections with owning process + DNS-cache domains (R2).
+    ///
+    /// iphlpapi owner-pid tables (PRD §9.12) — the same data `ListConnections`
+    /// serves. Unprivileged. `--listening` also includes TCP LISTEN rows and UDP
+    /// binds (which have no remote endpoint).
+    Connections {
+        /// Also include listening TCP + bound UDP sockets.
+        #[arg(long)]
+        listening: bool,
+    },
+    /// List listening TCP + bound UDP ports with owning process (R2, PRD §9.12).
+    ///
+    /// The same data `ListListeningPorts` serves. Unprivileged.
+    Ports,
+    /// List scheduled tasks via the Task Scheduler COM API (R2, PRD §9.9.2).
+    ///
+    /// The same data `ListScheduledTasks` serves. Unprivileged; cross-user task
+    /// state may be limited without elevation. `--filter` is a case-insensitive
+    /// substring over name/path.
+    Tasks {
+        /// Case-insensitive substring over name/path (empty = all).
+        #[arg(long)]
+        filter: Option<String>,
+    },
+    /// Report boot performance from the Diagnostics-Performance log (R2, §9.8.4).
+    ///
+    /// The same data `ListBoots` serves. The channel is often readable only when
+    /// elevated; a clear unavailable message prints otherwise.
+    Boots {
+        /// Max boot records to show (0 = default).
+        #[arg(long, default_value_t = 0)]
+        limit: u32,
+    },
+    /// Report battery status + health (R2, PRD §9.6.6).
+    ///
+    /// The same data `GetBatteryStatus` serves. On a desktop prints
+    /// "no battery present". Unprivileged.
+    Battery,
+    /// Report ACPI thermal-zone temperatures via WMI (R2, PRD §9.6.7).
+    ///
+    /// The same data `GetThermal` serves. Prints an honest unavailable message
+    /// when no thermal sensor is exposed. Unprivileged.
+    Thermal,
     /// Measure Atlas's own collection overhead against the PRD budgets (M3).
     ///
     /// Runs the real record pipeline against a TEMP database for `--duration`
@@ -607,6 +650,12 @@ fn main() -> Result<()> {
             handle_limit,
         } => cmd_inspect(pid, handles, modules, threads, handle_limit),
         Cmd::Locks { path } => cmd_locks(&path),
+        Cmd::Connections { listening } => cmd_connections(listening),
+        Cmd::Ports => cmd_ports(),
+        Cmd::Tasks { filter } => cmd_tasks(filter.unwrap_or_default()),
+        Cmd::Boots { limit } => cmd_boots(limit),
+        Cmd::Battery => cmd_battery(),
+        Cmd::Thermal => cmd_thermal(),
         Cmd::Serve { pipe, db, duration } => {
             cmd_serve(pipe, db.unwrap_or_else(default_db_path), duration)
         }
@@ -3185,6 +3234,287 @@ fn cmd_locks(path: &str) -> Result<()> {
 #[cfg(not(windows))]
 fn cmd_locks(_path: &str) -> Result<()> {
     anyhow::bail!("the `locks` command requires Windows (Restart Manager)");
+}
+
+/// Human label for a collector L4 protocol.
+#[cfg(windows)]
+fn proto_label(p: atlas_collectors::NetL4Protocol) -> &'static str {
+    match p {
+        atlas_collectors::NetL4Protocol::Tcp => "TCP",
+        atlas_collectors::NetL4Protocol::Udp => "UDP",
+    }
+}
+
+/// Short human label for a collector TCP state.
+#[cfg(windows)]
+fn state_label(s: atlas_collectors::NetTcpState) -> &'static str {
+    use atlas_collectors::NetTcpState as S;
+    match s {
+        S::Unspecified => "-",
+        S::Closed => "CLOSED",
+        S::Listen => "LISTEN",
+        S::SynSent => "SYN_SENT",
+        S::SynRcvd => "SYN_RCVD",
+        S::Established => "ESTAB",
+        S::FinWait1 => "FIN_WAIT1",
+        S::FinWait2 => "FIN_WAIT2",
+        S::CloseWait => "CLOSE_WAIT",
+        S::Closing => "CLOSING",
+        S::LastAck => "LAST_ACK",
+        S::TimeWait => "TIME_WAIT",
+        S::DeleteTcb => "DELETE_TCB",
+    }
+}
+
+/// Formats an `addr:port` endpoint, bracketing IPv6.
+#[cfg(windows)]
+fn endpoint(addr: &str, port: u16, is_ipv6: bool) -> String {
+    if addr.is_empty() {
+        return "*".to_string();
+    }
+    if is_ipv6 {
+        format!("[{addr}]:{port}")
+    } else {
+        format!("{addr}:{port}")
+    }
+}
+
+/// `connections`: list TCP/UDP connections with owner + DNS-cache domains (R2).
+#[cfg(windows)]
+fn cmd_connections(listening: bool) -> Result<()> {
+    let conns = atlas_collectors::list_connections(listening);
+    if conns.is_empty() {
+        println!("No connections found.");
+        return Ok(());
+    }
+    let resolved = conns.iter().filter(|c| !c.remote_domain.is_empty()).count();
+    println!(
+        "{} connection(s){} — {} with a resolved domain (DNS cache):",
+        conns.len(),
+        if listening { " (incl. listening)" } else { "" },
+        resolved
+    );
+    println!(
+        "{:<5} {:>7} {:<22} {:<24} {:<11} {:<24} DOMAIN",
+        "PROTO", "PID", "IMAGE", "LOCAL", "STATE", "REMOTE"
+    );
+    for c in &conns {
+        println!(
+            "{:<5} {:>7} {:<22} {:<24} {:<11} {:<24} {}",
+            proto_label(c.protocol),
+            c.pid,
+            truncate(&c.image_name, 22),
+            truncate(&endpoint(&c.local_addr, c.local_port, c.is_ipv6), 24),
+            state_label(c.state),
+            truncate(&endpoint(&c.remote_addr, c.remote_port, c.is_ipv6), 24),
+            truncate(&c.remote_domain, 40),
+        );
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn cmd_connections(_listening: bool) -> Result<()> {
+    anyhow::bail!("the `connections` command requires Windows (iphlpapi)");
+}
+
+/// `ports`: list listening TCP + bound UDP ports with owner (R2).
+#[cfg(windows)]
+fn cmd_ports() -> Result<()> {
+    let ports = atlas_collectors::list_listening_ports();
+    if ports.is_empty() {
+        println!("No listening ports found.");
+        return Ok(());
+    }
+    println!("{} listening endpoint(s):", ports.len());
+    println!("{:<5} {:>7} {:<28} IMAGE", "PROTO", "PID", "BIND");
+    for p in &ports {
+        println!(
+            "{:<5} {:>7} {:<28} {}",
+            proto_label(p.protocol),
+            p.pid,
+            truncate(&endpoint(&p.bind_addr, p.port, p.is_ipv6), 28),
+            truncate(&p.image_name, 40),
+        );
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn cmd_ports() -> Result<()> {
+    anyhow::bail!("the `ports` command requires Windows (iphlpapi)");
+}
+
+/// `tasks`: list scheduled tasks via Task Scheduler COM (R2).
+#[cfg(windows)]
+fn cmd_tasks(filter: String) -> Result<()> {
+    let tasks = atlas_collectors::enumerate_tasks(&filter);
+    if tasks.is_empty() {
+        if filter.is_empty() {
+            println!("No scheduled tasks enumerated (is the Task Scheduler service running?).");
+        } else {
+            println!("No scheduled tasks match filter '{filter}'.");
+        }
+        return Ok(());
+    }
+    println!(
+        "{} scheduled task(s){}:",
+        tasks.len(),
+        if filter.is_empty() {
+            String::new()
+        } else {
+            format!(" matching '{filter}'")
+        }
+    );
+    println!(
+        "{:<3} {:<40} {:<13} {:<13} {:>7} {:<18} TRIGGERS",
+        "EN", "PATH", "LAST RUN", "NEXT RUN", "RESULT", "AUTHOR"
+    );
+    for t in &tasks {
+        println!(
+            "{:<3} {:<40} {:<13} {:<13} {:>#7x} {:<18} {}",
+            if t.enabled { "on" } else { "off" },
+            truncate(&t.path, 40),
+            if t.last_run_ms == 0 {
+                "-".to_string()
+            } else {
+                format_ts(t.last_run_ms)
+            },
+            if t.next_run_ms == 0 {
+                "-".to_string()
+            } else {
+                format_ts(t.next_run_ms)
+            },
+            t.last_result,
+            truncate(&t.author, 18),
+            truncate(&t.triggers, 40),
+        );
+    }
+    // Show one task's detail (action + settings) so the full pull is visible.
+    if let Some(t) = tasks
+        .iter()
+        .find(|t| !t.action.is_empty())
+        .or(tasks.first())
+    {
+        println!("\nExample detail — {}", t.path);
+        println!("  action        : {}", show(&t.action));
+        println!(
+            "  run highest   : {}   on idle: {}   wake to run: {}",
+            t.run_as_highest, t.runs_on_idle, t.wakes_to_run
+        );
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn cmd_tasks(_filter: String) -> Result<()> {
+    anyhow::bail!("the `tasks` command requires Windows (Task Scheduler COM)");
+}
+
+/// `boots`: report boot performance from the Diagnostics-Performance log (R2).
+#[cfg(windows)]
+fn cmd_boots(limit: u32) -> Result<()> {
+    let a = atlas_collectors::analyze_boots(limit);
+    if !a.available {
+        println!("Boot analysis unavailable: {}", a.unavailable_reason);
+        return Ok(());
+    }
+    if a.boots.is_empty() {
+        println!("Boot analysis available, but no boot (event 100) records were found.");
+        return Ok(());
+    }
+    println!("{} boot record(s), newest first:", a.boots.len());
+    println!(
+        "{:<20} {:>10} {:>12} {:>10} FLAG",
+        "BOOT TIME (UTC t-of-day)", "TOTAL s", "MAIN PATH s", "POST s"
+    );
+    for b in &a.boots {
+        println!(
+            "{:<20} {:>10.1} {:>12.1} {:>10.1} {}",
+            format_ts(b.boot_ms),
+            b.boot_duration_ms as f64 / 1000.0,
+            b.main_path_ms as f64 / 1000.0,
+            b.post_boot_ms as f64 / 1000.0,
+            if b.degraded { "SLOW" } else { "" }
+        );
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn cmd_boots(_limit: u32) -> Result<()> {
+    anyhow::bail!("the `boots` command requires Windows (event log)");
+}
+
+/// `battery`: report battery status + health (R2).
+#[cfg(windows)]
+fn cmd_battery() -> Result<()> {
+    let b = atlas_collectors::battery_status();
+    if !b.available {
+        println!("Battery unavailable: {}", b.unavailable_reason);
+        return Ok(());
+    }
+    println!("Battery status:");
+    println!(
+        "  power        : {}   charging: {}",
+        if b.on_ac { "AC" } else { "battery" },
+        b.charging
+    );
+    println!("  charge       : {}%", b.percent);
+    if b.rate_mw != 0 {
+        println!("  rate         : {} mW", b.rate_mw);
+    }
+    if b.full_charge_mwh > 0 || b.design_mwh > 0 {
+        println!(
+            "  capacity     : {} / {} mWh (remaining / full charge)",
+            b.remaining_mwh, b.full_charge_mwh
+        );
+        println!("  design       : {} mWh", b.design_mwh);
+    }
+    if b.health_percent > 0 {
+        println!(
+            "  health       : {}% (full charge ÷ design)",
+            b.health_percent
+        );
+    }
+    if b.cycle_count > 0 {
+        println!("  cycle count  : {}", b.cycle_count);
+    }
+    if b.est_runtime_s > 0 {
+        println!("  est. runtime : {} min", b.est_runtime_s / 60);
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn cmd_battery() -> Result<()> {
+    anyhow::bail!("the `battery` command requires Windows (power APIs)");
+}
+
+/// `thermal`: report ACPI thermal-zone temperatures via WMI (R2).
+#[cfg(windows)]
+fn cmd_thermal() -> Result<()> {
+    let t = atlas_collectors::thermal_status();
+    if !t.available {
+        println!("Thermal unavailable: {}", t.unavailable_reason);
+        return Ok(());
+    }
+    println!("{} thermal sensor(s):", t.sensors.len());
+    println!("{:<40} {:>10}  SOURCE", "SENSOR", "°C");
+    for s in &t.sensors {
+        println!(
+            "{:<40} {:>10.1}  {}",
+            truncate(&s.name, 40),
+            s.celsius,
+            s.source
+        );
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn cmd_thermal() -> Result<()> {
+    anyhow::bail!("the `thermal` command requires Windows (WMI)");
 }
 
 /// Renders an empty string as a dim placeholder for the inspect output.
