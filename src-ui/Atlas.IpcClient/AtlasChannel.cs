@@ -220,6 +220,60 @@ public sealed class AtlasChannel : IDisposable
             cancellationToken: cancellationToken).ResponseAsync);
 
     // ----------------------------------------------------------------------
+    // M7: privacy activity, startup inventory, services (AtlasQuery). Same
+    // Unimplemented→Unsupported guard so the new pages degrade gracefully
+    // against an older service that doesn't serve these RPCs yet (task brief).
+    // ----------------------------------------------------------------------
+
+    /// <summary>
+    /// Current per-(app, capability) privacy usage from the ConsentStore. Pass
+    /// specific <paramref name="capabilities"/> to filter, or none for all.
+    /// </summary>
+    public Task<RpcOutcome<ListPrivacyUsageReply>> ListPrivacyUsageAsync(
+        IEnumerable<CapabilityKind>? capabilities = null,
+        CancellationToken cancellationToken = default)
+    {
+        var req = new ListPrivacyUsageRequest();
+        if (capabilities is not null)
+        {
+            req.Capabilities.AddRange(capabilities);
+        }
+        return GuardAsync(() => _client.ListPrivacyUsageAsync(
+            req, cancellationToken: cancellationToken).ResponseAsync);
+    }
+
+    /// <summary>Recent privacy start/stop transitions in a window.</summary>
+    public Task<RpcOutcome<ListPrivacyEventsReply>> ListPrivacyEventsAsync(
+        long fromMs,
+        long toMs,
+        uint limit = 0,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _client.ListPrivacyEventsAsync(
+            new ListPrivacyEventsRequest
+            {
+                Range = new TimeRange { FromMs = fromMs, ToMs = toMs },
+                Limit = limit,
+            },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>The startup inventory (run keys, folders, tasks, services, packaged).</summary>
+    public Task<RpcOutcome<ListStartupReply>> ListStartupAsync(
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _client.ListStartupAsync(
+            new ListStartupRequest(), cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>
+    /// The service inventory. <paramref name="filter"/> is a case-insensitive
+    /// substring over name/display_name (empty = all).
+    /// </summary>
+    public Task<RpcOutcome<ListServicesReply>> ListServicesAsync(
+        string filter = "",
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _client.ListServicesAsync(
+            new ListServicesRequest { Filter = filter ?? string.Empty },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    // ----------------------------------------------------------------------
     // M6: safe process actions (AtlasControl) — two-phase prepare/execute.
     // ----------------------------------------------------------------------
 
