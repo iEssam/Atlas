@@ -13,6 +13,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <!-- Title + New -->
@@ -190,8 +191,163 @@
             </Grid>
         </Grid>
 
-        <!-- Active interventions (transparency, PRD §9.7.3) -->
+        <!-- Dynamic responsiveness protection (R3, PRD §9.7.3). A CPU watchdog
+             that, when explicitly enabled, TEMPORARILY eases back a background
+             app monopolising the CPU and auto-restores it — never the app you're
+             using or system-critical processes. The whole point of this card is
+             the safety framing: temporary, reversible, off by default. -->
         <Border Grid.Row="3"
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                BorderThickness="1" CornerRadius="8" Padding="16,12">
+            <StackPanel Spacing="10">
+                <!-- Header -->
+                <Grid>
+                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                        <FontIcon Glyph="&#xE72E;" FontSize="16" VerticalAlignment="Center" />
+                        <TextBlock Text="Dynamic responsiveness protection"
+                                   Style="{StaticResource BodyStrongTextBlockStyle}"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+                    <Border HorizontalAlignment="Right" VerticalAlignment="Center"
+                            Background="{ThemeResource SystemFillColorSuccessBackgroundBrush}"
+                            CornerRadius="4" Padding="8,2"
+                            Visibility="{x:Bind ViewModel.DynProtectionEnabled, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
+                        <TextBlock Text="On" Style="{StaticResource CaptionTextBlockStyle}" />
+                    </Border>
+                </Grid>
+
+                <!-- Unavailable state: keep the rest of the page working -->
+                <StackPanel Spacing="4"
+                            Visibility="{x:Bind ViewModel.DynProtectionSupported, Mode=OneWay, Converter={StaticResource InverseBoolToVisibility}}">
+                    <TextBlock Text="Dynamic protection is unavailable — the connected service is too old. The rest of this page still works; update the Atlas service to use it."
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               TextWrapping="Wrap" />
+                </StackPanel>
+
+                <!-- Supported: explanation + master toggle + config -->
+                <StackPanel Spacing="10"
+                            Visibility="{x:Bind ViewModel.DynProtectionSupported, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
+
+                    <!-- Plain-language, honest explanation (the whole point) -->
+                    <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               TextWrapping="Wrap"
+                               Text="When on, Atlas temporarily eases back a background app that's monopolizing the CPU, and restores it automatically. It never touches the app you're using or system-critical processes." />
+
+                    <!-- Master toggle (off by default) -->
+                    <Grid>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="Protect responsiveness" />
+                            <TextBlock Text="Off by default. Turning this on is your consent; you can turn it off any time."
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+                        <ToggleSwitch HorizontalAlignment="Right" VerticalAlignment="Center"
+                                      MinWidth="0"
+                                      AutomationProperties.Name="Enable dynamic responsiveness protection"
+                                      IsOn="{x:Bind ViewModel.DynProtectionEnabled, Mode=TwoWay}"
+                                      OnContent="" OffContent="" />
+                    </Grid>
+
+                    <!-- Config controls, shown only when enabled -->
+                    <StackPanel Spacing="12"
+                                Visibility="{x:Bind ViewModel.DynProtectionEnabled, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
+                        <Grid ColumnSpacing="20" RowSpacing="4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <!-- CPU threshold -->
+                            <StackPanel Grid.Row="0" Grid.Column="0" Spacing="4">
+                                <TextBlock Text="CPU threshold (%)"
+                                           Style="{StaticResource CaptionTextBlockStyle}" />
+                                <NumberBox AutomationProperties.Name="CPU threshold percent"
+                                           Value="{x:Bind ViewModel.DynThresholdPercent, Mode=TwoWay}"
+                                           Minimum="{x:Bind ViewModel.ThresholdMin}"
+                                           Maximum="{x:Bind ViewModel.ThresholdMax}"
+                                           SpinButtonPlacementMode="Inline"
+                                           SmallChange="1" LargeChange="5"
+                                           ValidationMode="InvalidInputOverwritten" />
+                                <TextBlock Text="Only a background app above this share of total CPU is ever a candidate."
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+
+                            <!-- Sustain duration -->
+                            <StackPanel Grid.Row="0" Grid.Column="1" Spacing="4">
+                                <TextBlock Text="Sustain (seconds)"
+                                           Style="{StaticResource CaptionTextBlockStyle}" />
+                                <NumberBox AutomationProperties.Name="Sustain duration in seconds"
+                                           Value="{x:Bind ViewModel.DynSustainSeconds, Mode=TwoWay}"
+                                           Minimum="{x:Bind ViewModel.SustainMin}"
+                                           Maximum="{x:Bind ViewModel.SustainMax}"
+                                           SpinButtonPlacementMode="Inline"
+                                           SmallChange="5" LargeChange="30"
+                                           ValidationMode="InvalidInputOverwritten" />
+                                <TextBlock Text="It must stay above the threshold this long first — brief spikes are ignored."
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+
+                            <!-- Max intervention duration -->
+                            <StackPanel Grid.Row="0" Grid.Column="2" Spacing="4">
+                                <TextBlock Text="Max ease-back (seconds)"
+                                           Style="{StaticResource CaptionTextBlockStyle}" />
+                                <NumberBox AutomationProperties.Name="Maximum intervention duration in seconds"
+                                           Value="{x:Bind ViewModel.DynMaxSeconds, Mode=TwoWay}"
+                                           Minimum="{x:Bind ViewModel.MaxInterventionMin}"
+                                           Maximum="{x:Bind ViewModel.MaxInterventionMax}"
+                                           SpinButtonPlacementMode="Inline"
+                                           SmallChange="30" LargeChange="60"
+                                           ValidationMode="InvalidInputOverwritten" />
+                                <TextBlock Text="A hard cap — Atlas always restores the app within this time, whatever happens."
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Grid>
+                    </StackPanel>
+
+                    <!-- Live summary of what Save will do -->
+                    <TextBlock Text="{x:Bind ViewModel.DynProtectionSummary, Mode=OneWay}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               TextWrapping="Wrap" />
+
+                    <!-- Note pointing at the transparency surface below -->
+                    <TextBlock Text="Any app Atlas is currently easing back appears in Active interventions below, with the reason why."
+                               Style="{StaticResource CaptionTextBlockStyle}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               TextWrapping="Wrap" />
+
+                    <!-- Save + result -->
+                    <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                        <Button x:Name="SaveDynProtectionButton"
+                                AutomationProperties.Name="Save dynamic protection settings"
+                                Style="{StaticResource AccentButtonStyle}"
+                                Content="Save"
+                                Click="SaveDynProtection_Click" />
+                        <ProgressRing IsActive="{x:Bind ViewModel.IsSavingDynProtection, Mode=OneWay}"
+                                      Width="16" Height="16" />
+                        <TextBlock VerticalAlignment="Center"
+                                   Text="{x:Bind ViewModel.DynProtectionStatus, Mode=OneWay}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+                </StackPanel>
+            </StackPanel>
+        </Border>
+
+        <!-- Active interventions (transparency, PRD §9.7.3) -->
+        <Border Grid.Row="4"
                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                 BorderThickness="1" CornerRadius="8" Padding="16,12"

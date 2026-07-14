@@ -81,6 +81,32 @@ internal static class RulesDemoData
             Applied = "Idle, Eco",
             SinceMs = nowMs - 3 * 60 * 60_000L,
         },
+        // A dynamic-protection dampening: rule_id 0, the reserved dynamic name,
+        // with a factual "why" string — this is how the watchdog surfaces in the
+        // Active Interventions list once the backend runs (proto R3 header).
+        new Intervention
+        {
+            RuleId = 0,
+            RuleName = "Dynamic responsiveness protection",
+            Pid = 8820,
+            ImageName = "backup-agent.exe",
+            Applied = "Eased back (Below Normal) — held 92% CPU for 45s",
+            SinceMs = nowMs - 40_000L,
+        },
+    };
+
+    /// <summary>
+    /// A representative dynamic-protection config for demo mode: supported and
+    /// OFF by default (PRD §9.7.3), with the standard conservative thresholds so
+    /// the config card and its safety copy can be seen without a backend.
+    /// </summary>
+    public static DynamicProtectionConfig SampleDynamicProtection() => new DynamicProtectionConfig
+    {
+        Enabled = false,
+        CpuThresholdPermille = DynamicProtectionFormatter.PercentToPermille(
+            DynamicProtectionFormatter.DefaultThresholdPercent),
+        SustainSeconds = DynamicProtectionFormatter.DefaultSustainSeconds,
+        MaxInterventionSeconds = DynamicProtectionFormatter.DefaultMaxInterventionSeconds,
     };
 
     /// <summary>

@@ -199,6 +199,23 @@ public sealed partial class RulesPage : Page
         await ViewModel.RefreshAsync();
     }
 
+    private async void SaveDynProtection_Click(object sender, RoutedEventArgs e)
+    {
+        ViewModel.IsSavingDynProtection = true;
+        try
+        {
+            var (ok, message) = await ViewModel.SaveDynamicProtectionAsync();
+            if (!ok)
+            {
+                await ShowErrorAsync("Couldn't save protection settings", message);
+            }
+        }
+        finally
+        {
+            ViewModel.IsSavingDynProtection = false;
+        }
+    }
+
     private async System.Threading.Tasks.Task ShowErrorAsync(string title, string message)
     {
         var dialog = new ContentDialog

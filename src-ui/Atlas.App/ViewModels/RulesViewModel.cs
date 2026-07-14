@@ -44,6 +44,29 @@ public sealed partial class RulesViewModel : ObservableObject
     [ObservableProperty] private bool _interventionsEmpty;
     [ObservableProperty] private string _interventionsStatus = string.Empty;
 
+    // Dynamic responsiveness protection (R3, PRD §9.7.3). The config surface for
+    // the CPU watchdog — off by default, temporary, auto-restored. Kept separate
+    // from the rules list so a rules-unavailable service still shows this card
+    // (and vice versa).
+    [ObservableProperty] private bool _dynProtectionSupported = true;
+    [ObservableProperty] private bool _dynProtectionLoaded;
+    [ObservableProperty] private bool _isSavingDynProtection;
+    [ObservableProperty] private bool _dynProtectionEnabled;
+    [ObservableProperty] private double _dynThresholdPercent = DynamicProtectionFormatter.DefaultThresholdPercent;
+    [ObservableProperty] private double _dynSustainSeconds = DynamicProtectionFormatter.DefaultSustainSeconds;
+    [ObservableProperty] private double _dynMaxSeconds = DynamicProtectionFormatter.DefaultMaxInterventionSeconds;
+    [ObservableProperty] private string _dynProtectionStatus = string.Empty;
+    [ObservableProperty] private string _dynProtectionSummary =
+        DynamicProtectionFormatter.ConfigSummary(null);
+
+    // Editor bounds surfaced to the XAML NumberBoxes (single source of truth).
+    public double ThresholdMin => DynamicProtectionFormatter.MinThresholdPercent;
+    public double ThresholdMax => DynamicProtectionFormatter.MaxThresholdPercent;
+    public double SustainMin => DynamicProtectionFormatter.MinSustainSeconds;
+    public double SustainMax => DynamicProtectionFormatter.MaxSustainSeconds;
+    public double MaxInterventionMin => DynamicProtectionFormatter.MinMaxInterventionSeconds;
+    public double MaxInterventionMax => DynamicProtectionFormatter.MaxMaxInterventionSeconds;
+
     public ObservableCollection<RuleRowViewModel> Rules { get; } = new();
     public ObservableCollection<InterventionRowViewModel> Interventions { get; } = new();
 
@@ -73,6 +96,15 @@ public sealed partial class RulesViewModel : ObservableObject
         if (_fake)
         {
             LoadFake();
+            return;
+        }
+
+        // Load the dynamic-protection card independently so a rules-unavailable
+        // service still shows it (and its own unavailable state doesn't blank the
+        // rules list). Errors are handled inside; this never throws.
+        await LoadDynamicProtectionAsync(ct).ConfigureAwait(false);
+        if (ct.IsCancellationRequested)
+        {
             return;
         }
 
@@ -261,6 +293,154 @@ public sealed partial class RulesViewModel : ObservableObject
         }
     }
 
+    // ----------------------------------------------------------------------
+    // Dynamic responsiveness protection (R3, PRD §9.7.3).
+    // ----------------------------------------------------------------------
+
+    /// <summary>
+    /// Loads the current dynamic-protection config. Against an older service the
+    /// call is <c>Unsupported</c>; the card then shows a calm "unavailable" state
+    /// instead of crashing. Any transport error is surfaced on the card only —
+    /// never allowed to blank the rest of the page.
+    /// </summary>
+    private async Task LoadDynamicProtectionAsync(CancellationToken ct)
+    {
+        try
+        {
+            using var channel = AtlasChannel.Connect(_who);
+            var outcome = await channel.GetDynamicProtectionAsync(ct).ConfigureAwait(false);
+            if (ct.IsCancellationRequested)
+            {
+                return;
+            }
+            Post(() => ApplyDynamicProtection(outcome));
+        }
+        catch (OperationCanceledException)
+        {
+            // Superseded by a newer refresh.
+        }
+        catch (Exception ex)
+        {
+            Post(() =>
+            {
+                DynProtectionSupported = false;
+                DynProtectionLoaded = true;
+                DynProtectionStatus = $"Couldn't load protection settings: {ex.Message}";
+            });
+        }
+    }
+
+    private void ApplyDynamicProtection(RpcOutcome<GetDynamicProtectionReply> outcome)
+    {
+        if (!outcome.Supported)
+        {
+            DynProtectionSupported = false;
+            DynProtectionLoaded = true;
+            DynProtectionStatus = string.Empty;
+            return;
+        }
+
+        DynProtectionSupported = true;
+        LoadConfig(outcome.Value.Config ?? new DynamicProtectionConfig());
+        DynProtectionLoaded = true;
+        DynProtectionStatus = string.Empty;
+    }
+
+    private void LoadConfig(DynamicProtectionConfig cfg)
+    {
+        DynProtectionEnabled = cfg.Enabled;
+        DynThresholdPercent = cfg.CpuThresholdPermille == 0
+            ? DynamicProtectionFormatter.DefaultThresholdPercent
+            : DynamicProtectionFormatter.PermilleToPercent(cfg.CpuThresholdPermille);
+        DynSustainSeconds = cfg.SustainSeconds == 0
+            ? DynamicProtectionFormatter.DefaultSustainSeconds
+            : cfg.SustainSeconds;
+        DynMaxSeconds = cfg.MaxInterventionSeconds == 0
+            ? DynamicProtectionFormatter.DefaultMaxInterventionSeconds
+            : cfg.MaxInterventionSeconds;
+        UpdateDynSummary();
+    }
+
+    /// <summary>
+    /// Builds the config from the (clamped) editor values — the single place the
+    /// UI's percent/seconds become the wire's permille/seconds, always in-bounds.
+    /// </summary>
+    public DynamicProtectionConfig BuildDynConfig() => new DynamicProtectionConfig
+    {
+        Enabled = DynProtectionEnabled,
+        CpuThresholdPermille = DynamicProtectionFormatter.PercentToPermille(
+            DynamicProtectionFormatter.ClampThresholdPercent(DynThresholdPercent)),
+        SustainSeconds = DynamicProtectionFormatter.ClampSustainSeconds(ToSeconds(DynSustainSeconds)),
+        MaxInterventionSeconds = DynamicProtectionFormatter.ClampMaxInterventionSeconds(ToSeconds(DynMaxSeconds)),
+    };
+
+    private static uint ToSeconds(double value) =>
+        value <= 0 ? 0 : (uint)System.Math.Round(value, System.MidpointRounding.AwayFromZero);
+
+    /// <summary>
+    /// Saves the dynamic-protection config through the service. Enabling it IS the
+    /// consent gesture; disabling (or lowering the cap) is always safe — the engine
+    /// auto-restores anything it was easing back. Returns a plain result the page
+    /// surfaces; an <c>Unsupported</c> reply flips the card to its unavailable state.
+    /// </summary>
+    public async Task<(bool ok, string message)> SaveDynamicProtectionAsync()
+    {
+        var cfg = BuildDynConfig();
+
+        if (_fake)
+        {
+            Post(() =>
+            {
+                UpdateDynSummary();
+                DynProtectionStatus = cfg.Enabled
+                    ? "Protection is on (demo data)."
+                    : "Protection is off (demo data).";
+            });
+            return (true, string.Empty);
+        }
+
+        try
+        {
+            using var channel = AtlasChannel.Connect(_who);
+            var outcome = await channel.SetDynamicProtectionAsync(cfg).ConfigureAwait(false);
+            if (!outcome.Supported)
+            {
+                Post(() =>
+                {
+                    DynProtectionSupported = false;
+                    DynProtectionStatus = string.Empty;
+                });
+                return (false, "This service is too old to manage dynamic protection.");
+            }
+            if (!outcome.Value.Ok)
+            {
+                return (false, string.IsNullOrEmpty(outcome.Value.Message)
+                    ? "The service could not save these settings."
+                    : outcome.Value.Message);
+            }
+            Post(() =>
+            {
+                UpdateDynSummary();
+                DynProtectionStatus = cfg.Enabled ? "Protection is on." : "Protection is off.";
+            });
+            return (true, string.Empty);
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
+    }
+
+    private void UpdateDynSummary() =>
+        DynProtectionSummary = DynamicProtectionFormatter.ConfigSummary(BuildDynConfig());
+
+    // Keep the live summary in step as the user edits the card, so what "Save"
+    // will do is always visible before committing.
+    partial void OnDynProtectionEnabledChanged(bool value) => UpdateDynSummary();
+    partial void OnDynThresholdPercentChanged(double value) => UpdateDynSummary();
+    partial void OnDynSustainSecondsChanged(double value) => UpdateDynSummary();
+    partial void OnDynMaxSecondsChanged(double value) => UpdateDynSummary();
+
     private RuleRowViewModel? FindRow(long ruleId)
     {
         foreach (var r in Rules)
@@ -298,6 +478,14 @@ public sealed partial class RulesViewModel : ObservableObject
             InterventionsUnavailable = false;
             InterventionsEmpty = Interventions.Count == 0;
             InterventionsStatus = $"Atlas is currently adjusting {Interventions.Count} processes (demo data).";
+
+            // Dynamic protection in demo mode: supported, off by default, showing
+            // representative defaults so the whole card UX (and its safety copy)
+            // can be seen without a backend.
+            DynProtectionSupported = true;
+            LoadConfig(RulesDemoData.SampleDynamicProtection());
+            DynProtectionLoaded = true;
+            DynProtectionStatus = string.Empty;
         });
     }
 

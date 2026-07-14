@@ -811,5 +811,41 @@ public sealed class AtlasChannel : IDisposable
             new SetProfileActiveRequest { Id = id, Active = active },
             cancellationToken: cancellationToken).ResponseAsync);
 
+    // ----------------------------------------------------------------------
+    // R3: dynamic responsiveness protection (AtlasRules, PRD §9.7.3). A watchdog
+    // that, when explicitly enabled, TEMPORARILY dampens a background process
+    // monopolising the CPU and auto-restores it — never touching the foreground
+    // or protected-critical apps, off by default. The UI owns the config surface
+    // (this pair); the dampening interventions themselves surface through the
+    // existing ListInterventions with rule_id = 0 (proto R3 header). Same
+    // Unimplemented→Unsupported guard so the config card degrades to a calm
+    // "unavailable" state against an older service that serves these two RPCs as
+    // Unimplemented (the server side lands after the UI — task brief).
+    // ----------------------------------------------------------------------
+
+    /// <summary>
+    /// The current dynamic-protection config (enabled flag + CPU threshold,
+    /// sustain, and auto-restore-cap durations). Against an older service this
+    /// returns <see cref="RpcOutcome{T}.Unsupported"/> so the card can show a calm
+    /// "unavailable" state rather than crash.
+    /// </summary>
+    public Task<RpcOutcome<GetDynamicProtectionReply>> GetDynamicProtectionAsync(
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _rules.GetDynamicProtectionAsync(
+            new GetDynamicProtectionRequest(), cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>
+    /// Saves the dynamic-protection config. Turning it on IS the consent gesture
+    /// for this watchdog; turning it off (or lowering the cap) is always safe and
+    /// reversible — the engine auto-restores any process it is currently easing
+    /// back. The reply's <c>ok</c>/<c>message</c> carry the server-side result.
+    /// </summary>
+    public Task<RpcOutcome<SetDynamicProtectionReply>> SetDynamicProtectionAsync(
+        DynamicProtectionConfig config,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _rules.SetDynamicProtectionAsync(
+            new SetDynamicProtectionRequest { Config = config },
+            cancellationToken: cancellationToken).ResponseAsync);
+
     public void Dispose() => _channel.Dispose();
 }
