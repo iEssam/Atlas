@@ -7,6 +7,7 @@ members = [
     "crates/atlas-ipc",
     "crates/atlas-service",
     "crates/atlas-mcp",
+    "crates/atlas-cli",
 ]
 
 [workspace.package]
