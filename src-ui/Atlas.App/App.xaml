@@ -16,6 +16,8 @@
             <conv:TrustTokenToBrushConverter x:Key="TrustTokenToBrush" />
             <conv:BlockedToBrushConverter x:Key="BlockedToBrush" />
             <conv:MonitorTokenToBrushConverter x:Key="MonitorTokenToBrush" />
+            <conv:ChangeCategoryToBrushConverter x:Key="ChangeCategoryToBrush" />
+            <conv:CrashCautionToBrushConverter x:Key="CrashCautionToBrush" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>

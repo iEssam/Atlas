@@ -1,0 +1,224 @@
+<Page
+    x:Class="Atlas.App.Views.ReliabilityPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vm="using:Atlas.App.ViewModels"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <Grid Padding="24" RowSpacing="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Title -->
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="12">
+            <TextBlock Text="Reliability" Style="{StaticResource TitleTextBlockStyle}" />
+            <TextBlock VerticalAlignment="Bottom"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Text="Crashes, hangs and bugchecks — with context, not blame" />
+        </StackPanel>
+
+        <!-- Controls: window + kind filter + refresh -->
+        <Grid Grid.Row="1" ColumnSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <ComboBox Grid.Column="0"
+                      AutomationProperties.Name="Time window for reliability events"
+                      MinWidth="150"
+                      ItemsSource="{x:Bind ViewModel.Windows}"
+                      SelectedItem="{x:Bind ViewModel.SelectedWindow, Mode=TwoWay}" />
+
+            <ComboBox Grid.Column="1"
+                      AutomationProperties.Name="Filter reliability events by kind"
+                      MinWidth="160"
+                      ItemsSource="{x:Bind ViewModel.KindFilters}"
+                      SelectedItem="{x:Bind ViewModel.SelectedKindFilter, Mode=TwoWay}" />
+
+            <Button Grid.Column="3"
+                    x:Name="RefreshButton"
+                    AutomationProperties.Name="Refresh reliability events"
+                    Click="OnRefreshClick">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <FontIcon Glyph="&#xE72C;" FontSize="14" />
+                    <TextBlock Text="Refresh" />
+                </StackPanel>
+            </Button>
+        </Grid>
+
+        <!-- Status line -->
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="12">
+            <ProgressRing IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
+                          Width="16" Height="16" />
+            <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       VerticalAlignment="Center"
+                       Text="{x:Bind ViewModel.StatusText, Mode=OneWay}" />
+        </StackPanel>
+
+        <!-- Body: list / empty / unavailable / unsupported -->
+        <Border Grid.Row="3"
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                BorderThickness="1" CornerRadius="8">
+            <Grid>
+                <!-- Unsupported (server too old) -->
+                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
+                            Padding="24" MaxWidth="440"
+                            Visibility="{x:Bind ViewModel.IsUnsupported, Mode=OneWay}">
+                    <FontIcon Glyph="&#xE7BA;" FontSize="28"
+                              Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                              HorizontalAlignment="Center" />
+                    <TextBlock Text="Reliability unavailable"
+                               Style="{StaticResource SubtitleTextBlockStyle}"
+                               HorizontalTextAlignment="Center" />
+                    <TextBlock Text="{x:Bind ViewModel.UnavailableMessage, Mode=OneWay}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               TextWrapping="Wrap" HorizontalTextAlignment="Center" />
+                </StackPanel>
+
+                <!-- In-band unavailable (reliability log off) — honest, calm -->
+                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
+                            Padding="24" MaxWidth="440"
+                            Visibility="{x:Bind ViewModel.IsUnavailable, Mode=OneWay}">
+                    <FontIcon Glyph="&#xE946;" FontSize="28"
+                              Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                              HorizontalAlignment="Center" />
+                    <TextBlock Text="Reliability history unavailable"
+                               Style="{StaticResource SubtitleTextBlockStyle}"
+                               HorizontalTextAlignment="Center" />
+                    <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                            CornerRadius="6" Padding="14,10">
+                        <TextBlock Text="{x:Bind ViewModel.UnavailableMessage, Mode=OneWay}"
+                                   TextWrapping="Wrap" HorizontalTextAlignment="Center" />
+                    </Border>
+                    <TextBlock Text="Atlas reports what the system exposes — it won't invent a history it can't read."
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               TextWrapping="Wrap" HorizontalTextAlignment="Center"
+                               Style="{StaticResource CaptionTextBlockStyle}" />
+                </StackPanel>
+
+                <!-- Empty (available, nothing recorded) — good news, framed calmly -->
+                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
+                            Padding="24" MaxWidth="440"
+                            Visibility="{x:Bind ViewModel.IsEmpty, Mode=OneWay}">
+                    <FontIcon Glyph="&#xE73E;" FontSize="28"
+                              Foreground="{ThemeResource SystemFillColorSuccessBrush}"
+                              HorizontalAlignment="Center" />
+                    <TextBlock Text="No reliability events"
+                               Style="{StaticResource SubtitleTextBlockStyle}"
+                               HorizontalTextAlignment="Center" />
+                    <TextBlock Text="No reliability events recorded in this window. That's good news — nothing crashed, hung, or restarted unexpectedly."
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               TextWrapping="Wrap" HorizontalTextAlignment="Center" />
+                </StackPanel>
+
+                <!-- The list of records, each with correlated context inline -->
+                <ListView AutomationProperties.Name="Reliability events"
+                          ItemsSource="{x:Bind ViewModel.Crashes, Mode=OneWay}"
+                          SelectionMode="None"
+                          Padding="8">
+                    <ListView.ItemContainerStyle>
+                        <Style TargetType="ListViewItem">
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                            <Setter Property="Padding" Value="4" />
+                        </Style>
+                    </ListView.ItemContainerStyle>
+                    <ListView.ItemTemplate>
+                        <DataTemplate x:DataType="vm:CrashRowViewModel">
+                            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                    BorderThickness="1" CornerRadius="8"
+                                    Padding="16,12" Margin="0,4">
+                                <StackPanel Spacing="10">
+                                    <!-- Header: glyph + kind/subject + time -->
+                                    <Grid ColumnSpacing="12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <FontIcon Grid.Column="0" VerticalAlignment="Top" Margin="0,2,0,0"
+                                                  Glyph="{x:Bind KindGlyph}" FontSize="18"
+                                                  Foreground="{x:Bind CautionToken, Converter={StaticResource CrashCautionToBrush}}" />
+                                        <StackPanel Grid.Column="1" Spacing="2">
+                                            <TextBlock Text="{x:Bind KindLabel}"
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            <TextBlock Text="{x:Bind Subject}"
+                                                       Style="{StaticResource BodyStrongTextBlockStyle}"
+                                                       TextWrapping="Wrap" />
+                                            <TextBlock Text="{x:Bind FaultLine}"
+                                                       Visibility="{x:Bind HasFault}"
+                                                       FontFamily="Consolas"
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                       IsTextSelectionEnabled="True"
+                                                       TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="2" Spacing="0" HorizontalAlignment="Right">
+                                            <TextBlock Text="{x:Bind TimeText}"
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       HorizontalTextAlignment="Right"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            <TextBlock Text="{x:Bind AbsoluteTimeText}"
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       HorizontalTextAlignment="Right"
+                                                       Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                        </StackPanel>
+                                    </Grid>
+
+                                    <!-- Correlated context: hedged, correlation-not-blame -->
+                                    <Border Visibility="{x:Bind HasContext}"
+                                            Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                                            CornerRadius="6" Padding="12,10">
+                                        <StackPanel Spacing="6">
+                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <FontIcon Glyph="&#xE946;" FontSize="12"
+                                                          VerticalAlignment="Center"
+                                                          Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                <TextBlock Text="Context around this event"
+                                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            </StackPanel>
+                                            <ItemsControl ItemsSource="{x:Bind Context}">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate x:DataType="x:String">
+                                                        <Grid ColumnSpacing="8" Margin="0,2">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="Auto" />
+                                                                <ColumnDefinition Width="*" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock Grid.Column="0" Text="•"
+                                                                       VerticalAlignment="Top"
+                                                                       Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                                            <TextBlock Grid.Column="1" Text="{x:Bind}"
+                                                                       TextWrapping="Wrap"
+                                                                       Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+                                                        </Grid>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                            <TextBlock Text="This is context Atlas noticed around this time — it may or may not be related. Correlation is not a cause."
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                                       TextWrapping="Wrap" />
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+            </Grid>
+        </Border>
+    </Grid>
+</Page>

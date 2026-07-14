@@ -570,6 +570,75 @@ public sealed class AtlasChannel : IDisposable
             cancellationToken: cancellationToken).ResponseAsync);
 
     // ----------------------------------------------------------------------
+    // R3: system-change tracking + reliability/crash correlation (AtlasQuery,
+    // PRD §9.13, §9.14). Both read-only. Same Unimplemented→Unsupported guard so
+    // the System Changes and Reliability pages degrade gracefully against an older
+    // service that serves these RPCs as Unimplemented (the server side lands after
+    // the UI — task brief). ListCrashes additionally carries its own in-band
+    // <c>available</c> + <c>unavailable_reason</c> (e.g. "reliability log
+    // unavailable"), which the page surfaces honestly; that is orthogonal to the
+    // transport-level Unsupported. A change is information and a crash record is
+    // history + context — never an accusation (proto R3 header).
+    // ----------------------------------------------------------------------
+
+    /// <summary>
+    /// System changes recorded over a window (newest first, server order): app /
+    /// driver / update / service / startup / task / power / default-app changes.
+    /// Pass specific <paramref name="kinds"/> to filter, or none for all.
+    /// <paramref name="limit"/> of 0 uses the server default; the reply's
+    /// <c>truncated</c> flag says whether more were elided. Read-only — a change is
+    /// a fact about what happened, not a verdict.
+    /// </summary>
+    public Task<RpcOutcome<ListSystemChangesReply>> ListSystemChangesAsync(
+        long fromMs,
+        long toMs,
+        IEnumerable<SystemChangeKind>? kinds = null,
+        uint limit = 0,
+        CancellationToken cancellationToken = default)
+    {
+        var req = new ListSystemChangesRequest
+        {
+            Range = new TimeRange { FromMs = fromMs, ToMs = toMs },
+            Limit = limit,
+        };
+        if (kinds is not null)
+        {
+            req.Kinds.AddRange(kinds);
+        }
+        return GuardAsync(() => _client.ListSystemChangesAsync(
+            req, cancellationToken: cancellationToken).ResponseAsync);
+    }
+
+    /// <summary>
+    /// Crash / hang / bugcheck / service-failure / unexpected-shutdown records over
+    /// a window, each with its correlated context. Pass specific
+    /// <paramref name="kinds"/> to filter, or none for all. The reply may report
+    /// <c>available = false</c> with a plain reason ("reliability log unavailable")
+    /// — a calm, expected state on machines where the log is off, which callers
+    /// surface rather than an empty list; the <c>truncated</c> flag says whether
+    /// more were elided. Read-only — a record is history and context, not blame.
+    /// </summary>
+    public Task<RpcOutcome<ListCrashesReply>> ListCrashesAsync(
+        long fromMs,
+        long toMs,
+        IEnumerable<CrashKind>? kinds = null,
+        uint limit = 0,
+        CancellationToken cancellationToken = default)
+    {
+        var req = new ListCrashesRequest
+        {
+            Range = new TimeRange { FromMs = fromMs, ToMs = toMs },
+            Limit = limit,
+        };
+        if (kinds is not null)
+        {
+            req.Kinds.AddRange(kinds);
+        }
+        return GuardAsync(() => _client.ListCrashesAsync(
+            req, cancellationToken: cancellationToken).ResponseAsync);
+    }
+
+    // ----------------------------------------------------------------------
     // M6: safe process actions (AtlasControl) — two-phase prepare/execute.
     // ----------------------------------------------------------------------
 

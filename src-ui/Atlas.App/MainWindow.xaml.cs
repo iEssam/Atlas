@@ -48,6 +48,8 @@ public sealed partial class MainWindow : Window
             "rules" => typeof(RulesPage),
             "profiles" => typeof(ProfilesPage),
             "diagnostics" => typeof(DiagnosticsPage),
+            "systemchanges" => typeof(SystemChangesPage),
+            "reliability" => typeof(ReliabilityPage),
             "settings" => typeof(SettingsPage),
             _ => null,
         };
