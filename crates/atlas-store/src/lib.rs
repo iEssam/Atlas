@@ -325,6 +325,63 @@ CREATE TABLE IF NOT EXISTS fired_alert (
 CREATE INDEX IF NOT EXISTS ix_fired_alert_ts ON fired_alert(ts_ms);
 "#;
 
+// Additive v10 migration (docs/phases.md Phase 3 / R3, PRD §9.13/§9.14):
+// forensics — system-change tracking + crash correlation.
+//
+// `system_change` is the append-only log the periodic change-detector writes: each
+// row is one detected change (`kind` carries the proto `SystemChangeKind`
+// discriminant), `detail` a human before→after summary, `reversible` a
+// this-milestone-informational flag. Rows are diff-sourced (inventory diffing) or
+// event-sourced (WUA update history); the table doesn't distinguish — the `kind`
+// does. No natural unique key: a change is a point-in-time event, and the
+// inventory-snapshot baseline (below) makes the detector idempotent by only
+// emitting rows when the inventory actually moved.
+//
+// `inventory_snapshot` is the detector's "last inventory" baseline — one row per
+// snapshot key (the detector stores the whole inventory as one JSON blob under
+// key 'full'; per-kind keys are also allowed). It is opaque TEXT to the store;
+// only the service (which owns serde) parses it.
+//
+// `crash_record` is the correlated crash log the crash-scanner writes: `kind`
+// carries the proto `CrashKind` discriminant, `context` is a JSON array of the
+// factual, hedged correlation strings the service assembles (peak memory/CPU,
+// recent changes, repeated-restart note). `UNIQUE(ts_ms, kind, subject)` makes a
+// re-scan of the same log window idempotent — a repeated scan refreshes `fault`/
+// `exception_code`/`context` on the existing row rather than duplicating it.
+//
+// All objects are created IF NOT EXISTS so a v9 database upgrades in place.
+const SCHEMA_V10: &str = r#"
+CREATE TABLE IF NOT EXISTS system_change (
+    id          INTEGER PRIMARY KEY,
+    ts_ms       INTEGER NOT NULL,
+    kind        INTEGER NOT NULL,   -- proto SystemChangeKind discriminant
+    subject     TEXT    NOT NULL,
+    detail      TEXT    NOT NULL,   -- human-readable before→after summary
+    publisher   TEXT    NOT NULL,
+    responsible TEXT    NOT NULL,
+    reversible  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_system_change_ts ON system_change(ts_ms);
+
+CREATE TABLE IF NOT EXISTS inventory_snapshot (
+    kind       TEXT    PRIMARY KEY,   -- 'full' (or a per-inventory-kind key)
+    json       TEXT    NOT NULL,
+    updated_ms INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS crash_record (
+    id             INTEGER PRIMARY KEY,
+    ts_ms          INTEGER NOT NULL,
+    kind           INTEGER NOT NULL,   -- proto CrashKind discriminant
+    subject        TEXT    NOT NULL,
+    fault          TEXT    NOT NULL,
+    exception_code TEXT    NOT NULL,
+    context        TEXT    NOT NULL,   -- JSON array of factual, hedged strings
+    UNIQUE(ts_ms, kind, subject)
+);
+CREATE INDEX IF NOT EXISTS ix_crash_record_ts ON crash_record(ts_ms);
+"#;
+
 /// Whether `table` already has a column named `column`, via `PRAGMA table_info`.
 /// Used to make the v3 `ADD COLUMN` migration idempotent (SQLite lacks
 /// `ADD COLUMN IF NOT EXISTS`).
@@ -576,6 +633,36 @@ pub struct FiredAlertRow {
     pub detail: String,
 }
 
+/// One recorded system change (schema v10, PRD §9.13). Mirrors the proto
+/// `SystemChange`: `kind` is the proto `SystemChangeKind` discriminant, `detail` a
+/// human before→after summary. `id` is assigned by the store on insert.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SystemChangeRow {
+    pub id: i64,
+    pub ts_ms: i64,
+    pub kind: i32,
+    pub subject: String,
+    pub detail: String,
+    pub publisher: String,
+    pub responsible: String,
+    pub reversible: bool,
+}
+
+/// One recorded, correlated crash (schema v10, PRD §9.14). Mirrors the proto
+/// `CrashRecord`: `kind` is the proto `CrashKind` discriminant; `context` is the
+/// factual, hedged correlation string list the service assembled (stored as a JSON
+/// array). `id` is assigned by the store on insert.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CrashRow {
+    pub id: i64,
+    pub ts_ms: i64,
+    pub kind: i32,
+    pub subject: String,
+    pub fault: String,
+    pub exception_code: String,
+    pub context: Vec<String>,
+}
+
 pub struct Store {
     conn: Connection,
 }
@@ -655,6 +742,10 @@ impl Store {
         if version < 9 {
             self.conn.execute_batch(SCHEMA_V9)?;
             self.conn.execute_batch("PRAGMA user_version = 9;")?;
+        }
+        if version < 10 {
+            self.conn.execute_batch(SCHEMA_V10)?;
+            self.conn.execute_batch("PRAGMA user_version = 10;")?;
         }
         // FTS5 objects are built (idempotently, IF NOT EXISTS) on every open
         // once the module is confirmed present, independent of user_version: a
@@ -2074,6 +2165,190 @@ impl Store {
         )?;
         Ok(n > 0)
     }
+
+    // -- R3 system changes (schema v10, PRD §9.13) ------------------------------
+
+    /// Records one detected system change (the change-detector's output). `id` is
+    /// assigned by the store; `ts_ms` is stamped now when 0. Returns the new id.
+    pub fn record_system_change(&self, c: &SystemChangeRow) -> Result<i64> {
+        let ts = if c.ts_ms == 0 { now_ms() } else { c.ts_ms };
+        self.conn.execute(
+            "INSERT INTO system_change
+                 (ts_ms, kind, subject, detail, publisher, responsible, reversible)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                ts,
+                c.kind,
+                c.subject,
+                c.detail,
+                c.publisher,
+                c.responsible,
+                c.reversible as i64,
+            ],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Lists recorded system changes in `[from_ms, to_ms]`, most recent first,
+    /// optionally filtered to `kinds` (empty = all), capped at `limit`. Returns
+    /// `(rows, truncated)`; one extra row is fetched to detect truncation.
+    pub fn list_system_changes(
+        &self,
+        from_ms: i64,
+        to_ms: i64,
+        kinds: &[i32],
+        limit: u32,
+    ) -> Result<(Vec<SystemChangeRow>, bool)> {
+        let fetch = limit as i64 + 1;
+        let kind_clause = if kinds.is_empty() {
+            String::new()
+        } else {
+            let list = kinds
+                .iter()
+                .map(|k| k.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            format!(" AND kind IN ({list})")
+        };
+        let sql = format!(
+            "SELECT id, ts_ms, kind, subject, detail, publisher, responsible, reversible
+               FROM system_change
+              WHERE ts_ms >= ?1 AND ts_ms <= ?2{kind_clause}
+              ORDER BY ts_ms DESC, id DESC
+              LIMIT ?3"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params![from_ms, to_ms, fetch], |r| {
+            Ok(SystemChangeRow {
+                id: r.get(0)?,
+                ts_ms: r.get(1)?,
+                kind: r.get::<_, i64>(2)? as i32,
+                subject: r.get(3)?,
+                detail: r.get(4)?,
+                publisher: r.get(5)?,
+                responsible: r.get(6)?,
+                reversible: r.get::<_, i64>(7)? != 0,
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        let truncated = out.len() as i64 > limit as i64;
+        out.truncate(limit as usize);
+        Ok((out, truncated))
+    }
+
+    /// Reads the stored inventory-snapshot JSON for `kind` (the detector's "last
+    /// inventory" baseline), or `None` if none is recorded yet. The blob is opaque
+    /// to the store.
+    pub fn get_inventory(&self, kind: &str) -> Result<Option<String>> {
+        let json = self
+            .conn
+            .query_row(
+                "SELECT json FROM inventory_snapshot WHERE kind = ?1",
+                params![kind],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()?;
+        Ok(json)
+    }
+
+    /// Upserts the inventory-snapshot JSON for `kind`, stamping `updated_ms` now.
+    pub fn set_inventory(&self, kind: &str, json: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO inventory_snapshot (kind, json, updated_ms)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(kind) DO UPDATE SET json = excluded.json, updated_ms = excluded.updated_ms",
+            params![kind, json, now_ms()],
+        )?;
+        Ok(())
+    }
+
+    // -- R3 crash correlation (schema v10, PRD §9.14) --------------------------
+
+    /// Records one correlated crash (the crash-scanner's output). Idempotent on
+    /// `(ts_ms, kind, subject)`: a re-scan of the same log window refreshes the
+    /// fault / exception / context on the existing row rather than duplicating it.
+    /// `context` is serialized to a JSON array. Returns the row id.
+    pub fn record_crash(&self, c: &CrashRow) -> Result<i64> {
+        let context_json =
+            serde_json::to_string(&c.context).with_context(|| "serializing crash context")?;
+        self.conn.execute(
+            "INSERT INTO crash_record
+                 (ts_ms, kind, subject, fault, exception_code, context)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(ts_ms, kind, subject) DO UPDATE SET
+                 fault = excluded.fault,
+                 exception_code = excluded.exception_code,
+                 context = excluded.context",
+            params![
+                c.ts_ms,
+                c.kind,
+                c.subject,
+                c.fault,
+                c.exception_code,
+                context_json,
+            ],
+        )?;
+        let id = self.conn.query_row(
+            "SELECT id FROM crash_record WHERE ts_ms = ?1 AND kind = ?2 AND subject = ?3",
+            params![c.ts_ms, c.kind, c.subject],
+            |r| r.get(0),
+        )?;
+        Ok(id)
+    }
+
+    /// Lists recorded crashes in `[from_ms, to_ms]`, most recent first, optionally
+    /// filtered to `kinds` (empty = all), capped at `limit`. Returns
+    /// `(rows, truncated)`; `context` is decoded from its JSON array (a malformed
+    /// blob yields an empty list rather than failing the whole read).
+    pub fn list_crashes(
+        &self,
+        from_ms: i64,
+        to_ms: i64,
+        kinds: &[i32],
+        limit: u32,
+    ) -> Result<(Vec<CrashRow>, bool)> {
+        let fetch = limit as i64 + 1;
+        let kind_clause = if kinds.is_empty() {
+            String::new()
+        } else {
+            let list = kinds
+                .iter()
+                .map(|k| k.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            format!(" AND kind IN ({list})")
+        };
+        let sql = format!(
+            "SELECT id, ts_ms, kind, subject, fault, exception_code, context
+               FROM crash_record
+              WHERE ts_ms >= ?1 AND ts_ms <= ?2{kind_clause}
+              ORDER BY ts_ms DESC, id DESC
+              LIMIT ?3"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params![from_ms, to_ms, fetch], |r| {
+            let context_json: String = r.get(6)?;
+            Ok(CrashRow {
+                id: r.get(0)?,
+                ts_ms: r.get(1)?,
+                kind: r.get::<_, i64>(2)? as i32,
+                subject: r.get(3)?,
+                fault: r.get(4)?,
+                exception_code: r.get(5)?,
+                context: serde_json::from_str(&context_json).unwrap_or_default(),
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        let truncated = out.len() as i64 > limit as i64;
+        out.truncate(limit as usize);
+        Ok((out, truncated))
+    }
 }
 
 /// Builds a case-insensitive substring LIKE pattern (`%needle%`) with the
@@ -2237,7 +2512,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 9, "migration walks v1 up to the current schema");
+        assert_eq!(version, 10, "migration walks v1 up to the current schema");
 
         store
             .write_self_sample(&SelfSampleRow {
@@ -2313,7 +2588,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 9, "migration walks a v2 db to the current schema");
+        assert_eq!(version, 10, "migration walks a v2 db to the current schema");
         assert!(column_exists(&store.conn, "process_instance", "exit_status").unwrap());
 
         // Pre-existing row survived and has a NULL exit_status.
@@ -2423,13 +2698,13 @@ mod tests {
     }
 
     #[test]
-    fn fresh_database_is_v8() {
+    fn fresh_database_is_v10() {
         let store = Store::open_in_memory().unwrap();
         let version: i64 = store
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 9);
+        assert_eq!(version, 10);
     }
 
     fn sample_rule(name: &str, image: &str) -> RuleRow {
@@ -2913,5 +3188,142 @@ mod tests {
         let (rows, _) = store.list_fired_alerts(0, 10_000, 10).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].rule_name, "");
+    }
+
+    // -- R3 forensics (schema v10) ---------------------------------------------
+
+    fn sys_change(ts_ms: i64, kind: i32, subject: &str) -> SystemChangeRow {
+        SystemChangeRow {
+            id: 0,
+            ts_ms,
+            kind,
+            subject: subject.into(),
+            detail: format!("{subject} changed"),
+            publisher: "Acme".into(),
+            responsible: String::new(),
+            reversible: false,
+        }
+    }
+
+    #[test]
+    fn system_changes_record_and_range_filter() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .record_system_change(&sys_change(1_000, 1, "AppA"))
+            .unwrap();
+        store
+            .record_system_change(&sys_change(2_000, 8, "SvcB"))
+            .unwrap();
+        store
+            .record_system_change(&sys_change(3_000, 10, "RunC"))
+            .unwrap();
+
+        // Full range, newest first.
+        let (rows, truncated) = store.list_system_changes(0, 10_000, &[], 10).unwrap();
+        assert_eq!(rows.len(), 3);
+        assert!(!truncated);
+        assert_eq!(rows[0].subject, "RunC", "newest first");
+        assert_eq!(rows[2].subject, "AppA");
+        assert!(rows[0].id > 0, "store assigns id");
+
+        // Kind filter.
+        let (svc, _) = store.list_system_changes(0, 10_000, &[8], 10).unwrap();
+        assert_eq!(svc.len(), 1);
+        assert_eq!(svc[0].kind, 8);
+
+        // Window filter.
+        let (win, _) = store.list_system_changes(1_500, 2_500, &[], 10).unwrap();
+        assert_eq!(win.len(), 1);
+        assert_eq!(win[0].subject, "SvcB");
+    }
+
+    #[test]
+    fn system_changes_truncation_flag() {
+        let store = Store::open_in_memory().unwrap();
+        for i in 0..5 {
+            store
+                .record_system_change(&sys_change(1_000 + i, 1, "App"))
+                .unwrap();
+        }
+        let (rows, truncated) = store.list_system_changes(0, 10_000, &[], 3).unwrap();
+        assert_eq!(rows.len(), 3);
+        assert!(truncated, "more rows than the limit");
+    }
+
+    #[test]
+    fn inventory_snapshot_get_set_roundtrip() {
+        let store = Store::open_in_memory().unwrap();
+        assert!(
+            store.get_inventory("full").unwrap().is_none(),
+            "empty at first"
+        );
+        store.set_inventory("full", r#"{"apps":[]}"#).unwrap();
+        assert_eq!(
+            store.get_inventory("full").unwrap().as_deref(),
+            Some(r#"{"apps":[]}"#)
+        );
+        // Upsert replaces.
+        store.set_inventory("full", r#"{"apps":[1]}"#).unwrap();
+        assert_eq!(
+            store.get_inventory("full").unwrap().as_deref(),
+            Some(r#"{"apps":[1]}"#)
+        );
+    }
+
+    #[test]
+    fn crashes_record_context_roundtrip_and_idempotent() {
+        let store = Store::open_in_memory().unwrap();
+        let crash = CrashRow {
+            id: 0,
+            ts_ms: 5_000,
+            kind: 1, // APP_CRASH
+            subject: "app.exe".into(),
+            fault: "app.dll".into(),
+            exception_code: "0xc0000005".into(),
+            context: vec![
+                "peak memory 82% in the 5 min before".into(),
+                "'Acme' app_updated 2h before this crash (correlation, not proof)".into(),
+            ],
+        };
+        let id1 = store.record_crash(&crash).unwrap();
+
+        let (rows, _) = store.list_crashes(0, 10_000, &[], 10).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].context.len(), 2, "context JSON round-trips");
+        assert!(rows[0].context[1].contains("not proof"));
+
+        // Re-scan of the same (ts, kind, subject) refreshes rather than dupes.
+        let mut refreshed = crash.clone();
+        refreshed.context = vec!["updated context".into()];
+        let id2 = store.record_crash(&refreshed).unwrap();
+        assert_eq!(id1, id2, "idempotent on (ts_ms, kind, subject)");
+        let (rows, _) = store.list_crashes(0, 10_000, &[], 10).unwrap();
+        assert_eq!(rows.len(), 1, "no duplicate row");
+        assert_eq!(rows[0].context, vec!["updated context".to_string()]);
+    }
+
+    #[test]
+    fn crashes_kind_and_window_filter() {
+        let store = Store::open_in_memory().unwrap();
+        let mk = |ts: i64, kind: i32, subj: &str| CrashRow {
+            id: 0,
+            ts_ms: ts,
+            kind,
+            subject: subj.into(),
+            fault: String::new(),
+            exception_code: String::new(),
+            context: vec![],
+        };
+        store.record_crash(&mk(1_000, 1, "a.exe")).unwrap();
+        store.record_crash(&mk(2_000, 3, "BugCheck")).unwrap();
+        store.record_crash(&mk(3_000, 1, "b.exe")).unwrap();
+
+        let (bug, _) = store.list_crashes(0, 10_000, &[3], 10).unwrap();
+        assert_eq!(bug.len(), 1);
+        assert_eq!(bug[0].subject, "BugCheck");
+
+        let (all, _) = store.list_crashes(0, 10_000, &[], 10).unwrap();
+        assert_eq!(all.len(), 3);
+        assert_eq!(all[0].ts_ms, 3_000, "newest first");
     }
 }

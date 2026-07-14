@@ -10,6 +10,10 @@ pub mod actions;
 pub mod boot;
 pub mod cadence;
 #[cfg(windows)]
+pub mod changes;
+#[cfg(windows)]
+pub mod crashes;
+#[cfg(windows)]
 pub mod events;
 pub mod ffi;
 pub mod gauges;
@@ -49,6 +53,15 @@ pub use actions::{
 #[cfg(windows)]
 pub use boot::{analyze_boots, BootAnalysis, BootRecord};
 pub use cadence::{CadenceController, Tick};
+#[cfg(windows)]
+pub use changes::{
+    collect_inventory, diff_inventories, windows_update_history, AppEntry, DefaultAppEntry,
+    DetectedChange, Inventory, StartupItem, SvcEntry, TaskItem,
+};
+#[cfg(windows)]
+pub use crashes::{
+    count_repeated_restarts, read_crashes, recent_change_notes, CrashScan, RawCrash,
+};
 #[cfg(windows)]
 pub use events::{EventError, ProcessEvent, ProcessEventKind, ProcessEventWatcher, WatcherOptions};
 pub use gauges::{cpu_times, memory_status, processor_count, CpuTimes, MemoryStatus};

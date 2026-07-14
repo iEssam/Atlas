@@ -33,32 +33,35 @@ use atlas_ipc::v0::atlas_query_server::AtlasQuery;
 use atlas_ipc::{
     BatteryStatus as ProtoBatteryStatus, Bookmark, BootRecord as ProtoBootRecord,
     CapabilitiesReply, CapabilitiesRequest, CapabilityKind, Connection as ProtoConnection,
-    CreateBookmarkReply, CreateBookmarkRequest, CreatePrivacyAlertRuleReply,
-    CreatePrivacyAlertRuleRequest, DeletePrivacyAlertRuleReply, DeletePrivacyAlertRuleRequest,
-    DiagnoseReply, DiagnoseRequest, EventRow, FindResourceOwnersReply, FindResourceOwnersRequest,
-    FiredAlert, GenerateReportReply, GenerateReportRequest, GetBatteryStatusReply,
-    GetBatteryStatusRequest, GetThermalReply, GetThermalRequest, HandleRow, Incident, L4Protocol,
-    ListBookmarksReply, ListBookmarksRequest, ListBootsReply, ListBootsRequest,
-    ListConnectionsReply, ListConnectionsRequest, ListEventsReply, ListEventsRequest,
-    ListFiredAlertsReply, ListFiredAlertsRequest, ListHandlesReply, ListHandlesRequest,
-    ListIncidentsReply, ListIncidentsRequest, ListListeningPortsReply, ListListeningPortsRequest,
-    ListModulesReply, ListModulesRequest, ListPrivacyAlertRulesReply, ListPrivacyAlertRulesRequest,
+    CrashRecord as ProtoCrashRecord, CreateBookmarkReply, CreateBookmarkRequest,
+    CreatePrivacyAlertRuleReply, CreatePrivacyAlertRuleRequest, DeletePrivacyAlertRuleReply,
+    DeletePrivacyAlertRuleRequest, DiagnoseReply, DiagnoseRequest, EventRow,
+    FindResourceOwnersReply, FindResourceOwnersRequest, FiredAlert, GenerateReportReply,
+    GenerateReportRequest, GetBatteryStatusReply, GetBatteryStatusRequest, GetThermalReply,
+    GetThermalRequest, HandleRow, Incident, L4Protocol, ListBookmarksReply, ListBookmarksRequest,
+    ListBootsReply, ListBootsRequest, ListConnectionsReply, ListConnectionsRequest,
+    ListCrashesReply, ListCrashesRequest, ListEventsReply, ListEventsRequest, ListFiredAlertsReply,
+    ListFiredAlertsRequest, ListHandlesReply, ListHandlesRequest, ListIncidentsReply,
+    ListIncidentsRequest, ListListeningPortsReply, ListListeningPortsRequest, ListModulesReply,
+    ListModulesRequest, ListPrivacyAlertRulesReply, ListPrivacyAlertRulesRequest,
     ListPrivacyEventsReply, ListPrivacyEventsRequest, ListPrivacyUsageReply,
     ListPrivacyUsageRequest, ListScheduledTasksReply, ListScheduledTasksRequest, ListServicesReply,
-    ListServicesRequest, ListStartupReply, ListStartupRequest, ListThreadsReply,
-    ListThreadsRequest, ListeningPort as ProtoListeningPort, MetricKind, ModuleRow,
-    PrivacyAlertRule, PrivacyEvent, PrivacyUsage, ProcessDetail as ProtoProcessDetail,
-    ProcessDetailReply, ProcessDetailRequest, ProcessHit, ProcessRole, ProcessRow, QueryRangeReply,
-    QueryRangeRequest, RangeBucket, ReportFormat, ResourceOwner as ProtoResourceOwner, RingUpdate,
-    RingWriter, RowInput, ScheduledTask as ProtoScheduledTask, SearchHit, SearchReply,
-    SearchRequest, ServiceEntry, ServiceStartType, ServiceState, SnapshotReply, SnapshotRequest,
-    StartupEntry, StartupSource, SystemGauges, TcpState, ThermalSensor as ProtoThermalSensor,
+    ListServicesRequest, ListStartupReply, ListStartupRequest, ListSystemChangesReply,
+    ListSystemChangesRequest, ListThreadsReply, ListThreadsRequest,
+    ListeningPort as ProtoListeningPort, MetricKind, ModuleRow, PrivacyAlertRule, PrivacyEvent,
+    PrivacyUsage, ProcessDetail as ProtoProcessDetail, ProcessDetailReply, ProcessDetailRequest,
+    ProcessHit, ProcessRole, ProcessRow, QueryRangeReply, QueryRangeRequest, RangeBucket,
+    ReportFormat, ResourceOwner as ProtoResourceOwner, RingUpdate, RingWriter, RowInput,
+    ScheduledTask as ProtoScheduledTask, SearchHit, SearchReply, SearchRequest, ServiceEntry,
+    ServiceStartType, ServiceState, SnapshotReply, SnapshotRequest, StartupEntry, StartupSource,
+    SystemChange as ProtoSystemChange, SystemGauges, TcpState, ThermalSensor as ProtoThermalSensor,
     ThreadRow, TimeRange, UpdatePrivacyAlertRuleReply, UpdatePrivacyAlertRuleRequest,
-    CAP_BATTERY_STATUS, CAP_BOOT_ANALYSIS, CAP_DIAGNOSTICS, CAP_FTS5_SEARCH, CAP_HISTORY_QUERIES,
-    CAP_INCIDENT_DETECTION, CAP_NETWORK_INSPECTOR, CAP_PRIVACY_ALERTS, CAP_PRIVACY_EVENTS,
-    CAP_PROCESS_INSPECTOR, CAP_PROCESS_SNAPSHOTS, CAP_PROFILES, CAP_REPORTS,
+    CAP_BATTERY_STATUS, CAP_BOOT_ANALYSIS, CAP_CRASH_ANALYSIS, CAP_DIAGNOSTICS, CAP_FTS5_SEARCH,
+    CAP_HISTORY_QUERIES, CAP_INCIDENT_DETECTION, CAP_NETWORK_INSPECTOR, CAP_PRIVACY_ALERTS,
+    CAP_PRIVACY_EVENTS, CAP_PROCESS_INSPECTOR, CAP_PROCESS_SNAPSHOTS, CAP_PROFILES, CAP_REPORTS,
     CAP_RESOURCE_OWNERSHIP, CAP_RULES_ENGINE, CAP_SAFE_ACTIONS, CAP_SCHEDULED_TASKS,
-    CAP_SERVICES_INVENTORY, CAP_STARTUP_INVENTORY, CAP_THERMAL_SENSORS, RING_ROWS,
+    CAP_SERVICES_INVENTORY, CAP_STARTUP_INVENTORY, CAP_SYSTEM_CHANGES, CAP_THERMAL_SENSORS,
+    RING_ROWS,
 };
 
 use crate::diagnostics::{self, DiagnoseContext};
@@ -192,6 +195,14 @@ pub struct QueryService {
     /// records fired alerts + privacy-event history. Both stop on the shared flag.
     privacy_watch: Mutex<Option<std::thread::JoinHandle<()>>>,
     privacy_eval: Mutex<Option<std::thread::JoinHandle<()>>>,
+    /// The R3 forensics detector threads (docs/phases.md Phase 3). The change
+    /// detector diffs the app/service/startup/task inventory every ~60 s and
+    /// records `system_change` rows; the crash scanner reads the reliability/WER
+    /// logs on a slower cadence, correlates each crash against recorded resource +
+    /// change history, and records `crash_record` rows. Both stop on the shared
+    /// flag and are joined on shutdown.
+    change_detector: Mutex<Option<std::thread::JoinHandle<()>>>,
+    crash_scanner: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
 impl QueryService {
@@ -268,6 +279,20 @@ impl QueryService {
             .name("atlas-privacy-eval".into())
             .spawn(move || crate::privacy_alerts::Evaluator::new(eval_store).run(prx, eval_stop))?;
 
+        // R3 forensics: the change detector seeds its inventory baseline + diffs
+        // on a ~60 s timer; the crash scanner reads the reliability logs on a
+        // slower cadence and correlates. Both observe the same stop flag.
+        let detect_store = store.clone();
+        let detect_stop = stop.clone();
+        let change_detector = std::thread::Builder::new()
+            .name("atlas-change-detector".into())
+            .spawn(move || crate::forensics::ChangeDetector::new(detect_store).run(detect_stop))?;
+        let crash_store = store.clone();
+        let crash_stop = stop.clone();
+        let crash_scanner = std::thread::Builder::new()
+            .name("atlas-crash-scanner".into())
+            .spawn(move || crate::forensics::CrashScanner::new(crash_store).run(crash_stop))?;
+
         Ok(Self {
             slot,
             tx,
@@ -278,6 +303,8 @@ impl QueryService {
             sampler: Mutex::new(Some(sampler)),
             privacy_watch: Mutex::new(Some(privacy_watch)),
             privacy_eval: Mutex::new(Some(privacy_eval)),
+            change_detector: Mutex::new(Some(change_detector)),
+            crash_scanner: Mutex::new(Some(crash_scanner)),
         })
     }
 
@@ -301,6 +328,8 @@ impl QueryService {
         for (slot, label) in [
             (&self.privacy_watch, "privacy-watch"),
             (&self.privacy_eval, "privacy-eval"),
+            (&self.change_detector, "change-detector"),
+            (&self.crash_scanner, "crash-scanner"),
         ] {
             let handle = slot.lock().ok().and_then(|mut g| g.take());
             if let Some(h) = handle {
@@ -444,6 +473,15 @@ impl AtlasQuery for QueryService {
             // runtime on a blocking thread.
             flags.push(CAP_NETWORK_INSPECTOR.to_string());
             flags.push(CAP_SCHEDULED_TASKS.to_string());
+            // R3 forensics: system-change tracking is store-backed (the detector
+            // diffs inventories on its own thread), always available on Windows.
+            // Crash analysis is advertised only when the reliability/WER logs are
+            // readable — the crash scanner records that availability at startup;
+            // the per-call ListCrashes reply also carries available + reason.
+            flags.push(CAP_SYSTEM_CHANGES.to_string());
+            if crate::forensics::crash_availability(&self.store).0 {
+                flags.push(CAP_CRASH_ANALYSIS.to_string());
+            }
             let (has_battery, has_thermal, has_boots) = tokio::task::spawn_blocking(|| {
                 (
                     battery_status().present,
@@ -757,6 +795,49 @@ impl AtlasQuery for QueryService {
             .map_err(|e| Status::internal(format!("list_fired_alerts: {e}")))?;
         Ok(Response::new(ListFiredAlertsReply {
             alerts: rows.iter().map(fired_alert_row_to_proto).collect(),
+            truncated,
+        }))
+    }
+
+    // R3 forensics (PRD §9.13/§9.14). Both are pure store reads — the detector
+    // threads write `system_change` / `crash_record` rows off the query path.
+
+    async fn list_system_changes(
+        &self,
+        req: Request<ListSystemChangesRequest>,
+    ) -> Result<Response<ListSystemChangesReply>, Status> {
+        let r = req.into_inner();
+        let (from_ms, to_ms) = range_bounds(&r.range);
+        let limit = if r.limit == 0 { 1000 } else { r.limit };
+        let store = self.store.lock().map_err(|_| poisoned())?;
+        let (rows, truncated) = store
+            .list_system_changes(from_ms, to_ms, &r.kinds, limit)
+            .map_err(|e| Status::internal(format!("list_system_changes: {e}")))?;
+        Ok(Response::new(ListSystemChangesReply {
+            changes: rows.iter().map(system_change_row_to_proto).collect(),
+            truncated,
+        }))
+    }
+
+    async fn list_crashes(
+        &self,
+        req: Request<ListCrashesRequest>,
+    ) -> Result<Response<ListCrashesReply>, Status> {
+        let r = req.into_inner();
+        let (from_ms, to_ms) = range_bounds(&r.range);
+        let limit = if r.limit == 0 { 1000 } else { r.limit };
+        // Honest availability: the crash scanner records whether the reliability/
+        // WER logs were readable on its last pass. An unavailable state still
+        // returns any crashes previously recorded (never a hard error).
+        let (available, unavailable_reason) = crate::forensics::crash_availability(&self.store);
+        let store = self.store.lock().map_err(|_| poisoned())?;
+        let (rows, truncated) = store
+            .list_crashes(from_ms, to_ms, &r.kinds, limit)
+            .map_err(|e| Status::internal(format!("list_crashes: {e}")))?;
+        Ok(Response::new(ListCrashesReply {
+            available,
+            unavailable_reason,
+            crashes: rows.iter().map(crash_row_to_proto).collect(),
             truncated,
         }))
     }
@@ -1270,6 +1351,36 @@ fn fired_alert_row_to_proto(a: &atlas_store::FiredAlertRow) -> FiredAlert {
         app_id: a.app_id.clone(),
         display_name: a.display_name.clone(),
         detail: a.detail.clone(),
+    }
+}
+
+/// Maps a store [`atlas_store::SystemChangeRow`] to the proto [`ProtoSystemChange`]
+/// (R3 §9.13). `kind` carries the proto `SystemChangeKind` discriminant directly.
+fn system_change_row_to_proto(c: &atlas_store::SystemChangeRow) -> ProtoSystemChange {
+    ProtoSystemChange {
+        id: c.id,
+        ts_ms: c.ts_ms,
+        kind: c.kind,
+        subject: c.subject.clone(),
+        detail: c.detail.clone(),
+        publisher: c.publisher.clone(),
+        responsible: c.responsible.clone(),
+        reversible: c.reversible,
+    }
+}
+
+/// Maps a store [`atlas_store::CrashRow`] to the proto [`ProtoCrashRecord`]
+/// (R3 §9.14). `context` is the factual, hedged correlation list assembled by the
+/// crash scanner.
+fn crash_row_to_proto(c: &atlas_store::CrashRow) -> ProtoCrashRecord {
+    ProtoCrashRecord {
+        id: c.id,
+        ts_ms: c.ts_ms,
+        kind: c.kind,
+        subject: c.subject.clone(),
+        fault: c.fault.clone(),
+        exception_code: c.exception_code.clone(),
+        context: c.context.clone(),
     }
 }
 

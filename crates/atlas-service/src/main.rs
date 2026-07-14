@@ -11,6 +11,8 @@ mod broker;
 mod detectors;
 mod diagnostics;
 #[cfg(windows)]
+mod forensics;
+#[cfg(windows)]
 mod ipc;
 mod privacy_alerts;
 mod report;
@@ -500,6 +502,42 @@ enum Cmd {
     /// until Ctrl+C. The direct verification path for the watcher — no `serve`
     /// needed. Trigger one by starting/stopping a mic or camera app.
     PrivacyWatch,
+    /// Print recorded system changes (R3, PRD §9.13).
+    ///
+    /// Reads the store's `system_change` table — the changes a running `serve`'s
+    /// change detector recorded. The same data `ListSystemChanges` serves.
+    Changes {
+        #[arg(long)]
+        db: Option<PathBuf>,
+        /// Look-back window in minutes (default: 7 days).
+        #[arg(long, default_value_t = 10080)]
+        minutes: u64,
+        #[arg(long, default_value_t = 50)]
+        limit: u32,
+    },
+    /// Print recorded crashes with their correlation context (R3, PRD §9.14).
+    ///
+    /// Reads the store's `crash_record` table — the crashes a running `serve`'s
+    /// crash scanner read + correlated. The same data `ListCrashes` serves.
+    Crashes {
+        #[arg(long)]
+        db: Option<PathBuf>,
+        /// Look-back window in minutes (default: 7 days).
+        #[arg(long, default_value_t = 10080)]
+        minutes: u64,
+        #[arg(long, default_value_t = 50)]
+        limit: u32,
+    },
+    /// One-shot: seed + diff the inventory against the stored baseline (R3).
+    ///
+    /// Runs one change-detection pass directly (no `serve`): collects the current
+    /// app/service/startup/task/power/default-app inventory, diffs it against the
+    /// persisted baseline (recording any differences), imports WUA update history,
+    /// then rewrites the baseline. Run once to seed, again to see changes.
+    DetectChanges {
+        #[arg(long)]
+        db: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -645,6 +683,20 @@ enum BookmarkCmd {
 }
 
 fn main() -> Result<()> {
+    // clap's debug-build argument parser, combined with the large `Cmd` enum,
+    // needs more than the ~1 MB default Windows main-thread stack — even a fresh
+    // `--help` overflows it in a debug build. Run the whole CLI on a worker thread
+    // with a roomy stack; the `serve`/`record` paths spawn their own threads and
+    // tokio runtimes underneath this one, unaffected.
+    std::thread::Builder::new()
+        .name("atlas-cli".into())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(run)?
+        .join()
+        .map_err(|_| anyhow::anyhow!("atlas-service CLI thread panicked"))?
+}
+
+fn run() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
@@ -752,6 +804,13 @@ fn main() -> Result<()> {
             cmd_fired_alerts(db.unwrap_or_else(default_db_path), minutes, limit)
         }
         Cmd::PrivacyWatch => cmd_privacy_watch(),
+        Cmd::Changes { db, minutes, limit } => {
+            cmd_changes(db.unwrap_or_else(default_db_path), minutes, limit)
+        }
+        Cmd::Crashes { db, minutes, limit } => {
+            cmd_crashes(db.unwrap_or_else(default_db_path), minutes, limit)
+        }
+        Cmd::DetectChanges { db } => cmd_detect_changes(db.unwrap_or_else(default_db_path)),
         Cmd::Incidents { db, minutes, limit } => {
             cmd_incidents(db.unwrap_or_else(default_db_path), minutes, limit)
         }
@@ -3167,6 +3226,149 @@ fn cmd_fired_alerts(db_path: PathBuf, minutes: u64, limit: u32) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Short label for a proto `SystemChangeKind` discriminant (R3 dev output).
+fn change_kind_name(kind: i32) -> &'static str {
+    match kind {
+        1 => "APP_INSTALLED",
+        2 => "APP_UPDATED",
+        3 => "APP_REMOVED",
+        4 => "DRIVER_INSTALLED",
+        5 => "DRIVER_UPDATED",
+        6 => "WINDOWS_UPDATE",
+        7 => "SERVICE_INSTALLED",
+        8 => "SERVICE_CONFIG_CHANGED",
+        9 => "SERVICE_REMOVED",
+        10 => "STARTUP_ADDED",
+        11 => "STARTUP_REMOVED",
+        12 => "SCHEDULED_TASK_ADDED",
+        13 => "SCHEDULED_TASK_REMOVED",
+        14 => "POWER_PLAN_CHANGED",
+        15 => "DEFAULT_APP_CHANGED",
+        _ => "UNSPECIFIED",
+    }
+}
+
+/// Short label for a proto `CrashKind` discriminant (R3 dev output).
+fn crash_kind_name(kind: i32) -> &'static str {
+    match kind {
+        1 => "APP_CRASH",
+        2 => "APP_HANG",
+        3 => "BUGCHECK",
+        4 => "SERVICE_FAILURE",
+        5 => "UNEXPECTED_SHUTDOWN",
+        _ => "UNSPECIFIED",
+    }
+}
+
+/// `changes`: print recorded system changes from the store (R3, PRD §9.13).
+fn cmd_changes(db_path: PathBuf, minutes: u64, limit: u32) -> Result<()> {
+    let store = Store::open(&db_path)?;
+    let now = now_ms();
+    let from_ms = now - (minutes as i64) * 60_000;
+    let (changes, truncated) = store.list_system_changes(from_ms, now, &[], limit)?;
+    if changes.is_empty() {
+        println!("No system changes recorded in the last {minutes} minute(s).");
+        return Ok(());
+    }
+    println!(
+        "{} system change(s){}:",
+        changes.len(),
+        if truncated { " (truncated)" } else { "" }
+    );
+    for c in &changes {
+        let publisher = if c.publisher.is_empty() {
+            String::new()
+        } else {
+            format!(" [{}]", c.publisher)
+        };
+        println!(
+            "[{}] {:<22} {}{} :: {}",
+            format_ts(c.ts_ms),
+            change_kind_name(c.kind),
+            truncate(&c.subject, 40),
+            publisher,
+            c.detail,
+        );
+    }
+    Ok(())
+}
+
+/// `crashes`: print recorded crashes with their correlation context (R3,
+/// PRD §9.14).
+fn cmd_crashes(db_path: PathBuf, minutes: u64, limit: u32) -> Result<()> {
+    let store = Store::open(&db_path)?;
+    let now = now_ms();
+    let from_ms = now - (minutes as i64) * 60_000;
+    let (crashes, truncated) = store.list_crashes(from_ms, now, &[], limit)?;
+    if crashes.is_empty() {
+        println!("No crashes recorded in the last {minutes} minute(s).");
+        println!(
+            "(If `serve` has not run on this box, the crash scanner has not read the \
+             reliability/WER logs yet.)"
+        );
+        return Ok(());
+    }
+    println!(
+        "{} crash(es){}:",
+        crashes.len(),
+        if truncated { " (truncated)" } else { "" }
+    );
+    for c in &crashes {
+        let fault = if c.fault.is_empty() {
+            String::new()
+        } else {
+            format!(" fault={}", c.fault)
+        };
+        let exc = if c.exception_code.is_empty() {
+            String::new()
+        } else {
+            format!(" {}", c.exception_code)
+        };
+        println!(
+            "[{}] {:<20} {}{}{}",
+            format_ts(c.ts_ms),
+            crash_kind_name(c.kind),
+            truncate(&c.subject, 40),
+            fault,
+            exc,
+        );
+        for line in &c.context {
+            println!("      - {line}");
+        }
+    }
+    Ok(())
+}
+
+/// `detect-changes`: run one change-detection pass directly (R3). Windows-only —
+/// it collects the live OS inventory. Seeds the baseline on first run; shows the
+/// diff on subsequent runs.
+#[cfg(windows)]
+fn cmd_detect_changes(db_path: PathBuf) -> Result<()> {
+    use std::sync::{Arc, Mutex};
+    let had_baseline = {
+        let store = Store::open(&db_path)?;
+        store.get_inventory("full")?.is_some()
+    };
+    let store = Arc::new(Mutex::new(Store::open(&db_path)?));
+    let detector = forensics::ChangeDetector::new(store);
+    let recorded = detector.detect_once(true);
+    if !had_baseline {
+        println!(
+            "Seeded the inventory baseline (first pass — no diff). {recorded} \
+             event-sourced change(s) imported. Run again to see changes."
+        );
+    } else {
+        println!("Detection pass complete: {recorded} change(s) recorded.");
+    }
+    Ok(())
+}
+
+/// `detect-changes` requires the live OS inventory (Windows-only).
+#[cfg(not(windows))]
+fn cmd_detect_changes(_db_path: PathBuf) -> Result<()> {
+    anyhow::bail!("the `detect-changes` command requires Windows");
 }
 
 /// `privacy-watch`: arm the ConsentStore change-watcher and print live

@@ -247,6 +247,51 @@ impl AtlasQuery for FakeQuery {
         }))
     }
 
+    // R3 forensics: fixed responses so the transport test exercises both new RPCs
+    // end-to-end (the detection/correlation logic is unit-tested in the crates).
+    async fn list_system_changes(
+        &self,
+        _req: Request<atlas_ipc::ListSystemChangesRequest>,
+    ) -> Result<Response<atlas_ipc::ListSystemChangesReply>, Status> {
+        Ok(Response::new(atlas_ipc::ListSystemChangesReply {
+            changes: vec![atlas_ipc::SystemChange {
+                id: 42,
+                ts_ms: 1_700_000_100_000,
+                kind: atlas_ipc::SystemChangeKind::AppUpdated as i32,
+                subject: "Acme Reader".into(),
+                detail: "1.2.3 → 1.2.4".into(),
+                publisher: "Acme".into(),
+                responsible: String::new(),
+                reversible: false,
+            }],
+            truncated: false,
+        }))
+    }
+
+    async fn list_crashes(
+        &self,
+        _req: Request<atlas_ipc::ListCrashesRequest>,
+    ) -> Result<Response<atlas_ipc::ListCrashesReply>, Status> {
+        Ok(Response::new(atlas_ipc::ListCrashesReply {
+            available: true,
+            unavailable_reason: String::new(),
+            crashes: vec![atlas_ipc::CrashRecord {
+                id: 9,
+                ts_ms: 1_700_000_200_000,
+                kind: atlas_ipc::CrashKind::AppCrash as i32,
+                subject: "app.exe".into(),
+                fault: "app.dll".into(),
+                exception_code: "0xc0000005".into(),
+                context: vec![
+                    "peak system memory 82% in the 5 min before this event (correlation, not proof)"
+                        .into(),
+                    "'Acme Reader' app_updated 2h before this event (correlation, not proof)".into(),
+                ],
+            }],
+            truncated: false,
+        }))
+    }
+
     // M8 incidents/diagnostics/reports: fixed responses so the transport test
     // exercises the three new RPCs end-to-end (not the detection/diagnosis
     // logic, which is unit-tested in atlas-service).
@@ -1100,6 +1145,37 @@ async fn capabilities_and_snapshot_round_trip() {
         .expect("DeletePrivacyAlertRule")
         .into_inner();
     assert!(deleted_alert.ok);
+
+    // R3 forensics: system changes + crashes round-trip over the pipe.
+    let changes = client
+        .list_system_changes(atlas_ipc::ListSystemChangesRequest {
+            range: None,
+            kinds: vec![],
+            limit: 0,
+        })
+        .await
+        .expect("ListSystemChanges")
+        .into_inner();
+    assert_eq!(changes.changes.len(), 1);
+    assert_eq!(
+        changes.changes[0].kind,
+        atlas_ipc::SystemChangeKind::AppUpdated as i32
+    );
+    assert_eq!(changes.changes[0].detail, "1.2.3 → 1.2.4");
+
+    let crashes = client
+        .list_crashes(atlas_ipc::ListCrashesRequest {
+            range: None,
+            kinds: vec![],
+            limit: 0,
+        })
+        .await
+        .expect("ListCrashes")
+        .into_inner();
+    assert!(crashes.available);
+    assert_eq!(crashes.crashes.len(), 1);
+    assert_eq!(crashes.crashes[0].exception_code, "0xc0000005");
+    assert!(crashes.crashes[0].context[1].contains("not proof"));
 
     // Shut the server down cleanly.
     let _ = shutdown_tx.send(());
