@@ -69,6 +69,12 @@ pub use v0::{
     ListPrivacyAlertRulesReply, ListPrivacyAlertRulesRequest, PrivacyAlertCondition,
     PrivacyAlertRule, UpdatePrivacyAlertRuleReply, UpdatePrivacyAlertRuleRequest,
 };
+// R3 forensics: system-change tracking + crash correlation (AtlasQuery, PRD
+// §9.13/§9.14).
+pub use v0::{
+    CrashKind, CrashRecord, ListCrashesReply, ListCrashesRequest, ListSystemChangesReply,
+    ListSystemChangesRequest, SystemChange, SystemChangeKind,
+};
 // R2 rules engine + profiles (AtlasRules service, PRD §9.7).
 pub use v0::{
     CoreAffinityMode, CreateProfileReply, CreateProfileRequest, CreateRuleReply, CreateRuleRequest,
@@ -173,3 +179,16 @@ pub const CAP_THERMAL_SENSORS: &str = "thermal_sensors";
 /// alert-rule CRUD + `ListFiredAlerts` surface on AtlasQuery. Store-backed
 /// (rule persistence + fired-alert history); always available on Windows here.
 pub const CAP_PRIVACY_ALERTS: &str = "privacy_alerts";
+
+/// R3: the service tracks system changes (PRD §9.13) — a periodic detector diffs
+/// its own app/service/startup/task/power/default-app inventories (the reliable,
+/// unprivileged core) and augments with WUA update history + driver events where
+/// available; `ListSystemChanges` reads the recorded changes. Store-backed;
+/// always available on Windows here.
+pub const CAP_SYSTEM_CHANGES: &str = "system_changes";
+
+/// R3: the service correlates crashes/hangs/bugchecks/service-failures with the
+/// resource + change context around each event (PRD §9.14, `ListCrashes`).
+/// Advertised only when the WER/reliability event-log channels are readable; the
+/// reply also carries available + unavailable_reason for a precise per-call answer.
+pub const CAP_CRASH_ANALYSIS: &str = "crash_analysis";

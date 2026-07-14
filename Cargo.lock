@@ -155,6 +155,7 @@ dependencies = [
  "anyhow",
  "atlas-tsdb",
  "rusqlite",
+ "serde_json",
 ]
 
 [[package]]
