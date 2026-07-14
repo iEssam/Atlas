@@ -1155,4 +1155,35 @@ service AtlasRules {
   rpc UpdateProfile(UpdateProfileRequest) returns (UpdateProfileReply);
   rpc DeleteProfile(DeleteProfileRequest) returns (DeleteProfileReply);
   rpc SetProfileActive(SetProfileActiveRequest) returns (SetProfileActiveReply);
+  rpc GetDynamicProtection(GetDynamicProtectionRequest) returns (GetDynamicProtectionReply);
+  rpc SetDynamicProtection(SetDynamicProtectionRequest) returns (SetDynamicProtectionReply);
+}
+
+// ---------------------------------------------------------------------------
+// R3: dynamic responsiveness protection (PRD §9.7.3). A watchdog that, when
+// explicitly enabled, TEMPORARILY dampens a background process monopolizing
+// the CPU and auto-restores it — never touches protected-critical or the
+// foreground app, keeps a record of every intervention, off by default.
+// Dampening interventions surface through the existing ListInterventions with
+// rule_id = 0 and rule_name "Dynamic responsiveness protection".
+// ---------------------------------------------------------------------------
+
+message DynamicProtectionConfig {
+  // Off by default — early versions act only on explicit user approval.
+  bool enabled = 1;
+  // A process must exceed this system-CPU share to be a candidate (permille).
+  uint32 cpu_threshold_permille = 2;
+  // ...sustained for at least this long before any intervention.
+  uint32 sustain_seconds = 3;
+  // Auto-restore cap: never dampen a process longer than this.
+  uint32 max_intervention_seconds = 4;
+}
+
+message GetDynamicProtectionRequest {}
+message GetDynamicProtectionReply { DynamicProtectionConfig config = 1; }
+
+message SetDynamicProtectionRequest { DynamicProtectionConfig config = 1; }
+message SetDynamicProtectionReply {
+  bool ok = 1;
+  string message = 2;
 }
