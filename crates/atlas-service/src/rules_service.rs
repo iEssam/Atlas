@@ -18,17 +18,65 @@ use tonic::{Request, Response, Status};
 use atlas_ipc::v0::atlas_rules_server::AtlasRules;
 use atlas_ipc::{
     CreateProfileReply, CreateProfileRequest, CreateRuleReply, CreateRuleRequest,
-    DeleteProfileReply, DeleteProfileRequest, DeleteRuleReply, DeleteRuleRequest, GetRuleReply,
+    DeleteProfileReply, DeleteProfileRequest, DeleteRuleReply, DeleteRuleRequest,
+    DynamicProtectionConfig, GetDynamicProtectionReply, GetDynamicProtectionRequest, GetRuleReply,
     GetRuleRequest, Intervention, ListInterventionsReply, ListInterventionsRequest,
     ListProfilesReply, ListProfilesRequest, ListRulesReply, ListRulesRequest, Profile, Rule,
-    RuleAction, SetProfileActiveReply, SetProfileActiveRequest, SetRuleEnabledReply,
-    SetRuleEnabledRequest, SimulateRuleReply, SimulateRuleRequest, SimulatedTarget,
-    UpdateProfileReply, UpdateProfileRequest, UpdateRuleReply, UpdateRuleRequest,
+    RuleAction, SetDynamicProtectionReply, SetDynamicProtectionRequest, SetProfileActiveReply,
+    SetProfileActiveRequest, SetRuleEnabledReply, SetRuleEnabledRequest, SimulateRuleReply,
+    SimulateRuleRequest, SimulatedTarget, UpdateProfileReply, UpdateProfileRequest,
+    UpdateRuleReply, UpdateRuleRequest,
 };
 use atlas_store::{ProfileRow, RuleRow};
 
+use crate::dynamic_protection::DynConfig;
 use crate::ipc::SharedStore;
 use crate::rules::{ResolvableRule, RulesEngine};
+
+/// Maps the live watchdog [`DynConfig`] onto the proto wire type.
+fn dyn_config_to_proto(c: DynConfig) -> DynamicProtectionConfig {
+    DynamicProtectionConfig {
+        enabled: c.enabled,
+        cpu_threshold_permille: c.cpu_threshold_permille,
+        sustain_seconds: c.sustain_seconds,
+        max_intervention_seconds: c.max_intervention_seconds,
+    }
+}
+
+/// Validates a proto `DynamicProtectionConfig` and, if sound, returns the live
+/// [`DynConfig`]. Returns `Err(message)` describing the first violated bound.
+///
+/// The safety-critical bounds: a threshold in 1..=1000‰ (0 would sweep every
+/// process; >1000 is impossible), a sustain of at least 1 s (some observation
+/// before acting), and a max-intervention cap that is at least 1 s AND at least
+/// the sustain window (a cap shorter than the sustain could never trip, leaving
+/// a dampening effectively unbounded).
+fn validate_dyn_config(c: &DynamicProtectionConfig) -> Result<DynConfig, String> {
+    if c.cpu_threshold_permille == 0 || c.cpu_threshold_permille > 1000 {
+        return Err(format!(
+            "cpu_threshold_permille must be 1..=1000 (got {})",
+            c.cpu_threshold_permille
+        ));
+    }
+    if c.sustain_seconds == 0 {
+        return Err("sustain_seconds must be at least 1".to_string());
+    }
+    if c.max_intervention_seconds == 0 {
+        return Err("max_intervention_seconds must be at least 1".to_string());
+    }
+    if c.max_intervention_seconds < c.sustain_seconds {
+        return Err(format!(
+            "max_intervention_seconds ({}) must be >= sustain_seconds ({})",
+            c.max_intervention_seconds, c.sustain_seconds
+        ));
+    }
+    Ok(DynConfig {
+        enabled: c.enabled,
+        cpu_threshold_permille: c.cpu_threshold_permille,
+        sustain_seconds: c.sustain_seconds,
+        max_intervention_seconds: c.max_intervention_seconds,
+    })
+}
 
 /// The AtlasRules service: shares the query service's store (rule persistence +
 /// audit) and the live [`RulesEngine`] (interventions + the resolver).
@@ -344,6 +392,61 @@ impl AtlasRules for RulesService {
                 message: format!("no profile #{}", r.id),
             })),
         }
+    }
+
+    /// Returns the current dynamic-responsiveness-protection config (R3,
+    /// PRD §9.7.3). Read straight from the live engine (which loaded it from the
+    /// store at start and reflects any live `SetDynamicProtection`).
+    async fn get_dynamic_protection(
+        &self,
+        _req: Request<GetDynamicProtectionRequest>,
+    ) -> Result<Response<GetDynamicProtectionReply>, Status> {
+        let cfg = self.engine.dynamic_config();
+        Ok(Response::new(GetDynamicProtectionReply {
+            config: Some(dyn_config_to_proto(cfg)),
+        }))
+    }
+
+    /// Validates + persists a new dynamic-protection config and applies it live
+    /// (R3, PRD §9.7.3): enabling lets the next sampler tick begin evaluating
+    /// candidates; disabling restores every active dampening immediately.
+    async fn set_dynamic_protection(
+        &self,
+        req: Request<SetDynamicProtectionRequest>,
+    ) -> Result<Response<SetDynamicProtectionReply>, Status> {
+        let proto = req
+            .into_inner()
+            .config
+            .ok_or_else(|| Status::invalid_argument("config is required"))?;
+        let cfg = match validate_dyn_config(&proto) {
+            Ok(c) => c,
+            Err(message) => {
+                return Ok(Response::new(SetDynamicProtectionReply {
+                    ok: false,
+                    message,
+                }));
+            }
+        };
+        // Persist + swap the live config + (on disable) restore all dampenings.
+        // The engine touches the store + reversal ledger (blocking) — run it off
+        // the async runtime.
+        let engine = self.engine.clone();
+        tokio::task::spawn_blocking(move || engine.set_dynamic_config(cfg))
+            .await
+            .map_err(|e| Status::internal(format!("set_dynamic_protection task: {e}")))?;
+
+        let message = if cfg.enabled {
+            format!(
+                "dynamic protection enabled (threshold {}‰, sustain {}s, max {}s)",
+                cfg.cpu_threshold_permille, cfg.sustain_seconds, cfg.max_intervention_seconds
+            )
+        } else {
+            "dynamic protection disabled (all active dampenings restored)".to_string()
+        };
+        Ok(Response::new(SetDynamicProtectionReply {
+            ok: true,
+            message,
+        }))
     }
 }
 

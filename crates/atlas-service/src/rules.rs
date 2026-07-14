@@ -347,11 +347,32 @@ pub mod engine {
         set_default_cpu_sets, set_eco_qos, set_priority_class, CpuTopology, EcoState, ProcKey,
         SampleSet,
     };
-    use atlas_store::AuditRow;
+    use atlas_store::{AuditRow, DynProtRow};
 
-    use super::{resolve, Affinity, Env, Priority, ProcInput, ResolvableRule};
+    use super::{resolve, Affinity, EffectivePolicy, Env, Priority, ProcInput, ResolvableRule};
     use crate::broker::is_protected_process;
+    use crate::dynamic_protection::{is_candidate, restore_reason, DynConfig, RestoreReason};
     use crate::ipc::SharedStore;
+
+    /// Converts a persisted [`DynProtRow`] into the live watchdog [`DynConfig`].
+    fn dyn_config_from_row(r: DynProtRow) -> DynConfig {
+        DynConfig {
+            enabled: r.enabled,
+            cpu_threshold_permille: r.cpu_threshold_permille,
+            sustain_seconds: r.sustain_seconds,
+            max_intervention_seconds: r.max_intervention_seconds,
+        }
+    }
+
+    /// Converts a live watchdog [`DynConfig`] back into a persistable row.
+    fn dyn_row_from_config(c: DynConfig) -> DynProtRow {
+        DynProtRow {
+            enabled: c.enabled,
+            cpu_threshold_permille: c.cpu_threshold_permille,
+            sustain_seconds: c.sustain_seconds,
+            max_intervention_seconds: c.max_intervention_seconds,
+        }
+    }
 
     /// Maps a resolver [`Priority`] to its Win32 priority-class value.
     fn priority_win32(p: Priority) -> Option<u32> {
@@ -409,6 +430,63 @@ pub mod engine {
         }
     }
 
+    /// The `rule_name` a dynamic (watchdog) intervention surfaces through the
+    /// existing `ListInterventions` (rule_id = 0), per the frozen contract.
+    const DYNAMIC_RULE_NAME: &str = "Dynamic responsiveness protection";
+
+    /// One live *dynamic* (watchdog) dampening, with the ORIGINAL state captured
+    /// per dimension for exact reversal. Kept in a ledger separate from the
+    /// rules ledger so an explicit rule and dynamic protection can never co-own a
+    /// dimension of the same process (see [`RulesEngine::apply_tick`]).
+    struct DynEntry {
+        image_name: String,
+        /// When this dampening started (intervention age = now − since_ms).
+        since_ms: i64,
+        /// Pre-intervention priority class (`None` = was unreadable, so left).
+        orig_priority: Option<u32>,
+        /// Pre-intervention EcoQoS state, restored verbatim.
+        orig_eco: Option<EcoState>,
+        /// The factual, human "applied" line surfaced via `ListInterventions`.
+        applied: String,
+    }
+
+    /// Per-process CPU-streak bookkeeping for the watchdog: when the process most
+    /// recently crossed *up* to the threshold, and (once dampened) when it most
+    /// recently fell *below* it. Exactly one of the two is `Some` at a time.
+    #[derive(Clone, Copy, Default)]
+    struct Streak {
+        /// First tick (ms) of the current continuous at/above-threshold run.
+        above_since: Option<i64>,
+        /// First tick (ms) of the current continuous below-threshold run.
+        below_since: Option<i64>,
+    }
+
+    impl Streak {
+        /// Whole seconds continuously at/above threshold (0 if currently below).
+        fn above_secs(&self, now: i64) -> i64 {
+            self.above_since.map(|t| (now - t) / 1000).unwrap_or(0)
+        }
+        /// Whole seconds continuously below threshold, or `None` if at/above it
+        /// (so the cool-down clock is not running).
+        fn below_secs(&self, now: i64) -> Option<i64> {
+            self.below_since.map(|t| (now - t) / 1000)
+        }
+    }
+
+    /// One process's facts for a single applier tick, computed once and reused by
+    /// the rules applier and the dynamic watchdog.
+    struct Obs {
+        key: ProcKey,
+        image_name: String,
+        cpu_permille: u32,
+        protected: bool,
+        foreground: bool,
+        /// An enabled rule actively governs this process this tick (non-empty,
+        /// non-blocked resolved policy). Dynamic protection defers to it.
+        governed: bool,
+        policy: EffectivePolicy,
+    }
+
     /// A snapshot of one live intervention for `ListInterventions`.
     #[derive(Clone, Debug)]
     pub struct InterventionInfo {
@@ -447,15 +525,35 @@ pub mod engine {
         store: SharedStore,
         ledger: Mutex<HashMap<ProcKey, LedgerEntry>>,
         topo: CpuTopology,
+        /// R3 dynamic responsiveness protection (PRD §9.7.3): the live config
+        /// (loaded from the store at start, updated live by `SetDynamicProtection`).
+        dyn_config: Mutex<DynConfig>,
+        /// The watchdog's dampening ledger — separate from `ledger` so a rule and
+        /// the watchdog never co-own a process dimension.
+        dyn_ledger: Mutex<HashMap<ProcKey, DynEntry>>,
+        /// Per-process CPU-streak bookkeeping (threshold hysteresis).
+        dyn_streaks: Mutex<HashMap<ProcKey, Streak>>,
     }
 
     impl RulesEngine {
-        /// Builds the engine over the shared store, detecting CPU topology once.
+        /// Builds the engine over the shared store, detecting CPU topology once
+        /// and loading the persisted dynamic-protection config (disabled by
+        /// default, so the watchdog dampens nothing until the user opts in).
         pub fn new(store: SharedStore) -> Self {
+            let dyn_config = match store.lock() {
+                Ok(s) => s
+                    .get_dynamic_protection()
+                    .map(dyn_config_from_row)
+                    .unwrap_or_default(),
+                Err(_) => DynConfig::default(),
+            };
             Self {
                 store,
                 ledger: Mutex::new(HashMap::new()),
                 topo: cpu_topology(),
+                dyn_config: Mutex::new(dyn_config),
+                dyn_ledger: Mutex::new(HashMap::new()),
+                dyn_streaks: Mutex::new(HashMap::new()),
             }
         }
 
@@ -484,9 +582,24 @@ pub mod engine {
         /// Appends one audit row (actor `rules`). Best-effort — a failed audit
         /// write never blocks the action (mirrors the broker).
         fn audit(&self, action: &str, pid: u32, image: &str, decision: &str, detail: &str) {
+            self.audit_as("rules", action, pid, image, decision, detail);
+        }
+
+        /// Appends one audit row under an explicit `actor` (the dynamic watchdog
+        /// records as `dynamic-protection` so its interventions are auditable and
+        /// distinguishable from explicit-rule actions). Best-effort.
+        fn audit_as(
+            &self,
+            actor: &str,
+            action: &str,
+            pid: u32,
+            image: &str,
+            decision: &str,
+            detail: &str,
+        ) {
             let row = AuditRow {
                 ts_ms: now_ms(),
-                actor: "rules".to_string(),
+                actor: actor.to_string(),
                 action: action.to_string(),
                 pid,
                 image_name: image.to_string(),
@@ -495,25 +608,37 @@ pub mod engine {
             };
             if let Ok(store) = self.store.lock() {
                 if let Err(e) = store.record_audit(&row) {
-                    tracing::warn!("rules audit write failed: {e}");
+                    tracing::warn!("audit write failed: {e}");
                 }
             }
         }
 
-        /// The applier tick: resolve every live process's effective policy and
-        /// apply/undo deltas. Runs on the sampler thread inside `serve`.
+        /// The applier tick: resolve every live process's effective policy, apply
+        /// the explicit-rule deltas, then run the dynamic-protection watchdog on
+        /// the processes no rule governs. Runs on the sampler thread inside
+        /// `serve`.
+        ///
+        /// Ordering matters for reversibility. Policies are resolved *before* any
+        /// application. The watchdog's pre-restore pass (handing a process back
+        /// when a rule takes it over) runs *before* the rules applier captures
+        /// originals, so a rule never records a dynamically-modified value as the
+        /// "original" to restore to.
         pub fn apply_tick(&self, set: &SampleSet) {
             let rules = self.load_rules();
             let env = Self::read_env();
+            let cfg = self.dyn_config_snapshot();
+            let now = now_ms();
+
             let mut ledger = match self.ledger.lock() {
                 Ok(l) => l,
                 Err(_) => return,
             };
 
-            let mut seen: Vec<ProcKey> = Vec::with_capacity(set.processes.len());
+            // 1. Resolve every process's effective policy (pure — applies nothing
+            //    yet) and gather the facts both appliers need.
+            let mut obs: Vec<Obs> = Vec::with_capacity(set.processes.len());
             for p in &set.processes {
                 let key = p.key;
-                seen.push(key);
                 let protected = is_protected_process(&p.image_name, key.pid, p.session_id);
                 let proc = ProcInput {
                     pid: key.pid,
@@ -521,14 +646,39 @@ pub mod engine {
                     protected,
                 };
                 let policy = resolve(&rules, &proc, &env);
-                self.reconcile(&mut ledger, key, &p.image_name, &policy);
+                let governed = !policy.blocked && !policy.is_empty();
+                let foreground = env.foreground_pid != 0 && key.pid == env.foreground_pid;
+                obs.push(Obs {
+                    key,
+                    image_name: p.image_name.clone(),
+                    cpu_permille: p.cpu_permille,
+                    protected,
+                    foreground,
+                    governed,
+                    policy,
+                });
             }
 
-            // Drop ledger entries whose process is gone this tick. We do NOT try
-            // to restore them: the OS already reset the exited process, and the
-            // pid may have been reused (restoring by pid could hit the wrong
-            // process). The (pid, create_time) key guards attribution.
-            let live: std::collections::HashSet<ProcKey> = seen.into_iter().collect();
+            let live: std::collections::HashSet<ProcKey> = obs.iter().map(|o| o.key).collect();
+
+            // 2. Dynamic watchdog: pre-restore (hand governed/expired processes
+            //    back to their true originals) BEFORE the rules applier runs, so
+            //    rule originals are captured cleanly.
+            self.dyn_pre_restore(&obs, &live, &cfg, now);
+
+            // 3. Apply the explicit-rule deltas.
+            for o in &obs {
+                self.reconcile(&mut ledger, o.key, &o.image_name, &o.policy);
+            }
+
+            // 4. Dynamic watchdog: dampen new sustained hogs the rules do not
+            //    govern.
+            self.dyn_apply(&obs, &cfg, now);
+
+            // 5. Drop ledger entries whose process is gone this tick. We do NOT
+            //    try to restore them: the OS already reset the exited process, and
+            //    the pid may have been reused (restoring by pid could hit the
+            //    wrong process). The (pid, create_time) key guards attribution.
             ledger.retain(|k, e| {
                 let keep = live.contains(k);
                 if !keep && e.touches_anything() {
@@ -536,6 +686,234 @@ pub mod engine {
                 }
                 keep
             });
+        }
+
+        /// A stable copy of the current dynamic-protection config for a tick.
+        fn dyn_config_snapshot(&self) -> DynConfig {
+            self.dyn_config.lock().map(|g| *g).unwrap_or_default()
+        }
+
+        /// Watchdog pre-restore pass (runs before the rules applier). Restores +
+        /// drops any dynamic dampening whose process should no longer be held:
+        /// disabled, a rule now governs it, it became foreground, the hard
+        /// max-duration cap elapsed, or it exited. Also refreshes CPU streaks so
+        /// step 4 can evaluate candidates and cool-downs.
+        fn dyn_pre_restore(
+            &self,
+            obs: &[Obs],
+            live: &std::collections::HashSet<ProcKey>,
+            cfg: &DynConfig,
+            now: i64,
+        ) {
+            let mut streaks = match self.dyn_streaks.lock() {
+                Ok(s) => s,
+                Err(_) => return,
+            };
+            // Update the threshold hysteresis for every live process.
+            for o in obs {
+                let st = streaks.entry(o.key).or_default();
+                if o.cpu_permille >= cfg.cpu_threshold_permille {
+                    if st.above_since.is_none() {
+                        st.above_since = Some(now);
+                    }
+                    st.below_since = None;
+                } else {
+                    if st.below_since.is_none() {
+                        st.below_since = Some(now);
+                    }
+                    st.above_since = None;
+                }
+            }
+            // Forget streaks for exited processes (bounded memory).
+            streaks.retain(|k, _| live.contains(k));
+
+            let mut dyn_ledger = match self.dyn_ledger.lock() {
+                Ok(l) => l,
+                Err(_) => return,
+            };
+
+            // Index the per-process facts for O(1) lookup.
+            let by_key: HashMap<ProcKey, &Obs> = obs.iter().map(|o| (o.key, o)).collect();
+
+            let keys: Vec<ProcKey> = dyn_ledger.keys().copied().collect();
+            for key in keys {
+                match by_key.get(&key) {
+                    None => {
+                        // Process exited: drop without restoring (the OS reset it;
+                        // the pid may be reused). Same rationale as the rules
+                        // ledger retain.
+                        if let Some(e) = dyn_ledger.remove(&key) {
+                            tracing::debug!(
+                                pid = key.pid,
+                                image = %e.image_name,
+                                "dynamic-protection: target exited; dropping dampening"
+                            );
+                        }
+                    }
+                    Some(o) => {
+                        let st = streaks.get(&key).copied().unwrap_or_default();
+                        let held =
+                            (now - dyn_ledger.get(&key).map(|e| e.since_ms).unwrap_or(now)) / 1000;
+                        if let Some(reason) =
+                            restore_reason(cfg, o.governed, o.foreground, held, st.below_secs(now))
+                        {
+                            if let Some(entry) = dyn_ledger.remove(&key) {
+                                self.dyn_restore(key, entry, reason);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        /// Watchdog apply pass (runs after the rules applier). Dampens sustained
+        /// background hogs the rules do not govern — never the foreground app, a
+        /// protected/system process, or one already dampened.
+        fn dyn_apply(&self, obs: &[Obs], cfg: &DynConfig, now: i64) {
+            if !cfg.enabled {
+                return;
+            }
+            let streaks = match self.dyn_streaks.lock() {
+                Ok(s) => s,
+                Err(_) => return,
+            };
+            let mut dyn_ledger = match self.dyn_ledger.lock() {
+                Ok(l) => l,
+                Err(_) => return,
+            };
+            for o in obs {
+                let already_damped = dyn_ledger.contains_key(&o.key);
+                let above = streaks.get(&o.key).map(|s| s.above_secs(now)).unwrap_or(0);
+                if is_candidate(
+                    cfg,
+                    o.cpu_permille,
+                    above,
+                    o.protected,
+                    o.foreground,
+                    o.governed,
+                    already_damped,
+                ) {
+                    let entry = self.dyn_dampen(o, above, cfg, now);
+                    dyn_ledger.insert(o.key, entry);
+                }
+            }
+        }
+
+        /// Dampens one process: EcoQoS (the gentlest reversible lever) plus a
+        /// drop to Below Normal priority, capturing the ORIGINAL of each dimension
+        /// for exact reversal. Audits under `dynamic-protection` with the trigger
+        /// (the WHY) so the intervention can be explained (§9.7.3).
+        fn dyn_dampen(&self, o: &Obs, above_secs: i64, cfg: &DynConfig, now: i64) -> DynEntry {
+            let pid = o.key.pid;
+            let pct = o.cpu_permille / 10;
+            let trigger = format!(
+                "using {pct}% of total CPU sustained {above_secs}s (threshold {}%, sustain {}s)",
+                cfg.cpu_threshold_permille / 10,
+                cfg.sustain_seconds
+            );
+
+            // EcoQoS first (the gentlest lever): capture original, then enable.
+            let orig_eco = Some(get_eco_qos(pid).unwrap_or_default());
+            let eco_out = set_eco_qos(pid, Some(true));
+            // Then lower priority to Below Normal: capture original, then set.
+            let orig_priority = get_priority_class(pid);
+            let prio_out = set_priority_class(pid, BELOW_NORMAL_PRIORITY_CLASS);
+
+            self.audit_as(
+                "dynamic-protection",
+                "APPLY_DYNAMIC",
+                pid,
+                &o.image_name,
+                decision(eco_out.success && prio_out.success),
+                &format!(
+                    "{trigger}; eco: {}; priority→Below Normal: {}",
+                    eco_out.message, prio_out.message
+                ),
+            );
+
+            DynEntry {
+                image_name: o.image_name.clone(),
+                since_ms: now,
+                orig_priority,
+                orig_eco,
+                applied: format!(
+                    "temporarily set to efficiency mode (Below Normal priority) — \
+                     using {pct}% CPU in the background"
+                ),
+            }
+        }
+
+        /// Restores one dynamic dampening to its captured original and audits the
+        /// reversal with its reason (§9.7.3 "explain why").
+        fn dyn_restore(&self, key: ProcKey, entry: DynEntry, reason: RestoreReason) {
+            let pid = key.pid;
+            if let Some(orig) = entry.orig_eco {
+                let out = restore_eco_qos(pid, orig);
+                self.audit_as(
+                    "dynamic-protection",
+                    "RESTORE_DYNAMIC",
+                    pid,
+                    &entry.image_name,
+                    decision(out.success),
+                    &format!("{} — eco: {}", reason.label(), out.message),
+                );
+            }
+            if let Some(orig) = entry.orig_priority {
+                let out = set_priority_class(pid, orig);
+                self.audit_as(
+                    "dynamic-protection",
+                    "RESTORE_DYNAMIC",
+                    pid,
+                    &entry.image_name,
+                    decision(out.success),
+                    &format!(
+                        "{} — priority→{}: {}",
+                        reason.label(),
+                        priority_class_name(orig),
+                        out.message
+                    ),
+                );
+            }
+        }
+
+        /// Restores every live *dynamic* dampening immediately and clears the
+        /// watchdog ledger (called when dynamic protection is disabled — the
+        /// change takes effect at once, not on the next tick).
+        pub fn restore_all_dynamic(&self, reason: RestoreReason) {
+            let entries: Vec<(ProcKey, DynEntry)> = match self.dyn_ledger.lock() {
+                Ok(mut l) => l.drain().collect(),
+                Err(p) => p.into_inner().drain().collect(),
+            };
+            let n = entries.len();
+            for (key, entry) in entries {
+                self.dyn_restore(key, entry, reason);
+            }
+            if n > 0 {
+                tracing::info!(restored = n, "dynamic-protection restored all dampenings");
+            }
+        }
+
+        /// The current dynamic-protection config (for `GetDynamicProtection`).
+        pub fn dynamic_config(&self) -> DynConfig {
+            self.dyn_config_snapshot()
+        }
+
+        /// Applies a new dynamic-protection config live (for
+        /// `SetDynamicProtection`): persists it, swaps the in-memory config, and —
+        /// if it disables protection — restores every active dampening at once.
+        /// Enabling simply lets the next sampler tick begin evaluating candidates.
+        pub fn set_dynamic_config(&self, cfg: DynConfig) {
+            if let Ok(store) = self.store.lock() {
+                if let Err(e) = store.set_dynamic_protection(&dyn_row_from_config(cfg)) {
+                    tracing::warn!("persisting dynamic-protection config failed: {e}");
+                }
+            }
+            if let Ok(mut g) = self.dyn_config.lock() {
+                *g = cfg;
+            }
+            if !cfg.enabled {
+                self.restore_all_dynamic(RestoreReason::Disabled);
+            }
         }
 
         /// Reconciles one process against its resolved policy, applying only the
@@ -798,24 +1176,38 @@ pub mod engine {
             }
         }
 
-        /// Snapshot of all live interventions for `ListInterventions`.
+        /// Snapshot of all live interventions for `ListInterventions` — both
+        /// explicit-rule interventions and dynamic (watchdog) dampenings. Dynamic
+        /// dampenings surface with `rule_id = 0` and the reserved rule name, per
+        /// the frozen contract.
         pub fn interventions(&self) -> Vec<InterventionInfo> {
-            let ledger = match self.ledger.lock() {
-                Ok(l) => l,
-                Err(_) => return Vec::new(),
-            };
-            ledger
-                .iter()
-                .filter(|(_, e)| e.touches_anything())
-                .map(|(k, e)| InterventionInfo {
-                    rule_id: e.rule_id,
-                    rule_name: e.rule_name.clone(),
+            let mut out = Vec::new();
+            if let Ok(ledger) = self.ledger.lock() {
+                out.extend(
+                    ledger
+                        .iter()
+                        .filter(|(_, e)| e.touches_anything())
+                        .map(|(k, e)| InterventionInfo {
+                            rule_id: e.rule_id,
+                            rule_name: e.rule_name.clone(),
+                            pid: k.pid,
+                            image_name: e.image_name.clone(),
+                            applied: e.applied.clone(),
+                            since_ms: e.since_ms,
+                        }),
+                );
+            }
+            if let Ok(dyn_ledger) = self.dyn_ledger.lock() {
+                out.extend(dyn_ledger.iter().map(|(k, e)| InterventionInfo {
+                    rule_id: 0,
+                    rule_name: DYNAMIC_RULE_NAME.to_string(),
                     pid: k.pid,
                     image_name: e.image_name.clone(),
                     applied: e.applied.clone(),
                     since_ms: e.since_ms,
-                })
-                .collect()
+                }));
+            }
+            out
         }
 
         /// Restores every live intervention and clears the ledger. Called when
@@ -859,6 +1251,9 @@ pub mod engine {
             if restored > 0 {
                 tracing::info!(restored, "rules engine restored interventions on shutdown");
             }
+            // Reversibility also covers the dynamic watchdog: restore every live
+            // dampening so nothing is left in efficiency mode after shutdown.
+            self.restore_all_dynamic(RestoreReason::Shutdown);
         }
 
         /// Pure dry-run simulation of `sim` against the current live snapshot

@@ -54,11 +54,12 @@ use atlas_ipc::{
     SearchRequest, ServiceEntry, ServiceStartType, ServiceState, SnapshotReply, SnapshotRequest,
     StartupEntry, StartupSource, SystemGauges, TcpState, ThermalSensor as ProtoThermalSensor,
     ThreadRow, TimeRange, UpdatePrivacyAlertRuleReply, UpdatePrivacyAlertRuleRequest,
-    CAP_BATTERY_STATUS, CAP_BOOT_ANALYSIS, CAP_DIAGNOSTICS, CAP_FTS5_SEARCH, CAP_HISTORY_QUERIES,
-    CAP_INCIDENT_DETECTION, CAP_NETWORK_INSPECTOR, CAP_PRIVACY_ALERTS, CAP_PRIVACY_EVENTS,
-    CAP_PROCESS_INSPECTOR, CAP_PROCESS_SNAPSHOTS, CAP_PROFILES, CAP_REPORTS,
-    CAP_RESOURCE_OWNERSHIP, CAP_RULES_ENGINE, CAP_SAFE_ACTIONS, CAP_SCHEDULED_TASKS,
-    CAP_SERVICES_INVENTORY, CAP_STARTUP_INVENTORY, CAP_THERMAL_SENSORS, RING_ROWS,
+    CAP_BATTERY_STATUS, CAP_BOOT_ANALYSIS, CAP_DIAGNOSTICS, CAP_DYNAMIC_PROTECTION,
+    CAP_FTS5_SEARCH, CAP_HISTORY_QUERIES, CAP_INCIDENT_DETECTION, CAP_NETWORK_INSPECTOR,
+    CAP_PRIVACY_ALERTS, CAP_PRIVACY_EVENTS, CAP_PROCESS_INSPECTOR, CAP_PROCESS_SNAPSHOTS,
+    CAP_PROFILES, CAP_REPORTS, CAP_RESOURCE_OWNERSHIP, CAP_RULES_ENGINE, CAP_SAFE_ACTIONS,
+    CAP_SCHEDULED_TASKS, CAP_SERVICES_INVENTORY, CAP_STARTUP_INVENTORY, CAP_THERMAL_SENSORS,
+    RING_ROWS,
 };
 
 use crate::diagnostics::{self, DiagnoseContext};
@@ -430,6 +431,9 @@ impl AtlasQuery for QueryService {
             // backed persistence + audit; the applier runs on the sampler thread.
             flags.push(CAP_RULES_ENGINE.to_string());
             flags.push(CAP_PROFILES.to_string());
+            // R3: dynamic responsiveness protection (the watchdog runs on the
+            // sampler tick, store-backed config, disabled by default).
+            flags.push(CAP_DYNAMIC_PROTECTION.to_string());
             // R2: advanced privacy alerts — the ConsentStore change-watcher +
             // evaluator run on their own threads; rule CRUD + fired-alert history
             // are store-backed and always available on Windows here.
@@ -1034,6 +1038,34 @@ impl AtlasQuery for QueryService {
             .await
             .map_err(|e| Status::internal(format!("get_thermal task: {e}")))?;
         Ok(Response::new(reply))
+    }
+
+    // R3 system-change tracking (PRD §9.13) + crash correlation (PRD §9.14) are
+    // separate R3 workstreams. The frozen contract (be67835) declares their RPCs;
+    // this build does not yet implement the collectors, so both answer honestly
+    // in degraded mode — empty / not-available — until that work lands. No
+    // capability flag is advertised for either, so a UI hides them.
+    async fn list_system_changes(
+        &self,
+        _req: Request<atlas_ipc::ListSystemChangesRequest>,
+    ) -> Result<Response<atlas_ipc::ListSystemChangesReply>, Status> {
+        Ok(Response::new(atlas_ipc::ListSystemChangesReply {
+            changes: vec![],
+            truncated: false,
+        }))
+    }
+
+    async fn list_crashes(
+        &self,
+        _req: Request<atlas_ipc::ListCrashesRequest>,
+    ) -> Result<Response<atlas_ipc::ListCrashesReply>, Status> {
+        Ok(Response::new(atlas_ipc::ListCrashesReply {
+            available: false,
+            unavailable_reason: "crash correlation is not implemented in this build (R3)"
+                .to_string(),
+            crashes: vec![],
+            truncated: false,
+        }))
     }
 }
 

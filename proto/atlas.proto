@@ -484,6 +484,103 @@ service AtlasQuery {
   rpc UpdatePrivacyAlertRule(UpdatePrivacyAlertRuleRequest) returns (UpdatePrivacyAlertRuleReply);
   rpc DeletePrivacyAlertRule(DeletePrivacyAlertRuleRequest) returns (DeletePrivacyAlertRuleReply);
   rpc ListFiredAlerts(ListFiredAlertsRequest) returns (ListFiredAlertsReply);
+  rpc ListSystemChanges(ListSystemChangesRequest) returns (ListSystemChangesReply);
+  rpc ListCrashes(ListCrashesRequest) returns (ListCrashesReply);
+}
+
+// ---------------------------------------------------------------------------
+// R3: system-change tracking (PRD §9.13) — "what changed before the problem
+// started?". The service diffs its own inventories (apps/services/startup/
+// tasks) and reads WUA + driver/CBS event history; changes are recorded and
+// queryable, read-only.
+// ---------------------------------------------------------------------------
+
+enum SystemChangeKind {
+  SYSTEM_CHANGE_KIND_UNSPECIFIED = 0;
+  APP_INSTALLED = 1;
+  APP_UPDATED = 2;
+  APP_REMOVED = 3;
+  DRIVER_INSTALLED = 4;
+  DRIVER_UPDATED = 5;
+  WINDOWS_UPDATE = 6;
+  SERVICE_INSTALLED = 7;
+  SERVICE_CONFIG_CHANGED = 8;
+  SERVICE_REMOVED = 9;
+  STARTUP_ADDED = 10;
+  STARTUP_REMOVED = 11;
+  SCHEDULED_TASK_ADDED = 12;
+  SCHEDULED_TASK_REMOVED = 13;
+  POWER_PLAN_CHANGED = 14;
+  DEFAULT_APP_CHANGED = 15;
+}
+
+message SystemChange {
+  int64 id = 1;
+  int64 ts_ms = 2;
+  SystemChangeKind kind = 3;
+  // The app / driver / service / entry the change is about.
+  string subject = 4;
+  // Human-readable before→after summary.
+  string detail = 5;
+  string publisher = 6;
+  // Responsible installer/process where known; empty otherwise.
+  string responsible = 7;
+  // Whether Atlas knows a reversal path (informational this milestone).
+  bool reversible = 8;
+}
+
+message ListSystemChangesRequest {
+  TimeRange range = 1;
+  // Empty = all kinds.
+  repeated SystemChangeKind kinds = 2;
+  uint32 limit = 3;
+}
+
+message ListSystemChangesReply {
+  repeated SystemChange changes = 1;
+  bool truncated = 2;
+}
+
+// ---------------------------------------------------------------------------
+// R3: reliability / crash correlation (PRD §9.14). Unifies WER app crashes,
+// hangs, bugchecks, and service failures with the resource/change context
+// around each event, read-only.
+// ---------------------------------------------------------------------------
+
+enum CrashKind {
+  CRASH_KIND_UNSPECIFIED = 0;
+  APP_CRASH = 1;
+  APP_HANG = 2;
+  BUGCHECK = 3;
+  SERVICE_FAILURE = 4;
+  UNEXPECTED_SHUTDOWN = 5;
+}
+
+message CrashRecord {
+  int64 id = 1;
+  int64 ts_ms = 2;
+  CrashKind kind = 3;
+  string subject = 4;
+  // Faulting module / bugcheck code / exception where known.
+  string fault = 5;
+  string exception_code = 6;
+  // Correlated context assembled by the service (peak memory, recent update,
+  // repeated-restart note, etc.) — factual, confidence-tagged in the detail.
+  repeated string context = 7;
+}
+
+message ListCrashesRequest {
+  TimeRange range = 1;
+  repeated CrashKind kinds = 2;
+  uint32 limit = 3;
+}
+
+message ListCrashesReply {
+  bool available = 1;
+  // e.g. "reliability log unavailable".
+  string unavailable_reason = 2;
+  repeated CrashRecord crashes = 3;
+  bool truncated = 4;
 }
 
 // ---------------------------------------------------------------------------
@@ -1058,4 +1155,35 @@ service AtlasRules {
   rpc UpdateProfile(UpdateProfileRequest) returns (UpdateProfileReply);
   rpc DeleteProfile(DeleteProfileRequest) returns (DeleteProfileReply);
   rpc SetProfileActive(SetProfileActiveRequest) returns (SetProfileActiveReply);
+  rpc GetDynamicProtection(GetDynamicProtectionRequest) returns (GetDynamicProtectionReply);
+  rpc SetDynamicProtection(SetDynamicProtectionRequest) returns (SetDynamicProtectionReply);
+}
+
+// ---------------------------------------------------------------------------
+// R3: dynamic responsiveness protection (PRD §9.7.3). A watchdog that, when
+// explicitly enabled, TEMPORARILY dampens a background process monopolizing
+// the CPU and auto-restores it — never touches protected-critical or the
+// foreground app, keeps a record of every intervention, off by default.
+// Dampening interventions surface through the existing ListInterventions with
+// rule_id = 0 and rule_name "Dynamic responsiveness protection".
+// ---------------------------------------------------------------------------
+
+message DynamicProtectionConfig {
+  // Off by default — early versions act only on explicit user approval.
+  bool enabled = 1;
+  // A process must exceed this system-CPU share to be a candidate (permille).
+  uint32 cpu_threshold_permille = 2;
+  // ...sustained for at least this long before any intervention.
+  uint32 sustain_seconds = 3;
+  // Auto-restore cap: never dampen a process longer than this.
+  uint32 max_intervention_seconds = 4;
+}
+
+message GetDynamicProtectionRequest {}
+message GetDynamicProtectionReply { DynamicProtectionConfig config = 1; }
+
+message SetDynamicProtectionRequest { DynamicProtectionConfig config = 1; }
+message SetDynamicProtectionReply {
+  bool ok = 1;
+  string message = 2;
 }

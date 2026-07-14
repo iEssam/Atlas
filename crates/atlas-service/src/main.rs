@@ -10,6 +10,7 @@
 mod broker;
 mod detectors;
 mod diagnostics;
+mod dynamic_protection;
 #[cfg(windows)]
 mod ipc;
 mod privacy_alerts;
@@ -470,6 +471,17 @@ enum Cmd {
         #[arg(long)]
         pid: u32,
     },
+    /// Show or set the dynamic responsiveness protection config on a running
+    /// `serve` (R3, PRD §9.7.3). Talks to the service over the pipe so changes
+    /// take effect live: enabling starts the watchdog, disabling restores every
+    /// active dampening at once. Use `interventions` to see active dampenings.
+    DynamicProtection {
+        /// Pipe discriminator; must match the server's `serve --pipe`.
+        #[arg(long)]
+        pipe: Option<String>,
+        #[command(subcommand)]
+        cmd: DynProtCmd,
+    },
     /// Manage advanced privacy-alert rules (R2, PRD §9.10.3): add/list/rm.
     ///
     /// Rules persist in the store; a running `serve` evaluates them against
@@ -612,6 +624,28 @@ enum ProfileCmd {
 }
 
 #[derive(Subcommand)]
+enum DynProtCmd {
+    /// Print the current dynamic-protection config.
+    Show,
+    /// Update the config (validated + persisted + applied live). Omitting
+    /// `--enabled` disables the watchdog (and restores all active dampenings).
+    Set {
+        /// Enable the watchdog (omit to disable it).
+        #[arg(long)]
+        enabled: bool,
+        /// System-CPU share threshold, permille (1..=1000). 800 = 80% of total.
+        #[arg(long, default_value_t = 800)]
+        threshold: u32,
+        /// Seconds a process must stay above threshold before intervening.
+        #[arg(long, default_value_t = 30)]
+        sustain: u32,
+        /// Hard auto-restore cap: max seconds a dampening may ever be held.
+        #[arg(long, default_value_t = 300)]
+        max: u32,
+    },
+}
+
+#[derive(Subcommand)]
 enum ServiceCmd {
     /// Register the service (auto-start, runs `service run`) with crash-restart
     /// failure actions. Needs elevation.
@@ -747,6 +781,7 @@ fn main() -> Result<()> {
         Cmd::Interventions { pipe } => cmd_interventions(pipe),
         Cmd::Profile { db, cmd } => cmd_profile(db.unwrap_or_else(default_db_path), cmd),
         Cmd::Policy { pid } => cmd_policy(pid),
+        Cmd::DynamicProtection { pipe, cmd } => cmd_dynamic_protection(pipe, cmd),
         Cmd::PrivacyAlert { db, cmd } => cmd_privacy_alert(db.unwrap_or_else(default_db_path), cmd),
         Cmd::FiredAlerts { db, minutes, limit } => {
             cmd_fired_alerts(db.unwrap_or_else(default_db_path), minutes, limit)
@@ -4172,6 +4207,67 @@ fn cmd_interventions(pipe: Option<String>) -> Result<()> {
 }
 
 #[cfg(windows)]
+fn cmd_dynamic_protection(pipe: Option<String>, cmd: DynProtCmd) -> Result<()> {
+    let name = resolve_pipe_name(pipe);
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    rt.block_on(async move {
+        let channel = atlas_ipc::connect(&name)
+            .await
+            .map_err(|e| anyhow::anyhow!("connect to {name}: {e} (is `serve` running?)"))?;
+        let mut client = atlas_ipc::AtlasRulesClient::new(channel);
+        match cmd {
+            DynProtCmd::Show => {
+                let cfg = client
+                    .get_dynamic_protection(atlas_ipc::GetDynamicProtectionRequest {})
+                    .await?
+                    .into_inner()
+                    .config
+                    .unwrap_or_default();
+                println!("Dynamic responsiveness protection:");
+                println!("  enabled                  : {}", cfg.enabled);
+                println!(
+                    "  cpu_threshold_permille   : {} ({}% of total CPU)",
+                    cfg.cpu_threshold_permille,
+                    cfg.cpu_threshold_permille / 10
+                );
+                println!("  sustain_seconds          : {}", cfg.sustain_seconds);
+                println!(
+                    "  max_intervention_seconds : {}",
+                    cfg.max_intervention_seconds
+                );
+            }
+            DynProtCmd::Set {
+                enabled,
+                threshold,
+                sustain,
+                max,
+            } => {
+                let reply = client
+                    .set_dynamic_protection(atlas_ipc::SetDynamicProtectionRequest {
+                        config: Some(atlas_ipc::DynamicProtectionConfig {
+                            enabled,
+                            cpu_threshold_permille: threshold,
+                            sustain_seconds: sustain,
+                            max_intervention_seconds: max,
+                        }),
+                    })
+                    .await?
+                    .into_inner();
+                if reply.ok {
+                    println!("OK: {}", reply.message);
+                } else {
+                    anyhow::bail!("rejected: {}", reply.message);
+                }
+            }
+        }
+        Ok::<(), anyhow::Error>(())
+    })?;
+    Ok(())
+}
+
+#[cfg(windows)]
 fn cmd_profile(db_path: PathBuf, cmd: ProfileCmd) -> Result<()> {
     match cmd {
         ProfileCmd::Add {
@@ -4276,6 +4372,10 @@ fn cmd_interventions(_pipe: Option<String>) -> Result<()> {
 #[cfg(not(windows))]
 fn cmd_profile(_db_path: PathBuf, _cmd: ProfileCmd) -> Result<()> {
     anyhow::bail!("the `profile` command requires Windows");
+}
+#[cfg(not(windows))]
+fn cmd_dynamic_protection(_pipe: Option<String>, _cmd: DynProtCmd) -> Result<()> {
+    anyhow::bail!("the `dynamic-protection` command requires Windows");
 }
 #[cfg(not(windows))]
 fn cmd_policy(_pid: u32) -> Result<()> {
