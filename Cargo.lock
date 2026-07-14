@@ -91,6 +91,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "atlas-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "atlas-ipc",
+ "clap",
+ "serde_json",
+ "tokio",
+ "tonic",
+]
+
+[[package]]
 name = "atlas-collectors"
 version = "0.1.0"
 dependencies = [
