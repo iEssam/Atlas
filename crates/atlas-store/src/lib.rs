@@ -382,6 +382,25 @@ CREATE TABLE IF NOT EXISTS crash_record (
 CREATE INDEX IF NOT EXISTS ix_crash_record_ts ON crash_record(ts_ms);
 "#;
 
+// R3 dynamic responsiveness protection (docs/phases.md Phase 3, PRD §9.7.3). A
+// single-row typed config table (id pinned to 1) holding the watchdog settings.
+// The seed row is DISABLED with the sane defaults (threshold 800‰, sustain 30 s,
+// max 300 s), so a fresh database never dampens anything until the user opts in.
+// (v11: dynamic protection branched before forensics' v10 landed and had claimed
+// v10 for itself; renumbered to v11 to stack on top of the forensics v10.)
+const SCHEMA_V11_DYNPROT: &str = r#"
+CREATE TABLE IF NOT EXISTS dynamic_protection (
+    id                       INTEGER PRIMARY KEY CHECK (id = 1),
+    enabled                  INTEGER NOT NULL,
+    cpu_threshold_permille   INTEGER NOT NULL,
+    sustain_seconds          INTEGER NOT NULL,
+    max_intervention_seconds INTEGER NOT NULL
+);
+INSERT OR IGNORE INTO dynamic_protection
+    (id, enabled, cpu_threshold_permille, sustain_seconds, max_intervention_seconds)
+    VALUES (1, 0, 800, 30, 300);
+"#;
+
 /// Whether `table` already has a column named `column`, via `PRAGMA table_info`.
 /// Used to make the v3 `ADD COLUMN` migration idempotent (SQLite lacks
 /// `ADD COLUMN IF NOT EXISTS`).
@@ -663,6 +682,33 @@ pub struct CrashRow {
     pub context: Vec<String>,
 }
 
+/// The persisted dynamic-responsiveness-protection config (schema v11, R3,
+/// PRD §9.7.3). Mirrors the proto `DynamicProtectionConfig`. Off by default; the
+/// watchdog only dampens a background CPU monopolizer while `enabled` is true.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DynProtRow {
+    pub enabled: bool,
+    /// A process must exceed this system-CPU share (permille, 0..=1000) to be a
+    /// dampening candidate.
+    pub cpu_threshold_permille: u32,
+    /// ...sustained for at least this long before any intervention.
+    pub sustain_seconds: u32,
+    /// Hard cap: never hold a dampening longer than this (auto-restore).
+    pub max_intervention_seconds: u32,
+}
+
+impl Default for DynProtRow {
+    /// The disabled-by-default seed matching the schema v11 seed row.
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            cpu_threshold_permille: 800,
+            sustain_seconds: 30,
+            max_intervention_seconds: 300,
+        }
+    }
+}
+
 pub struct Store {
     conn: Connection,
 }
@@ -746,6 +792,10 @@ impl Store {
         if version < 10 {
             self.conn.execute_batch(SCHEMA_V10)?;
             self.conn.execute_batch("PRAGMA user_version = 10;")?;
+        }
+        if version < 11 {
+            self.conn.execute_batch(SCHEMA_V11_DYNPROT)?;
+            self.conn.execute_batch("PRAGMA user_version = 11;")?;
         }
         // FTS5 objects are built (idempotently, IF NOT EXISTS) on every open
         // once the module is confirmed present, independent of user_version: a
@@ -1725,6 +1775,56 @@ impl Store {
     }
 
     // -----------------------------------------------------------------------
+    // R3 dynamic responsiveness protection config (schema v10, PRD §9.7.3).
+    // A single pinned row (id = 1) holds the watchdog settings.
+    // -----------------------------------------------------------------------
+
+    /// Reads the dynamic-protection config. Falls back to the disabled default
+    /// if the seed row is somehow missing (never dampens without an explicit,
+    /// persisted enable).
+    pub fn get_dynamic_protection(&self) -> Result<DynProtRow> {
+        let row = self.conn.query_row(
+            "SELECT enabled, cpu_threshold_permille, sustain_seconds, max_intervention_seconds
+                 FROM dynamic_protection WHERE id = 1",
+            [],
+            |r| {
+                Ok(DynProtRow {
+                    enabled: r.get::<_, i64>(0)? != 0,
+                    cpu_threshold_permille: r.get::<_, i64>(1)? as u32,
+                    sustain_seconds: r.get::<_, i64>(2)? as u32,
+                    max_intervention_seconds: r.get::<_, i64>(3)? as u32,
+                })
+            },
+        );
+        match row {
+            Ok(r) => Ok(r),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(DynProtRow::default()),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Persists the dynamic-protection config (upsert on the pinned id = 1 row).
+    pub fn set_dynamic_protection(&self, cfg: &DynProtRow) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO dynamic_protection
+                 (id, enabled, cpu_threshold_permille, sustain_seconds, max_intervention_seconds)
+                 VALUES (1, ?1, ?2, ?3, ?4)
+             ON CONFLICT(id) DO UPDATE SET
+                 enabled = excluded.enabled,
+                 cpu_threshold_permille = excluded.cpu_threshold_permille,
+                 sustain_seconds = excluded.sustain_seconds,
+                 max_intervention_seconds = excluded.max_intervention_seconds",
+            params![
+                cfg.enabled as i64,
+                cfg.cpu_threshold_permille as i64,
+                cfg.sustain_seconds as i64,
+                cfg.max_intervention_seconds as i64,
+            ],
+        )?;
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
     // R2 rules-engine CRUD (schema v8, PRD §9.7). Rules and profiles persist
     // across restarts; the applier loop (in `serve`) reads enabled rules each
     // tick, and the AtlasRules service serves the full CRUD surface.
@@ -2512,7 +2612,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 10, "migration walks v1 up to the current schema");
+        assert_eq!(version, 11, "migration walks v1 up to the current schema");
 
         store
             .write_self_sample(&SelfSampleRow {
@@ -2588,7 +2688,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 10, "migration walks a v2 db to the current schema");
+        assert_eq!(version, 11, "migration walks a v2 db to the current schema");
         assert!(column_exists(&store.conn, "process_instance", "exit_status").unwrap());
 
         // Pre-existing row survived and has a NULL exit_status.
@@ -2698,13 +2798,13 @@ mod tests {
     }
 
     #[test]
-    fn fresh_database_is_v10() {
+    fn fresh_database_is_v11() {
         let store = Store::open_in_memory().unwrap();
         let version: i64 = store
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 10);
+        assert_eq!(version, 11);
     }
 
     fn sample_rule(name: &str, image: &str) -> RuleRow {
@@ -3325,5 +3425,34 @@ mod tests {
         let (all, _) = store.list_crashes(0, 10_000, &[], 10).unwrap();
         assert_eq!(all.len(), 3);
         assert_eq!(all[0].ts_ms, 3_000, "newest first");
+    }
+
+    #[test]
+    fn dynamic_protection_defaults_disabled_and_persists() {
+        let store = Store::open_in_memory().unwrap();
+        // Fresh database: seeded, disabled, with the documented defaults.
+        let cfg = store.get_dynamic_protection().unwrap();
+        assert!(!cfg.enabled, "disabled by default (never dampens unasked)");
+        assert_eq!(cfg.cpu_threshold_permille, 800);
+        assert_eq!(cfg.sustain_seconds, 30);
+        assert_eq!(cfg.max_intervention_seconds, 300);
+
+        // A round-trip persists every field and takes effect on the next read.
+        let want = DynProtRow {
+            enabled: true,
+            cpu_threshold_permille: 650,
+            sustain_seconds: 15,
+            max_intervention_seconds: 120,
+        };
+        store.set_dynamic_protection(&want).unwrap();
+        assert_eq!(store.get_dynamic_protection().unwrap(), want);
+
+        // Upsert (not insert) — a second write updates the single pinned row.
+        let want2 = DynProtRow {
+            enabled: false,
+            ..want
+        };
+        store.set_dynamic_protection(&want2).unwrap();
+        assert_eq!(store.get_dynamic_protection().unwrap(), want2);
     }
 }

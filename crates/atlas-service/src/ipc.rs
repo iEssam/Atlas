@@ -56,12 +56,12 @@ use atlas_ipc::{
     ServiceStartType, ServiceState, SnapshotReply, SnapshotRequest, StartupEntry, StartupSource,
     SystemChange as ProtoSystemChange, SystemGauges, TcpState, ThermalSensor as ProtoThermalSensor,
     ThreadRow, TimeRange, UpdatePrivacyAlertRuleReply, UpdatePrivacyAlertRuleRequest,
-    CAP_BATTERY_STATUS, CAP_BOOT_ANALYSIS, CAP_CRASH_ANALYSIS, CAP_DIAGNOSTICS, CAP_FTS5_SEARCH,
-    CAP_HISTORY_QUERIES, CAP_INCIDENT_DETECTION, CAP_NETWORK_INSPECTOR, CAP_PRIVACY_ALERTS,
-    CAP_PRIVACY_EVENTS, CAP_PROCESS_INSPECTOR, CAP_PROCESS_SNAPSHOTS, CAP_PROFILES, CAP_REPORTS,
-    CAP_RESOURCE_OWNERSHIP, CAP_RULES_ENGINE, CAP_SAFE_ACTIONS, CAP_SCHEDULED_TASKS,
-    CAP_SERVICES_INVENTORY, CAP_STARTUP_INVENTORY, CAP_SYSTEM_CHANGES, CAP_THERMAL_SENSORS,
-    RING_ROWS,
+    CAP_BATTERY_STATUS, CAP_BOOT_ANALYSIS, CAP_CRASH_ANALYSIS, CAP_DIAGNOSTICS,
+    CAP_DYNAMIC_PROTECTION, CAP_FTS5_SEARCH, CAP_HISTORY_QUERIES, CAP_INCIDENT_DETECTION,
+    CAP_NETWORK_INSPECTOR, CAP_PRIVACY_ALERTS, CAP_PRIVACY_EVENTS, CAP_PROCESS_INSPECTOR,
+    CAP_PROCESS_SNAPSHOTS, CAP_PROFILES, CAP_REPORTS, CAP_RESOURCE_OWNERSHIP, CAP_RULES_ENGINE,
+    CAP_SAFE_ACTIONS, CAP_SCHEDULED_TASKS, CAP_SERVICES_INVENTORY, CAP_STARTUP_INVENTORY,
+    CAP_SYSTEM_CHANGES, CAP_THERMAL_SENSORS, RING_ROWS,
 };
 
 use crate::diagnostics::{self, DiagnoseContext};
@@ -459,6 +459,9 @@ impl AtlasQuery for QueryService {
             // backed persistence + audit; the applier runs on the sampler thread.
             flags.push(CAP_RULES_ENGINE.to_string());
             flags.push(CAP_PROFILES.to_string());
+            // R3: dynamic responsiveness protection (the watchdog runs on the
+            // sampler tick, store-backed config, disabled by default).
+            flags.push(CAP_DYNAMIC_PROTECTION.to_string());
             // R2: advanced privacy alerts — the ConsentStore change-watcher +
             // evaluator run on their own threads; rule CRUD + fired-alert history
             // are store-backed and always available on Windows here.
@@ -1116,6 +1119,10 @@ impl AtlasQuery for QueryService {
             .map_err(|e| Status::internal(format!("get_thermal task: {e}")))?;
         Ok(Response::new(reply))
     }
+
+    // (The real list_system_changes / list_crashes implementations are the
+    // store-backed ones above — the dynamic-protection branch's placeholder
+    // stubs were dropped at merge so the forensics data is not shadowed.)
 }
 
 /// Maps a collector [`atlas_collectors::ProcessDetail`] to the proto message

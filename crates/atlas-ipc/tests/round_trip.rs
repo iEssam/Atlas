@@ -612,6 +612,9 @@ impl AtlasQuery for FakeQuery {
             }],
         }))
     }
+
+    // (list_system_changes / list_crashes are implemented with rich fixtures
+    // above; the dynamic-protection branch's empty stubs were dropped at merge.)
 }
 
 /// Minimal fixed-response AtlasRules service so the transport test exercises the
@@ -788,6 +791,34 @@ impl AtlasRules for FakeRules {
         Ok(Response::new(atlas_ipc::SetProfileActiveReply {
             ok: true,
             message: format!("profile active={active}"),
+        }))
+    }
+
+    // R3 dynamic responsiveness protection: fixed responses so the transport test
+    // exercises the two new RPCs end-to-end (the watchdog decision core + applier
+    // are unit-tested in atlas-service).
+    async fn get_dynamic_protection(
+        &self,
+        _req: Request<atlas_ipc::GetDynamicProtectionRequest>,
+    ) -> Result<Response<atlas_ipc::GetDynamicProtectionReply>, Status> {
+        Ok(Response::new(atlas_ipc::GetDynamicProtectionReply {
+            config: Some(atlas_ipc::DynamicProtectionConfig {
+                enabled: false,
+                cpu_threshold_permille: 800,
+                sustain_seconds: 30,
+                max_intervention_seconds: 300,
+            }),
+        }))
+    }
+
+    async fn set_dynamic_protection(
+        &self,
+        req: Request<atlas_ipc::SetDynamicProtectionRequest>,
+    ) -> Result<Response<atlas_ipc::SetDynamicProtectionReply>, Status> {
+        let cfg = req.into_inner().config.unwrap_or_default();
+        Ok(Response::new(atlas_ipc::SetDynamicProtectionReply {
+            ok: true,
+            message: format!("enabled={}", cfg.enabled),
         }))
     }
 }
@@ -1019,6 +1050,34 @@ async fn capabilities_and_snapshot_round_trip() {
         .into_inner();
     assert!(activated.ok);
     assert!(activated.message.contains("active=true"));
+
+    // R3: dynamic responsiveness protection. GetDynamicProtection returns the
+    // disabled-by-default config; SetDynamicProtection round-trips the toggle.
+    let dp = rules
+        .get_dynamic_protection(atlas_ipc::GetDynamicProtectionRequest {})
+        .await
+        .expect("GetDynamicProtection")
+        .into_inner()
+        .config
+        .expect("config present");
+    assert!(!dp.enabled, "disabled by default");
+    assert_eq!(dp.cpu_threshold_permille, 800);
+    assert_eq!(dp.max_intervention_seconds, 300);
+
+    let set_dp = rules
+        .set_dynamic_protection(atlas_ipc::SetDynamicProtectionRequest {
+            config: Some(atlas_ipc::DynamicProtectionConfig {
+                enabled: true,
+                cpu_threshold_permille: 500,
+                sustain_seconds: 10,
+                max_intervention_seconds: 60,
+            }),
+        })
+        .await
+        .expect("SetDynamicProtection")
+        .into_inner();
+    assert!(set_dp.ok);
+    assert!(set_dp.message.contains("enabled=true"));
     // R2: ListConnections returns the established connection; with listening
     // requested it also folds in the LISTEN row.
     let conns = client

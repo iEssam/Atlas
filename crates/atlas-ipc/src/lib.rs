@@ -85,6 +85,11 @@ pub use v0::{
     SetRuleEnabledReply, SetRuleEnabledRequest, SimulateRuleReply, SimulateRuleRequest,
     SimulatedTarget, UpdateProfileReply, UpdateProfileRequest, UpdateRuleReply, UpdateRuleRequest,
 };
+// R3 dynamic responsiveness protection (AtlasRules service, PRD §9.7.3).
+pub use v0::{
+    DynamicProtectionConfig, GetDynamicProtectionReply, GetDynamicProtectionRequest,
+    SetDynamicProtectionReply, SetDynamicProtectionRequest,
+};
 
 /// Capability flag advertised by [`v0::CapabilitiesReply`] when the service can
 /// serve process snapshots. Always present in M4; sensor/ETW flags follow in
@@ -173,6 +178,13 @@ pub const CAP_BATTERY_STATUS: &str = "battery_status";
 /// (`GetThermal`, PRD §9.6.7). Advertised only when at least one thermal sensor
 /// is exposed.
 pub const CAP_THERMAL_SENSORS: &str = "thermal_sensors";
+
+/// R3: the service runs the dynamic responsiveness protection watchdog
+/// (PRD §9.7.3) — a safety-gated background-CPU-monopolizer damper with automatic
+/// restoration, shared reversal ledger, and audited interventions surfaced
+/// through `ListInterventions` (rule_id = 0). Config via `GetDynamicProtection` /
+/// `SetDynamicProtection`; store-backed and disabled by default.
+pub const CAP_DYNAMIC_PROTECTION: &str = "dynamic_protection";
 
 /// R2: the service runs the advanced-privacy-alerts engine (PRD §9.10.3) — the
 /// ConsentStore change-watcher + rule evaluator recording fired alerts, plus the
