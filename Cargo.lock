@@ -142,6 +142,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "atlas-plugin-example"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "atlas-ipc",
+ "tokio",
+ "tonic",
+]
+
+[[package]]
 name = "atlas-service"
 version = "0.1.0"
 dependencies = [

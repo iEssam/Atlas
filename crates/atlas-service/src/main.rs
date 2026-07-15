@@ -15,6 +15,8 @@ mod dynamic_protection;
 mod forensics;
 #[cfg(windows)]
 mod ipc;
+#[cfg(windows)]
+mod plugins;
 mod privacy_alerts;
 mod report;
 mod rules;
@@ -507,6 +509,21 @@ enum Cmd {
         #[command(subcommand)]
         cmd: RuleCmd,
     },
+    /// Manage signed plugins (R3, PRD §18.3): register/list/enable/disable/grant/
+    /// rm/launch. Out-of-process, Authenticode-signed, capability-scoped READ-ONLY
+    /// extensions. `register` verifies the executable's signature and REFUSES an
+    /// unsigned one unless `--allow-unsigned`. Registry ops act on the store
+    /// directly (no `serve` needed); `launch` mints a one-time nonce and runs the
+    /// bundled example plugin against a running `serve`.
+    Plugin {
+        #[arg(long)]
+        db: Option<PathBuf>,
+        /// Pipe discriminator for `launch` (must match the server's `serve --pipe`).
+        #[arg(long)]
+        pipe: Option<String>,
+        #[command(subcommand)]
+        cmd: PluginCmd,
+    },
     /// List the live interventions a running `serve` is currently applying (R2).
     ///
     /// Connects to `serve` over the pipe and calls ListInterventions — the
@@ -699,6 +716,47 @@ enum RuleCmd {
         id: Option<i64>,
         #[command(flatten)]
         args: Option<RuleArgs>,
+    },
+}
+
+#[derive(Subcommand)]
+enum PluginCmd {
+    /// Register a plugin executable after verifying its Authenticode signature.
+    /// Unsigned executables are REFUSED unless `--allow-unsigned`.
+    Register {
+        /// Path to the plugin executable.
+        exe: String,
+        /// Capabilities to grant, comma-separated: snapshot,history,search,
+        /// incidents,inventory,network,forensics.
+        #[arg(long, default_value = "")]
+        caps: String,
+        /// Explicit, unsafe opt-in to register an unsigned executable.
+        #[arg(long)]
+        allow_unsigned: bool,
+    },
+    /// List registered plugins.
+    List,
+    /// Enable a plugin by id (re-verifies the signature; refuses if degraded).
+    Enable { id: i64 },
+    /// Disable a plugin by id.
+    Disable { id: i64 },
+    /// Replace a plugin's granted capabilities (comma-separated, see `register`).
+    Grant {
+        id: i64,
+        #[arg(long, default_value = "")]
+        caps: String,
+    },
+    /// Remove a plugin by id.
+    Rm { id: i64 },
+    /// Mint a one-time launch nonce for a plugin and run the bundled example
+    /// plugin against a running `serve`, or (with `--print-nonce`) just print the
+    /// nonce for a manually launched plugin to read.
+    Launch {
+        id: i64,
+        /// Print the minted nonce instead of spawning the example plugin (for a
+        /// plugin you launch yourself; it reads ATLAS_PLUGIN_NONCE).
+        #[arg(long)]
+        print_nonce: bool,
     },
 }
 
@@ -905,6 +963,7 @@ fn run() -> Result<()> {
             warmup_secs,
         ),
         Cmd::Rule { db, cmd } => cmd_rule(db.unwrap_or_else(default_db_path), cmd),
+        Cmd::Plugin { db, pipe, cmd } => cmd_plugin(db.unwrap_or_else(default_db_path), pipe, cmd),
         Cmd::Interventions { pipe } => cmd_interventions(pipe),
         Cmd::Profile { db, cmd } => cmd_profile(db.unwrap_or_else(default_db_path), cmd),
         Cmd::Policy { pid } => cmd_policy(pid),
@@ -2114,7 +2173,7 @@ fn serve_loop(
     stop: Arc<AtomicBool>,
     duration: Option<u64>,
 ) -> Result<()> {
-    use atlas_ipc::{AtlasControlServer, AtlasQueryServer, AtlasRulesServer};
+    use atlas_ipc::{AtlasControlServer, AtlasPluginsServer, AtlasQueryServer, AtlasRulesServer};
 
     let pipe_disc = pipe.clone();
     let name = resolve_pipe_name(pipe);
@@ -2135,13 +2194,41 @@ fn serve_loop(
             handle.store(),
             handle.rules_engine(),
         ));
+        // The signed plugin framework (R3, PRD §18.3): the AtlasPlugins
+        // registry/session service + the in-memory session-token map it shares
+        // with the capability interceptor. The interceptor wraps EVERY service so
+        // a plugin token can only reach its granted AtlasQuery reads and is
+        // rejected outright on the mutating / management surfaces.
+        let sessions = std::sync::Arc::new(plugins::PluginSessions::new());
+        let plugins_svc = std::sync::Arc::new(plugins::PluginsService::new(
+            handle.store(),
+            sessions.clone(),
+        ));
+        let store = handle.store();
         let router = tonic::transport::Server::builder()
-            .add_service(AtlasQueryServer::from_arc(handle.clone()))
-            .add_service(AtlasControlServer::from_arc(broker))
-            .add_service(AtlasRulesServer::from_arc(rules));
+            .add_service(plugins::PluginGuard::query(
+                AtlasQueryServer::from_arc(handle.clone()),
+                sessions.clone(),
+                store.clone(),
+            ))
+            .add_service(plugins::PluginGuard::mutating(
+                AtlasControlServer::from_arc(broker),
+                sessions.clone(),
+                store.clone(),
+            ))
+            .add_service(plugins::PluginGuard::mutating(
+                AtlasRulesServer::from_arc(rules),
+                sessions.clone(),
+                store.clone(),
+            ))
+            .add_service(plugins::PluginGuard::mutating(
+                AtlasPluginsServer::from_arc(plugins_svc),
+                sessions.clone(),
+                store.clone(),
+            ));
 
-        tracing::info!(pipe = %name, "AtlasQuery + AtlasControl + AtlasRules serving");
-        println!("Serving AtlasQuery + AtlasControl + AtlasRules on {name}");
+        tracing::info!(pipe = %name, "AtlasQuery + AtlasControl + AtlasRules + AtlasPlugins serving");
+        println!("Serving AtlasQuery + AtlasControl + AtlasRules + AtlasPlugins on {name}");
 
         // Optional self-stop after `duration` seconds (verification path): flip
         // the shared stop flag so the shutdown future below fires cleanly.
@@ -4668,6 +4755,158 @@ fn cmd_rule(db_path: PathBuf, cmd: RuleCmd) -> Result<()> {
 }
 
 #[cfg(windows)]
+fn cmd_plugin(db_path: PathBuf, pipe: Option<String>, cmd: PluginCmd) -> Result<()> {
+    use atlas_ipc::PluginCapability;
+
+    match cmd {
+        PluginCmd::Register {
+            exe,
+            caps,
+            allow_unsigned,
+        } => {
+            let mask = plugins::parse_caps(&caps).map_err(|e| anyhow::anyhow!(e))?;
+            let store = Store::open(&db_path)?;
+            let out = plugins::register_plugin(&store, &exe, mask, allow_unsigned)?;
+            println!("{}", out.message);
+            if !out.ok {
+                std::process::exit(1);
+            }
+        }
+        PluginCmd::List => {
+            let store = Store::open(&db_path)?;
+            let rows = store.list_plugins()?;
+            if rows.is_empty() {
+                println!("No plugins. Register one with `plugin register <exe> --caps snapshot`.");
+            } else {
+                for r in rows {
+                    let caps = plugins::mask_to_caps(r.granted_caps)
+                        .iter()
+                        .filter_map(|c| PluginCapability::try_from(*c).ok())
+                        .map(plugins::cap_name)
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    let publisher = if r.publisher.is_empty() {
+                        "<none>".to_string()
+                    } else {
+                        r.publisher.clone()
+                    };
+                    println!(
+                        "#{:<4} {:<8} {:<9} {:<20} v{:<12} pub={:<28} caps=[{}]",
+                        r.id,
+                        if r.enabled { "ENABLED" } else { "disabled" },
+                        plugins::sig_label(r.signature),
+                        r.name,
+                        r.version,
+                        publisher,
+                        caps,
+                    );
+                    println!("        exe: {}", r.exe_path);
+                }
+            }
+        }
+        PluginCmd::Enable { id } => {
+            let store = Store::open(&db_path)?;
+            let (_ok, message) = plugins::set_enabled(&store, id, true)?;
+            println!("{message}");
+        }
+        PluginCmd::Disable { id } => {
+            let store = Store::open(&db_path)?;
+            let (_ok, message) = plugins::set_enabled(&store, id, false)?;
+            println!("{message}");
+        }
+        PluginCmd::Grant { id, caps } => {
+            let mask = plugins::parse_caps(&caps).map_err(|e| anyhow::anyhow!(e))?;
+            let store = Store::open(&db_path)?;
+            let (_ok, message) = plugins::grant_capabilities(&store, id, mask)?;
+            println!("{message}");
+        }
+        PluginCmd::Rm { id } => {
+            let store = Store::open(&db_path)?;
+            let (_ok, message) = plugins::remove_plugin(&store, id)?;
+            println!("{message}");
+        }
+        PluginCmd::Launch { id, print_nonce } => cmd_plugin_launch(db_path, pipe, id, print_nonce)?,
+    }
+    Ok(())
+}
+
+/// Mints a one-time launch nonce for plugin `id`, persists it (so the running
+/// `serve` process can validate it in OpenPluginSession), and either prints it
+/// or spawns the bundled example plugin with it. This is the launch handshake:
+/// the nonce proves to `serve` that this launch was authorized. The plugin
+/// exchanges it for a capability-scoped session token — the token itself is
+/// never persisted, minted only inside the running service.
+#[cfg(windows)]
+fn cmd_plugin_launch(
+    db_path: PathBuf,
+    pipe: Option<String>,
+    id: i64,
+    print_nonce: bool,
+) -> Result<()> {
+    let store = Store::open(&db_path)?;
+    let row = match store.get_plugin(id)? {
+        Some(r) => r,
+        None => {
+            println!("no plugin #{id}");
+            std::process::exit(1);
+        }
+    };
+    if !row.enabled {
+        println!("plugin #{id} '{}' is disabled — enable it first", row.name);
+        std::process::exit(1);
+    }
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let nonce = plugins::mint_launch_nonce(id);
+    store.record_plugin_nonce(&nonce, id, now + plugins::LAUNCH_NONCE_TTL_MS)?;
+
+    let pipe_name = resolve_pipe_name(pipe);
+
+    if print_nonce {
+        println!("Minted launch nonce for plugin #{id} '{}':", row.name);
+        println!("  ATLAS_PLUGIN_ID={id}");
+        println!("  ATLAS_PLUGIN_NONCE={nonce}");
+        println!("  ATLAS_PLUGIN_PIPE={pipe_name}");
+        println!(
+            "Valid for {}s. The plugin calls OpenPluginSession({id}, nonce) to get its token.",
+            plugins::LAUNCH_NONCE_TTL_MS / 1000
+        );
+        return Ok(());
+    }
+
+    // Spawn the bundled example plugin (built alongside this binary) with the
+    // nonce in its environment.
+    let exe = std::env::current_exe()?;
+    let example = exe
+        .parent()
+        .map(|p| p.join("atlas-plugin-example.exe"))
+        .ok_or_else(|| anyhow::anyhow!("cannot locate example plugin next to {}", exe.display()))?;
+    if !example.is_file() {
+        anyhow::bail!(
+            "example plugin not found at {} — build it with `cargo build -p atlas-plugin-example`",
+            example.display()
+        );
+    }
+    println!(
+        "Launching example plugin #{id} '{}' against {pipe_name} (nonce valid {}s)",
+        row.name,
+        plugins::LAUNCH_NONCE_TTL_MS / 1000
+    );
+    let status = std::process::Command::new(&example)
+        .env("ATLAS_PLUGIN_ID", id.to_string())
+        .env("ATLAS_PLUGIN_NONCE", &nonce)
+        .env("ATLAS_PLUGIN_PIPE", &pipe_name)
+        .status()?;
+    if !status.success() {
+        std::process::exit(status.code().unwrap_or(1));
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
 fn cmd_rule_simulate(db_path: PathBuf, id: Option<i64>, args: Option<RuleArgs>) -> Result<()> {
     let store: ipc::SharedStore =
         std::sync::Arc::new(std::sync::Mutex::new(Store::open(&db_path)?));
@@ -4934,6 +5173,10 @@ fn cmd_dynamic_protection(_pipe: Option<String>, _cmd: DynProtCmd) -> Result<()>
 #[cfg(not(windows))]
 fn cmd_policy(_pid: u32) -> Result<()> {
     anyhow::bail!("the `policy` command requires Windows");
+}
+#[cfg(not(windows))]
+fn cmd_plugin(_db_path: PathBuf, _pipe: Option<String>, _cmd: PluginCmd) -> Result<()> {
+    anyhow::bail!("the `plugin` command requires Windows");
 }
 
 fn cmd_db_top(db_path: PathBuf, minutes: u64, limit: u32) -> Result<()> {

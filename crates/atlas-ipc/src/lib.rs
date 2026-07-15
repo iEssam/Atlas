@@ -36,6 +36,8 @@ pub use transport::{connect, default_pipe_name, pipe_name, serve, PipeConnectInf
 // atlas-ipc rather than pinning tonic/prost versions themselves.
 pub use v0::atlas_control_client::AtlasControlClient;
 pub use v0::atlas_control_server::{AtlasControl, AtlasControlServer};
+pub use v0::atlas_plugins_client::AtlasPluginsClient;
+pub use v0::atlas_plugins_server::{AtlasPlugins, AtlasPluginsServer};
 pub use v0::atlas_query_client::AtlasQueryClient;
 pub use v0::atlas_query_server::{AtlasQuery, AtlasQueryServer};
 pub use v0::atlas_rules_client::AtlasRulesClient;
@@ -93,6 +95,20 @@ pub use v0::{
     DynamicProtectionConfig, GetDynamicProtectionReply, GetDynamicProtectionRequest,
     SetDynamicProtectionReply, SetDynamicProtectionRequest,
 };
+// R3 signed plugin framework (AtlasPlugins service, PRD §18.3, tech-stack §4.6).
+// Out-of-process, Authenticode-signed, capability-scoped READ-ONLY extensions.
+pub use v0::{
+    GrantPluginCapabilitiesReply, GrantPluginCapabilitiesRequest, ListPluginsReply,
+    ListPluginsRequest, OpenPluginSessionReply, OpenPluginSessionRequest, Plugin, PluginCapability,
+    PluginSignature, RegisterPluginReply, RegisterPluginRequest, RemovePluginReply,
+    RemovePluginRequest, SetPluginEnabledReply, SetPluginEnabledRequest,
+};
+
+/// gRPC metadata key a plugin presents on every AtlasQuery call. The server
+/// interceptor rejects any call outside the token's granted capabilities and
+/// rejects the key outright on the AtlasControl / AtlasRules / AtlasPlugins
+/// (mutating / management) surfaces — plugins are read-only, full stop.
+pub const PLUGIN_TOKEN_METADATA_KEY: &str = "atlas-plugin-token";
 
 /// Capability flag advertised by [`v0::CapabilitiesReply`] when the service can
 /// serve process snapshots. Always present in M4; sensor/ETW flags follow in
@@ -215,3 +231,10 @@ pub const CAP_CRASH_ANALYSIS: &str = "crash_analysis";
 /// `GenerateSupportBundle`). Store-backed + live OS reads; always available on
 /// Windows here.
 pub const CAP_SUPPORT_BUNDLE: &str = "support_bundle";
+
+/// R3: the service runs the signed plugin framework (PRD §18.3, tech-stack
+/// §4.6) — the AtlasPlugins registry/management surface plus the server-side
+/// capability interceptor that scopes plugin sessions to their granted read-only
+/// slice of AtlasQuery. Store-backed (the `plugin` registry + audit); off by
+/// default (no plugin runs until the user registers, grants, and enables one).
+pub const CAP_PLUGINS: &str = "plugins";

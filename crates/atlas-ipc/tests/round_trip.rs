@@ -7,6 +7,7 @@
 
 use tonic::{Request, Response, Status};
 
+use atlas_ipc::v0::atlas_plugins_server::{AtlasPlugins, AtlasPluginsServer};
 use atlas_ipc::v0::atlas_query_server::{AtlasQuery, AtlasQueryServer};
 use atlas_ipc::v0::atlas_rules_server::{AtlasRules, AtlasRulesServer};
 use atlas_ipc::{
@@ -862,6 +863,107 @@ impl AtlasRules for FakeRules {
     }
 }
 
+/// Minimal AtlasPlugins fake so the transport carries the R3 plugin
+/// registry/session surface. Echoes a registered plugin and a session token. The
+/// real capability interceptor lives in atlas-service (unit-tested there); this
+/// only proves the contract round-trips over the pipe.
+#[derive(Default)]
+struct FakePlugins;
+
+#[tonic::async_trait]
+impl AtlasPlugins for FakePlugins {
+    async fn list_plugins(
+        &self,
+        _req: Request<atlas_ipc::ListPluginsRequest>,
+    ) -> Result<Response<atlas_ipc::ListPluginsReply>, Status> {
+        Ok(Response::new(atlas_ipc::ListPluginsReply {
+            plugins: vec![atlas_ipc::Plugin {
+                id: 7,
+                name: "Example".into(),
+                version: "1.0.0".into(),
+                publisher: "Contoso".into(),
+                exe_path: "C:\\x\\example.exe".into(),
+                signature: atlas_ipc::PluginSignature::PluginSigned as i32,
+                enabled: true,
+                granted: vec![atlas_ipc::PluginCapability::PluginCapSnapshot as i32],
+                registered_ms: 111,
+                description: String::new(),
+            }],
+        }))
+    }
+
+    async fn register_plugin(
+        &self,
+        req: Request<atlas_ipc::RegisterPluginRequest>,
+    ) -> Result<Response<atlas_ipc::RegisterPluginReply>, Status> {
+        let r = req.into_inner();
+        // Mirror the real refusal contract: unsigned is refused unless overridden.
+        if !r.allow_unsigned {
+            return Ok(Response::new(atlas_ipc::RegisterPluginReply {
+                ok: false,
+                message: "refused: executable is not signed".into(),
+                plugin: None,
+            }));
+        }
+        Ok(Response::new(atlas_ipc::RegisterPluginReply {
+            ok: true,
+            message: "registered".into(),
+            plugin: Some(atlas_ipc::Plugin {
+                id: 7,
+                name: "Example".into(),
+                version: "1.0.0".into(),
+                publisher: String::new(),
+                exe_path: r.exe_path,
+                signature: atlas_ipc::PluginSignature::PluginUnsigned as i32,
+                enabled: false,
+                granted: r.requested,
+                registered_ms: 111,
+                description: String::new(),
+            }),
+        }))
+    }
+
+    async fn set_plugin_enabled(
+        &self,
+        req: Request<atlas_ipc::SetPluginEnabledRequest>,
+    ) -> Result<Response<atlas_ipc::SetPluginEnabledReply>, Status> {
+        let r = req.into_inner();
+        Ok(Response::new(atlas_ipc::SetPluginEnabledReply {
+            ok: true,
+            message: format!("enabled={}", r.enabled),
+        }))
+    }
+
+    async fn grant_plugin_capabilities(
+        &self,
+        _req: Request<atlas_ipc::GrantPluginCapabilitiesRequest>,
+    ) -> Result<Response<atlas_ipc::GrantPluginCapabilitiesReply>, Status> {
+        Ok(Response::new(atlas_ipc::GrantPluginCapabilitiesReply {
+            ok: true,
+        }))
+    }
+
+    async fn remove_plugin(
+        &self,
+        _req: Request<atlas_ipc::RemovePluginRequest>,
+    ) -> Result<Response<atlas_ipc::RemovePluginReply>, Status> {
+        Ok(Response::new(atlas_ipc::RemovePluginReply { ok: true }))
+    }
+
+    async fn open_plugin_session(
+        &self,
+        req: Request<atlas_ipc::OpenPluginSessionRequest>,
+    ) -> Result<Response<atlas_ipc::OpenPluginSessionReply>, Status> {
+        let r = req.into_inner();
+        Ok(Response::new(atlas_ipc::OpenPluginSessionReply {
+            ok: !r.launch_nonce.is_empty(),
+            message: String::new(),
+            session_token: "fake-token".into(),
+            granted: vec![atlas_ipc::PluginCapability::PluginCapSnapshot as i32],
+        }))
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn capabilities_and_snapshot_round_trip() {
     // Unique pipe per test run so parallel/repeat runs never collide.
@@ -871,7 +973,8 @@ async fn capabilities_and_snapshot_round_trip() {
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let router = tonic::transport::Server::builder()
         .add_service(AtlasQueryServer::new(FakeQuery))
-        .add_service(AtlasRulesServer::new(FakeRules));
+        .add_service(AtlasRulesServer::new(FakeRules))
+        .add_service(AtlasPluginsServer::new(FakePlugins));
     let server_name = name.clone();
     let server = tokio::spawn(async move {
         atlas_ipc::serve(&server_name, router, async {
@@ -1298,6 +1401,66 @@ async fn capabilities_and_snapshot_round_trip() {
     assert_eq!(
         bundle.redaction_applied,
         vec!["paths".to_string(), "user_names".to_string()]
+    );
+
+    // R3 signed plugin framework: the AtlasPlugins registry/session surface
+    // round-trips on the same pipe. RegisterPlugin honors the unsigned-refusal
+    // contract; OpenPluginSession returns a capability-scoped token.
+    let mut plugins = atlas_ipc::AtlasPluginsClient::new(
+        atlas_ipc::connect(&name)
+            .await
+            .expect("plugins client connects"),
+    );
+
+    // Unsigned is refused unless explicitly overridden.
+    let refused = plugins
+        .register_plugin(atlas_ipc::RegisterPluginRequest {
+            exe_path: "C:\\x\\example.exe".into(),
+            requested: vec![atlas_ipc::PluginCapability::PluginCapSnapshot as i32],
+            allow_unsigned: false,
+        })
+        .await
+        .expect("RegisterPlugin")
+        .into_inner();
+    assert!(!refused.ok);
+    assert!(refused.message.contains("not signed"));
+
+    let registered = plugins
+        .register_plugin(atlas_ipc::RegisterPluginRequest {
+            exe_path: "C:\\x\\example.exe".into(),
+            requested: vec![atlas_ipc::PluginCapability::PluginCapSnapshot as i32],
+            allow_unsigned: true,
+        })
+        .await
+        .expect("RegisterPlugin override")
+        .into_inner();
+    assert!(registered.ok);
+    assert_eq!(registered.plugin.expect("plugin").id, 7);
+
+    let listed = plugins
+        .list_plugins(atlas_ipc::ListPluginsRequest {})
+        .await
+        .expect("ListPlugins")
+        .into_inner();
+    assert_eq!(listed.plugins.len(), 1);
+    assert_eq!(
+        listed.plugins[0].granted,
+        vec![atlas_ipc::PluginCapability::PluginCapSnapshot as i32]
+    );
+
+    let session = plugins
+        .open_plugin_session(atlas_ipc::OpenPluginSessionRequest {
+            plugin_id: 7,
+            launch_nonce: "nonce-123".into(),
+        })
+        .await
+        .expect("OpenPluginSession")
+        .into_inner();
+    assert!(session.ok);
+    assert!(!session.session_token.is_empty());
+    assert_eq!(
+        session.granted,
+        vec![atlas_ipc::PluginCapability::PluginCapSnapshot as i32]
     );
 
     // Shut the server down cleanly.

@@ -59,10 +59,10 @@ use atlas_ipc::{
     UpdatePrivacyAlertRuleReply, UpdatePrivacyAlertRuleRequest, CAP_BATTERY_STATUS,
     CAP_BOOT_ANALYSIS, CAP_CRASH_ANALYSIS, CAP_DIAGNOSTICS, CAP_DYNAMIC_PROTECTION,
     CAP_FTS5_SEARCH, CAP_HISTORY_QUERIES, CAP_INCIDENT_DETECTION, CAP_NETWORK_INSPECTOR,
-    CAP_PRIVACY_ALERTS, CAP_PRIVACY_EVENTS, CAP_PROCESS_INSPECTOR, CAP_PROCESS_SNAPSHOTS,
-    CAP_PROFILES, CAP_REPORTS, CAP_RESOURCE_OWNERSHIP, CAP_RULES_ENGINE, CAP_SAFE_ACTIONS,
-    CAP_SCHEDULED_TASKS, CAP_SERVICES_INVENTORY, CAP_STARTUP_INVENTORY, CAP_SUPPORT_BUNDLE,
-    CAP_SYSTEM_CHANGES, CAP_THERMAL_SENSORS, RING_ROWS,
+    CAP_PLUGINS, CAP_PRIVACY_ALERTS, CAP_PRIVACY_EVENTS, CAP_PROCESS_INSPECTOR,
+    CAP_PROCESS_SNAPSHOTS, CAP_PROFILES, CAP_REPORTS, CAP_RESOURCE_OWNERSHIP, CAP_RULES_ENGINE,
+    CAP_SAFE_ACTIONS, CAP_SCHEDULED_TASKS, CAP_SERVICES_INVENTORY, CAP_STARTUP_INVENTORY,
+    CAP_SUPPORT_BUNDLE, CAP_SYSTEM_CHANGES, CAP_THERMAL_SENSORS, RING_ROWS,
 };
 
 use crate::diagnostics::{self, DiagnoseContext};
@@ -494,6 +494,11 @@ impl AtlasQuery for QueryService {
             // reads (device info, service/startup inventories), passed through
             // the shared redactor. Always available on Windows here.
             flags.push(CAP_SUPPORT_BUNDLE.to_string());
+            // R3 signed plugin framework: the AtlasPlugins registry/session
+            // surface + the capability interceptor. Store-backed (the plugin
+            // registry + audit); always available on Windows here (off until the
+            // user registers + enables a plugin).
+            flags.push(CAP_PLUGINS.to_string());
             let (has_battery, has_thermal, has_boots) = tokio::task::spawn_blocking(|| {
                 (
                     battery_status().present,
