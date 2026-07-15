@@ -118,7 +118,7 @@ pub struct ThreadDetail {
 }
 
 /// RAII wrapper closing an `OpenProcess`/token handle on drop.
-struct OwnedHandle(HANDLE);
+pub(crate) struct OwnedHandle(pub(crate) HANDLE);
 impl Drop for OwnedHandle {
     fn drop(&mut self) {
         if !self.0.is_null() {
@@ -426,7 +426,7 @@ fn fill_token_fields(h: HANDLE, detail: &mut ProcessDetail) -> bool {
 }
 
 /// Two-call `GetTokenInformation` for `class`, returning the filled byte buffer.
-fn get_token_information(token: HANDLE, class: u32) -> Option<Vec<u8>> {
+pub(crate) fn get_token_information(token: HANDLE, class: u32) -> Option<Vec<u8>> {
     let mut needed: DWORD = 0;
     // SAFETY: probe with a null buffer to learn the size.
     unsafe { GetTokenInformation(token, class, std::ptr::null_mut(), 0, &mut needed) };
@@ -453,7 +453,7 @@ fn get_token_information(token: HANDLE, class: u32) -> Option<Vec<u8>> {
 }
 
 /// `ConvertSidToStringSidW` → an owned `S-1-…` string.
-fn sid_to_string(sid: *mut std::ffi::c_void) -> Option<String> {
+pub(crate) fn sid_to_string(sid: *mut std::ffi::c_void) -> Option<String> {
     let mut pstr: *mut u16 = std::ptr::null_mut();
     // SAFETY: sid is a valid PSID; pstr receives a LocalAlloc'd buffer we free.
     let ok = unsafe { ConvertSidToStringSidW(sid, &mut pstr) };
@@ -468,7 +468,7 @@ fn sid_to_string(sid: *mut std::ffi::c_void) -> Option<String> {
 }
 
 /// `LookupAccountSidW` → `DOMAIN\name` (best-effort; empty on failure).
-fn lookup_account_name(sid: *mut std::ffi::c_void) -> Option<String> {
+pub(crate) fn lookup_account_name(sid: *mut std::ffi::c_void) -> Option<String> {
     let mut name_len: DWORD = 0;
     let mut dom_len: DWORD = 0;
     let mut use_ty: u32 = 0;

@@ -18,14 +18,15 @@ use std::ptr;
 use std::sync::OnceLock;
 
 use crate::ffi::{
-    CertGetNameStringW, GetFileVersionInfoSizeW, GetFileVersionInfoW, GetProcAddress,
-    LoadLibraryExW, VerQueryValueW, WinVerifyTrust, BOOL, CATALOG_INFO, CERT_NAME_ATTR_TYPE,
-    CERT_NAME_SIMPLE_DISPLAY_TYPE, CRYPT_PROVIDER_CERT_PREFIX, DWORD, GUID, HANDLE,
-    LOAD_LIBRARY_SEARCH_SYSTEM32, LPCWSTR, PVOID, TRUST_E_NOSIGNATURE, TRUST_E_PROVIDER_UNKNOWN,
-    TRUST_E_SUBJECT_FORM_UNKNOWN, UINT, VS_FIXEDFILEINFO, WINTRUST_ACTION_GENERIC_VERIFY_V2,
-    WINTRUST_CATALOG_INFO, WINTRUST_DATA, WINTRUST_FILE_INFO, WTD_CHOICE_CATALOG, WTD_CHOICE_FILE,
-    WTD_REVOCATION_CHECK_NONE, WTD_REVOKE_NONE, WTD_STATEACTION_CLOSE, WTD_STATEACTION_VERIFY,
-    WTD_UI_NONE,
+    CertGetCertificateContextProperty, CertGetNameStringW, GetFileVersionInfoSizeW,
+    GetFileVersionInfoW, GetProcAddress, LoadLibraryExW, VerQueryValueW, WinVerifyTrust, BOOL,
+    CATALOG_INFO, CERT_CONTEXT, CERT_NAME_ATTR_TYPE, CERT_NAME_ISSUER_FLAG,
+    CERT_NAME_SIMPLE_DISPLAY_TYPE, CERT_SHA1_HASH_PROP_ID, CRYPT_PROVIDER_CERT_PREFIX, DWORD,
+    FILETIME, GUID, HANDLE, LOAD_LIBRARY_SEARCH_SYSTEM32, LPCWSTR, PVOID, TRUST_E_NOSIGNATURE,
+    TRUST_E_PROVIDER_UNKNOWN, TRUST_E_SUBJECT_FORM_UNKNOWN, UINT, VS_FIXEDFILEINFO,
+    WINTRUST_ACTION_GENERIC_VERIFY_V2, WINTRUST_CATALOG_INFO, WINTRUST_DATA, WINTRUST_FILE_INFO,
+    WTD_CHOICE_CATALOG, WTD_CHOICE_FILE, WTD_REVOCATION_CHECK_NONE, WTD_REVOKE_NONE,
+    WTD_STATEACTION_CLOSE, WTD_STATEACTION_VERIFY, WTD_UI_NONE,
 };
 use crate::reg::to_wide;
 
@@ -76,6 +77,34 @@ impl SignatureStatus {
 pub struct SignatureInfo {
     pub status: SignatureStatus,
     pub publisher: String,
+}
+
+/// One certificate in the signing chain (leaf → root), read from the verified
+/// WinTrust provider state (R3 expert security metadata, PRD §9.4.6). Mirrors
+/// the proto `CertInfo` field-for-field so the service mapping is a straight
+/// copy. Empty chain means unsigned/unverifiable.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CertDetail {
+    /// Subject simple-display name (the certificate's common name).
+    pub subject: String,
+    /// Issuer simple-display name (who signed this certificate).
+    pub issuer: String,
+    /// SHA-1 thumbprint as uppercase hex (the cached context property).
+    pub thumbprint_sha1: String,
+    /// Validity start, Unix epoch ms (FILETIME → ms; 0 if unreadable).
+    pub not_before_ms: i64,
+    /// Validity end, Unix epoch ms.
+    pub not_after_ms: i64,
+}
+
+/// A trust verdict plus the full signing certificate chain. The status/publisher
+/// match [`SignatureInfo`]; `cert_chain` is populated (leaf → root) only when the
+/// file verified as `Signed` and the chain walk succeeded.
+#[derive(Debug, Clone)]
+pub struct SignatureDetail {
+    pub status: SignatureStatus,
+    pub publisher: String,
+    pub cert_chain: Vec<CertDetail>,
 }
 
 /// Formats a packed `dwFileVersionMS`/`LS` (or product) pair as `a.b.c.d`.
@@ -270,21 +299,58 @@ fn empty_signature(status: SignatureStatus) -> SignatureInfo {
 /// catalogs when the file has no trusted embedded signature. Revocation is
 /// disabled and every WinTrust/catalog state object is released before return.
 pub fn verify_signature_info(path: &str) -> SignatureInfo {
+    let d = verify_impl(path, false);
+    SignatureInfo {
+        status: d.status,
+        publisher: d.publisher,
+    }
+}
+
+/// Like [`verify_signature_info`] but also walks the signing certificate chain
+/// (leaf → root) from the live provider state (R3 expert security metadata). The
+/// chain is populated only on a `Signed` verdict; unsigned/unverifiable files
+/// return an empty chain.
+pub fn verify_signature_detail(path: &str) -> SignatureDetail {
+    verify_impl(path, true)
+}
+
+/// Shared verify body: embedded first, then the catalog fallback. When
+/// `collect_chain` is set the certificate chain is captured from whichever pass
+/// produced the trusted `Signed` verdict.
+fn verify_impl(path: &str, collect_chain: bool) -> SignatureDetail {
     if path.is_empty() {
-        return empty_signature(SignatureStatus::Unknown);
+        return SignatureDetail {
+            status: SignatureStatus::Unknown,
+            publisher: String::new(),
+            cert_chain: Vec::new(),
+        };
     }
 
-    let embedded = verify_embedded_signature(path);
+    let (embedded, echain) = verify_embedded_signature(path, collect_chain);
     if embedded.status == SignatureStatus::Signed {
-        return embedded;
+        return SignatureDetail {
+            status: embedded.status,
+            publisher: embedded.publisher,
+            cert_chain: echain,
+        };
     }
 
-    match verify_catalog_signature(path) {
-        Some(catalog) if catalog.status == SignatureStatus::Signed => catalog,
-        Some(_) if embedded.status == SignatureStatus::Unsigned => {
-            empty_signature(SignatureStatus::Unknown)
-        }
-        _ => embedded,
+    match verify_catalog_signature(path, collect_chain) {
+        Some((catalog, cchain)) if catalog.status == SignatureStatus::Signed => SignatureDetail {
+            status: catalog.status,
+            publisher: catalog.publisher,
+            cert_chain: cchain,
+        },
+        Some(_) if embedded.status == SignatureStatus::Unsigned => SignatureDetail {
+            status: SignatureStatus::Unknown,
+            publisher: String::new(),
+            cert_chain: Vec::new(),
+        },
+        _ => SignatureDetail {
+            status: embedded.status,
+            publisher: embedded.publisher,
+            cert_chain: Vec::new(),
+        },
     }
 }
 
@@ -294,7 +360,7 @@ pub fn verify_signature(path: &str) -> SignatureStatus {
     verify_signature_info(path).status
 }
 
-fn verify_embedded_signature(path: &str) -> SignatureInfo {
+fn verify_embedded_signature(path: &str, collect_chain: bool) -> (SignatureInfo, Vec<CertDetail>) {
     let wpath = to_wide(path);
     let mut file_info = WINTRUST_FILE_INFO {
         cbStruct: std::mem::size_of::<WINTRUST_FILE_INFO>() as DWORD,
@@ -306,7 +372,7 @@ fn verify_embedded_signature(path: &str) -> SignatureInfo {
         WTD_CHOICE_FILE,
         (&mut file_info as *mut WINTRUST_FILE_INFO).cast(),
     );
-    verify_wintrust(&mut data)
+    verify_wintrust(&mut data, collect_chain)
 }
 
 fn trust_data(choice: DWORD, info: PVOID) -> WINTRUST_DATA {
@@ -327,7 +393,10 @@ fn trust_data(choice: DWORD, info: PVOID) -> WINTRUST_DATA {
     }
 }
 
-fn verify_wintrust(data: &mut WINTRUST_DATA) -> SignatureInfo {
+fn verify_wintrust(
+    data: &mut WINTRUST_DATA,
+    collect_chain: bool,
+) -> (SignatureInfo, Vec<CertDetail>) {
     // SAFETY: data and its selected union payload remain live for both calls;
     // the action GUID is static. VERIFY populates state consumed before CLOSE.
     let status = unsafe {
@@ -337,10 +406,18 @@ fn verify_wintrust(data: &mut WINTRUST_DATA) -> SignatureInfo {
             (data as *mut WINTRUST_DATA).cast(),
         )
     };
-    let publisher = if status == 0 {
-        certificate_publisher(data.hWVTStateData)
+    let (publisher, chain) = if status == 0 {
+        let publisher = certificate_publisher(data.hWVTStateData);
+        // Walk the chain only when asked and only from a trusted state — all the
+        // returned pointers are live until the CLOSE pass below.
+        let chain = if collect_chain {
+            certificate_chain(data.hWVTStateData)
+        } else {
+            Vec::new()
+        };
+        (publisher, chain)
     } else {
-        String::new()
+        (String::new(), Vec::new())
     };
 
     data.dwStateAction = WTD_STATEACTION_CLOSE;
@@ -353,10 +430,155 @@ fn verify_wintrust(data: &mut WINTRUST_DATA) -> SignatureInfo {
         );
     }
 
-    SignatureInfo {
-        status: classify_trust(status),
-        publisher,
+    (
+        SignatureInfo {
+            status: classify_trust(status),
+            publisher,
+        },
+        chain,
+    )
+}
+
+/// 100 ns intervals between the FILETIME epoch (1601) and the Unix epoch (1970).
+const FILETIME_UNIX_EPOCH_DELTA_100NS: i64 = 116_444_736_000_000_000;
+
+/// Converts a certificate validity FILETIME (100 ns since 1601) to Unix epoch
+/// ms. A pre-1970 (or zero) value clamps to 0. Pure + unit-tested.
+pub fn filetime_to_unix_ms(ft_100ns: u64) -> i64 {
+    let delta = ft_100ns as i64 - FILETIME_UNIX_EPOCH_DELTA_100NS;
+    if delta <= 0 {
+        0
+    } else {
+        delta / 10_000
     }
+}
+
+/// Uppercase-hex of a byte slice (SHA-1 thumbprint form). Pure + unit-tested.
+pub fn thumbprint_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        let _ = write!(s, "{b:02X}");
+    }
+    s
+}
+
+/// Walks the signing certificate chain (leaf → root) from a live WinTrust state:
+/// provider data → the first signer → each cert by ascending index. Empty when
+/// the provider helpers are unavailable or the state has no signer/certs. All
+/// returned pointers belong to the live state and are read before its CLOSE.
+fn certificate_chain(state: HANDLE) -> Vec<CertDetail> {
+    let mut out = Vec::new();
+    let Some(api) = wintrust_api() else {
+        return out;
+    };
+    if state.is_null() {
+        return out;
+    }
+    // SAFETY: provider/signer/cert pointers are owned by the live WinTrust state
+    // and stay valid until the CLOSE pass in `verify_wintrust`.
+    unsafe {
+        let provider = (api.provider_data)(state);
+        if provider.is_null() {
+            return out;
+        }
+        let signer = (api.provider_signer)(provider, 0, 0, 0);
+        if signer.is_null() {
+            return out;
+        }
+        let mut idx: DWORD = 0;
+        // Bounded: real chains are short; the cap guards a misbehaving provider.
+        while idx < 32 {
+            let cert = (api.provider_cert)(signer, idx);
+            if cert.is_null() {
+                break;
+            }
+            let context = (*cert).pCert;
+            if !context.is_null() {
+                out.push(cert_detail(context));
+            }
+            idx += 1;
+        }
+    }
+    out
+}
+
+/// Reads one certificate's subject/issuer names, SHA-1 thumbprint, and validity
+/// window from its context. Every field degrades to empty/0 independently.
+fn cert_detail(context: *const c_void) -> CertDetail {
+    let subject = cert_name(context, CERT_NAME_SIMPLE_DISPLAY_TYPE, 0, ptr::null_mut());
+    let issuer = cert_name(
+        context,
+        CERT_NAME_SIMPLE_DISPLAY_TYPE,
+        CERT_NAME_ISSUER_FLAG,
+        ptr::null_mut(),
+    );
+    let thumbprint_sha1 = cert_thumbprint(context);
+    let (not_before_ms, not_after_ms) = cert_validity(context);
+    CertDetail {
+        subject,
+        issuer,
+        thumbprint_sha1,
+        not_before_ms,
+        not_after_ms,
+    }
+}
+
+/// SHA-1 thumbprint of a certificate context (the cached
+/// `CERT_SHA1_HASH_PROP_ID` property), uppercase hex. Empty on failure.
+fn cert_thumbprint(context: *const c_void) -> String {
+    let mut len: DWORD = 0;
+    // SAFETY: null buffer probe returns the property size in `len`.
+    unsafe {
+        CertGetCertificateContextProperty(
+            context,
+            CERT_SHA1_HASH_PROP_ID,
+            ptr::null_mut(),
+            &mut len,
+        );
+    }
+    if len == 0 || len as usize > 64 {
+        return String::new();
+    }
+    let mut buf = vec![0u8; len as usize];
+    // SAFETY: buf sized to the probed length; len passed in/out.
+    let ok = unsafe {
+        CertGetCertificateContextProperty(
+            context,
+            CERT_SHA1_HASH_PROP_ID,
+            buf.as_mut_ptr().cast(),
+            &mut len,
+        )
+    };
+    if ok == 0 {
+        return String::new();
+    }
+    thumbprint_hex(&buf[..len as usize])
+}
+
+/// Reads a certificate's NotBefore/NotAfter (Unix ms) from its `CERT_INFO`.
+/// (0, 0) when the context/`pCertInfo` cannot be dereferenced.
+fn cert_validity(context: *const c_void) -> (i64, i64) {
+    // SAFETY: `context` is a live PCCERT_CONTEXT; `pCertInfo` points at a
+    // CERT_INFO valid for the state's lifetime. Reads are within the struct.
+    unsafe {
+        let ctx = context as *const CERT_CONTEXT;
+        if ctx.is_null() {
+            return (0, 0);
+        }
+        let info = (*ctx).pCertInfo;
+        if info.is_null() {
+            return (0, 0);
+        }
+        let nb = filetime_to_unix_ms(filetime_as_u64((*info).NotBefore));
+        let na = filetime_to_unix_ms(filetime_as_u64((*info).NotAfter));
+        (nb, na)
+    }
+}
+
+/// Packs a FILETIME's hi/lo words into a single 100 ns count.
+fn filetime_as_u64(ft: FILETIME) -> u64 {
+    ((ft.dwHighDateTime as u64) << 32) | ft.dwLowDateTime as u64
 }
 
 fn certificate_publisher(state: HANDLE) -> String {
@@ -394,26 +616,36 @@ fn certificate_publisher(state: HANDLE) -> String {
     let organization = cert_name(
         context,
         CERT_NAME_ATTR_TYPE,
+        0,
         ORGANIZATION_OID.as_ptr() as PVOID,
     );
     if organization.is_empty() {
-        cert_name(context, CERT_NAME_SIMPLE_DISPLAY_TYPE, ptr::null_mut())
+        cert_name(context, CERT_NAME_SIMPLE_DISPLAY_TYPE, 0, ptr::null_mut())
     } else {
         organization
     }
 }
 
-fn cert_name(context: *const c_void, name_type: DWORD, parameter: PVOID) -> String {
+fn cert_name(context: *const c_void, name_type: DWORD, flags: DWORD, parameter: PVOID) -> String {
     // SAFETY: context belongs to the live provider state; this first call asks
     // only for the required UTF-16 character count.
-    let count = unsafe { CertGetNameStringW(context, name_type, 0, parameter, ptr::null_mut(), 0) };
+    let count =
+        unsafe { CertGetNameStringW(context, name_type, flags, parameter, ptr::null_mut(), 0) };
     if count <= 1 {
         return String::new();
     }
     let mut name = vec![0u16; count as usize];
     // SAFETY: the buffer contains exactly `count` UTF-16 slots.
-    let written =
-        unsafe { CertGetNameStringW(context, name_type, 0, parameter, name.as_mut_ptr(), count) };
+    let written = unsafe {
+        CertGetNameStringW(
+            context,
+            name_type,
+            flags,
+            parameter,
+            name.as_mut_ptr(),
+            count,
+        )
+    };
     if written <= 1 {
         return String::new();
     }
@@ -422,7 +654,10 @@ fn cert_name(context: *const c_void, name_type: DWORD, parameter: PVOID) -> Stri
         .to_string()
 }
 
-fn verify_catalog_signature(path: &str) -> Option<SignatureInfo> {
+fn verify_catalog_signature(
+    path: &str,
+    collect_chain: bool,
+) -> Option<(SignatureInfo, Vec<CertDetail>)> {
     let api = wintrust_api()?;
     let file = std::fs::File::open(path).ok()?;
     let file_handle = file.as_raw_handle() as HANDLE;
@@ -436,7 +671,7 @@ fn verify_catalog_signature(path: &str) -> Option<SignatureInfo> {
         return None;
     }
 
-    let result = verify_catalog_with_context(api, admin, file_handle, path);
+    let result = verify_catalog_with_context(api, admin, file_handle, path, collect_chain);
     // SAFETY: admin was successfully acquired above and no catalog payload is
     // live after the helper returns.
     unsafe {
@@ -450,7 +685,8 @@ fn verify_catalog_with_context(
     admin: HANDLE,
     file_handle: HANDLE,
     path: &str,
-) -> Option<SignatureInfo> {
+    collect_chain: bool,
+) -> Option<(SignatureInfo, Vec<CertDetail>)> {
     let mut hash_len: DWORD = 0;
     // SAFETY: the first call obtains the required hash size for this context.
     if unsafe { (api.calculate_hash)(admin, file_handle, &mut hash_len, ptr::null_mut(), 0) } == 0
@@ -506,19 +742,19 @@ fn verify_catalog_with_context(
                 WTD_CHOICE_CATALOG,
                 (&mut catalog_info as *mut WINTRUST_CATALOG_INFO).cast(),
             );
-            let verified = verify_wintrust(&mut data);
+            let (verified, chain) = verify_wintrust(&mut data, collect_chain);
             if verified.status == SignatureStatus::Signed {
                 // SAFETY: early termination leaves current for us to release.
                 unsafe {
                     (api.release_catalog)(admin, current, 0);
                 }
-                return Some(verified);
+                return Some((verified, chain));
             }
         }
     }
 
     if found_catalog {
-        Some(empty_signature(SignatureStatus::Unknown))
+        Some((empty_signature(SignatureStatus::Unknown), Vec::new()))
     } else {
         None
     }
@@ -582,6 +818,42 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn cert_ffi_layouts_match_windows_sdk() {
+        use crate::ffi::{CERT_CONTEXT, CERT_INFO};
+        // CERT_INFO: the validity window sits after dwVersion + SerialNumber
+        // (16) + SignatureAlgorithm (24) + Issuer (16), all 8-aligned.
+        assert_eq!(offset_of!(CERT_INFO, NotBefore), 64);
+        assert_eq!(offset_of!(CERT_INFO, NotAfter), 72);
+        assert_eq!(offset_of!(CERT_INFO, Subject), 80);
+        // CERT_CONTEXT: pCertInfo is the 4th field after the encoding blob.
+        assert_eq!(offset_of!(CERT_CONTEXT, pCertInfo), 24);
+        assert_eq!(size_of::<CERT_CONTEXT>(), 40);
+    }
+
+    #[test]
+    fn filetime_to_ms_maps_epoch_and_clamps() {
+        // The FILETIME epoch delta itself maps to Unix 0.
+        assert_eq!(
+            filetime_to_unix_ms(FILETIME_UNIX_EPOCH_DELTA_100NS as u64),
+            0
+        );
+        // One second past the Unix epoch = 1000 ms.
+        assert_eq!(
+            filetime_to_unix_ms(FILETIME_UNIX_EPOCH_DELTA_100NS as u64 + 10_000_000),
+            1000
+        );
+        // A pre-1970 (or zero) value clamps to 0.
+        assert_eq!(filetime_to_unix_ms(0), 0);
+    }
+
+    #[test]
+    fn thumbprint_hex_is_uppercase() {
+        assert_eq!(thumbprint_hex(&[0x00, 0x1f, 0xab, 0xff]), "001FABFF");
+        assert_eq!(thumbprint_hex(&[]), "");
+    }
+
+    #[test]
     fn trust_success_is_signed() {
         assert_eq!(classify_trust(0), SignatureStatus::Signed);
     }
@@ -640,7 +912,7 @@ mod tests {
         let root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
         let powershell = format!("{root}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
         assert_eq!(
-            verify_embedded_signature(&powershell).status,
+            verify_embedded_signature(&powershell, false).0.status,
             SignatureStatus::Unsigned,
             "PowerShell fixture should require catalog fallback"
         );
@@ -661,7 +933,7 @@ mod tests {
     #[test]
     fn embedded_signed_dll_is_still_signed() {
         let hostfxr = find_hostfxr().expect("a .NET hostfxr.dll under Program Files");
-        let embedded = verify_embedded_signature(&hostfxr.to_string_lossy());
+        let embedded = verify_embedded_signature(&hostfxr.to_string_lossy(), false).0;
         assert_eq!(
             embedded.status,
             SignatureStatus::Signed,
@@ -700,6 +972,69 @@ mod tests {
         let status = verify_signature(&temp.to_string_lossy());
         let _ = std::fs::remove_file(&temp);
         assert_eq!(status, SignatureStatus::Unsigned);
+    }
+
+    /// A catalog-signed system binary yields a leaf→root certificate chain: at
+    /// least a leaf, an uppercase-hex SHA-1 thumbprint (40 chars = 20 bytes), a
+    /// nonempty subject/issuer, and a validity window that brackets the leaf's
+    /// NotBefore < NotAfter. (Self-target smoke — powershell.exe is present on
+    /// supported Windows installs.)
+    #[test]
+    fn signed_binary_has_cert_chain() {
+        let root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
+        let powershell = format!("{root}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+        let detail = verify_signature_detail(&powershell);
+        assert_eq!(detail.status, SignatureStatus::Signed);
+        assert!(
+            !detail.cert_chain.is_empty(),
+            "a signed binary should expose its signing certificate chain"
+        );
+        let leaf = &detail.cert_chain[0];
+        assert!(!leaf.subject.is_empty(), "leaf subject resolvable");
+        assert!(!leaf.issuer.is_empty(), "leaf issuer resolvable");
+        assert_eq!(
+            leaf.thumbprint_sha1.len(),
+            40,
+            "SHA-1 thumbprint is 20 bytes = 40 hex chars, got {:?}",
+            leaf.thumbprint_sha1
+        );
+        assert!(
+            leaf.thumbprint_sha1
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_lowercase()),
+            "thumbprint should be uppercase hex"
+        );
+        assert!(
+            leaf.not_before_ms > 0 && leaf.not_after_ms > leaf.not_before_ms,
+            "leaf validity window should be ordered: {} .. {}",
+            leaf.not_before_ms,
+            leaf.not_after_ms
+        );
+        // The root's issuer is (by definition) itself or a Microsoft root.
+        let root_cert = detail.cert_chain.last().unwrap();
+        assert!(
+            !root_cert.issuer.is_empty(),
+            "root issuer resolvable in a real chain"
+        );
+    }
+
+    /// An unsigned file yields an empty chain (honest degradation).
+    #[test]
+    fn unsigned_file_has_empty_chain() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock after Unix epoch")
+            .as_nanos();
+        let temp = std::env::temp_dir().join(format!(
+            "atlas-unsigned-{}-{}.bin",
+            std::process::id(),
+            nonce
+        ));
+        std::fs::write(&temp, b"not a signed pe").expect("write temp file");
+        let detail = verify_signature_detail(&temp.to_string_lossy());
+        let _ = std::fs::remove_file(&temp);
+        assert_ne!(detail.status, SignatureStatus::Signed);
+        assert!(detail.cert_chain.is_empty());
     }
 
     fn find_hostfxr() -> Option<std::path::PathBuf> {

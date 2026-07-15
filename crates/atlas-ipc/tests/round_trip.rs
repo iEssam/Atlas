@@ -518,6 +518,44 @@ impl AtlasQuery for FakeQuery {
         }))
     }
 
+    // R3 expert security metadata: a fixed reply so the transport test exercises
+    // GetSecurityMetadata end-to-end (the real collection logic is unit-tested
+    // against live processes in atlas-collectors::security_meta).
+    async fn get_security_metadata(
+        &self,
+        req: Request<atlas_ipc::GetSecurityMetadataRequest>,
+    ) -> Result<Response<atlas_ipc::GetSecurityMetadataReply>, Status> {
+        let _ = req.into_inner();
+        Ok(Response::new(atlas_ipc::GetSecurityMetadataReply {
+            available: true,
+            unavailable_reason: String::new(),
+            metadata: Some(atlas_ipc::SecurityMetadata {
+                file_sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                    .into(),
+                signature_status: "Signed (Microsoft)".into(),
+                cert_chain: vec![atlas_ipc::CertInfo {
+                    subject: "Microsoft Windows".into(),
+                    issuer: "Microsoft Windows Production PCA 2011".into(),
+                    thumbprint_sha1: "AABBCCDDEEFF00112233445566778899AABBCCDD".into(),
+                    not_before_ms: 1_600_000_000_000,
+                    not_after_ms: 1_800_000_000_000,
+                }],
+                user_sid: "S-1-5-21-1".into(),
+                integrity_level: "Medium".into(),
+                elevated: false,
+                app_container: false,
+                privileges: vec![atlas_ipc::TokenPrivilege {
+                    name: "SeChangeNotifyPrivilege".into(),
+                    enabled: true,
+                }],
+                groups: vec!["BUILTIN\\Users".into()],
+                capabilities: vec![],
+                mitigations: vec!["DEP".into(), "ASLR (high-entropy)".into(), "CFG".into()],
+                limited: false,
+            }),
+        }))
+    }
+
     // R2 monitors: fixed responses so the transport test exercises the six new
     // RPCs end-to-end (the real collection logic is unit-tested against the live
     // OS in atlas-collectors).
@@ -1125,6 +1163,28 @@ async fn capabilities_and_snapshot_round_trip() {
     assert_eq!(owners.owners.len(), 1);
     assert_eq!(owners.owners[0].pid, 4321);
     assert!(!owners.owners[0].is_service);
+
+    // R3: GetSecurityMetadata round-trips the file hash, cert chain, token
+    // privileges/groups, and mitigations.
+    let sec = client
+        .get_security_metadata(atlas_ipc::GetSecurityMetadataRequest {
+            pid: 1234,
+            create_time_100ns: 0,
+        })
+        .await
+        .expect("GetSecurityMetadata")
+        .into_inner();
+    assert!(sec.available);
+    let sm = sec.metadata.expect("security metadata present");
+    assert_eq!(sm.file_sha256.len(), 64);
+    assert_eq!(sm.cert_chain.len(), 1);
+    assert_eq!(sm.cert_chain[0].thumbprint_sha1.len(), 40);
+    assert!(sm
+        .privileges
+        .iter()
+        .any(|p| p.name == "SeChangeNotifyPrivilege" && p.enabled));
+    assert!(sm.mitigations.iter().any(|s| s == "DEP"));
+    assert!(!sm.limited);
 
     // R2: the AtlasRules service round-trips on the same pipe. CreateRule echoes
     // an id; ListRules returns the rule with its flattened action.

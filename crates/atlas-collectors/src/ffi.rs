@@ -2147,3 +2147,222 @@ extern "system" {
     /// Clears a VARIANT, freeing any owned BSTR/interface (after reading Get()).
     pub fn VariantClear(pvarg: *mut VARIANT) -> HRESULT;
 }
+
+// ---------------------------------------------------------------------------
+// R3 expert security metadata FFI (docs/phases.md Phase 3, PRD §9.4.1/§9.4.6).
+// Backs the on-demand deep security detail for one process: the on-disk image
+// SHA-256 via CNG BCrypt; the signing certificate chain (walked from the live
+// WinTrust provider state, then read through crypt32 cert-context APIs); and the
+// token privileges/groups/capabilities plus the readable process mitigation
+// policies. Hand-written in the collector style — stable-ABI reads, no
+// `windows-sys` dependency; the new struct layouts are locked by offset tests in
+// `security_meta.rs`. Every call is an unprivileged user-mode read; a
+// cross-user/protected field simply degrades (limited) rather than escalating.
+// ---------------------------------------------------------------------------
+
+/// A CNG algorithm-provider handle (`BCRYPT_ALG_HANDLE`).
+pub type BCRYPT_ALG_HANDLE = *mut c_void;
+/// A CNG hash-object handle (`BCRYPT_HASH_HANDLE`).
+pub type BCRYPT_HASH_HANDLE = *mut c_void;
+
+/// SHA-256 digest length in bytes.
+pub const SHA256_DIGEST_LEN: usize = 32;
+
+#[link(name = "bcrypt")]
+extern "system" {
+    /// Opens a CNG algorithm provider (`pszAlgId` e.g. "SHA256"). 0
+    /// (STATUS_SUCCESS) on success; the handle is released with
+    /// `BCryptCloseAlgorithmProvider`.
+    pub fn BCryptOpenAlgorithmProvider(
+        phAlgorithm: *mut BCRYPT_ALG_HANDLE,
+        pszAlgId: LPCWSTR,
+        pszImplementation: LPCWSTR,
+        dwFlags: DWORD,
+    ) -> NTSTATUS;
+
+    /// Creates a hash object from an open provider. Passing a NULL
+    /// `pbHashObject` (with 0 length) lets CNG allocate the object internally
+    /// (supported since Windows 7), keeping this call self-contained.
+    pub fn BCryptCreateHash(
+        hAlgorithm: BCRYPT_ALG_HANDLE,
+        phHash: *mut BCRYPT_HASH_HANDLE,
+        pbHashObject: *mut u8,
+        cbHashObject: DWORD,
+        pbSecret: *const u8,
+        cbSecret: DWORD,
+        dwFlags: DWORD,
+    ) -> NTSTATUS;
+
+    /// Feeds a chunk of input bytes into an open hash object.
+    pub fn BCryptHashData(
+        hHash: BCRYPT_HASH_HANDLE,
+        pbInput: *const u8,
+        cbInput: DWORD,
+        dwFlags: DWORD,
+    ) -> NTSTATUS;
+
+    /// Finalizes a hash object, writing the digest into `pbOutput`
+    /// (`cbOutput` must equal the algorithm's digest length).
+    pub fn BCryptFinishHash(
+        hHash: BCRYPT_HASH_HANDLE,
+        pbOutput: *mut u8,
+        cbOutput: DWORD,
+        dwFlags: DWORD,
+    ) -> NTSTATUS;
+
+    /// Destroys a hash object from `BCryptCreateHash`.
+    pub fn BCryptDestroyHash(hHash: BCRYPT_HASH_HANDLE) -> NTSTATUS;
+
+    /// Closes an algorithm provider from `BCryptOpenAlgorithmProvider`.
+    pub fn BCryptCloseAlgorithmProvider(hAlgorithm: BCRYPT_ALG_HANDLE, dwFlags: DWORD) -> NTSTATUS;
+}
+
+// --- Token information classes for the security-metadata detail --------------
+/// `TokenGroups` — the token's group SIDs (also the shape returned by
+/// `TokenCapabilities`).
+pub const TOKEN_GROUPS_CLASS: DWORD = 2;
+/// `TokenPrivileges` — the token's privilege LUIDs + enabled/attribute bits.
+pub const TOKEN_PRIVILEGES_CLASS: DWORD = 3;
+/// `TokenIsAppContainer` — nonzero when the token runs in an app container.
+pub const TOKEN_IS_APP_CONTAINER_CLASS: DWORD = 29;
+/// `TokenCapabilities` — the app-container capability SIDs (as a TOKEN_GROUPS).
+pub const TOKEN_CAPABILITIES_CLASS: DWORD = 30;
+
+/// `SE_PRIVILEGE_ENABLED` — the attribute bit marking a privilege as enabled.
+pub const SE_PRIVILEGE_ENABLED: u32 = 0x0000_0002;
+
+/// `LUID` — a locally unique identifier (a privilege id here).
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct LUID {
+    pub LowPart: u32,
+    pub HighPart: i32,
+}
+
+/// `LUID_AND_ATTRIBUTES` — one privilege: its LUID plus attribute bits.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct LUID_AND_ATTRIBUTES {
+    pub Luid: LUID,
+    pub Attributes: u32,
+}
+
+/// `TOKEN_PRIVILEGES` header — `PrivilegeCount` followed by that many
+/// `LUID_AND_ATTRIBUTES`. Only the header is typed; the trailing array is walked
+/// from the filled byte buffer. Layout locked by an offset test.
+#[repr(C)]
+pub struct TOKEN_PRIVILEGES {
+    pub PrivilegeCount: u32,
+    pub Privileges: [LUID_AND_ATTRIBUTES; 1],
+}
+
+/// `TOKEN_GROUPS` header — `GroupCount` followed by that many
+/// `SID_AND_ATTRIBUTES` (also the `TokenCapabilities` shape). Layout locked by
+/// an offset test (the array is 8-byte aligned after the count).
+#[repr(C)]
+pub struct TOKEN_GROUPS {
+    pub GroupCount: u32,
+    pub Groups: [SID_AND_ATTRIBUTES; 1],
+}
+
+// --- Certificate context/chain reads (crypt32) ------------------------------
+/// `CERT_SHA1_HASH_PROP_ID` — the cached SHA-1 thumbprint context property.
+pub const CERT_SHA1_HASH_PROP_ID: DWORD = 3;
+/// `CERT_NAME_ISSUER_FLAG` — makes `CertGetNameStringW` read the issuer name.
+pub const CERT_NAME_ISSUER_FLAG: DWORD = 0x1;
+
+/// A `CRYPT_INTEGER_BLOB` / `CERT_NAME_BLOB` / `CRYPT_OBJID_BLOB` — a sized byte
+/// buffer. Only the fixed size matters here (the blobs are not decoded); it
+/// fixes the offsets of the validity FILETIMEs inside `CERT_INFO`.
+#[repr(C)]
+pub struct CRYPT_BLOB {
+    pub cbData: DWORD,
+    pub pbData: *mut u8,
+}
+
+/// `CRYPT_ALGORITHM_IDENTIFIER` — an OID string plus a parameters blob. Present
+/// only to fix the layout up to the validity fields.
+#[repr(C)]
+pub struct CRYPT_ALGORITHM_IDENTIFIER {
+    pub pszObjId: LPCSTR,
+    pub Parameters: CRYPT_BLOB,
+}
+
+/// `CERT_INFO` (prefix through the validity window). The fields after `Subject`
+/// are not read, so the struct stops there — `NotBefore`/`NotAfter` are what the
+/// cert-detail walk needs. Layout locked by an offset test.
+#[repr(C)]
+pub struct CERT_INFO {
+    pub dwVersion: DWORD,
+    pub SerialNumber: CRYPT_BLOB,
+    pub SignatureAlgorithm: CRYPT_ALGORITHM_IDENTIFIER,
+    pub Issuer: CRYPT_BLOB,
+    pub NotBefore: FILETIME,
+    pub NotAfter: FILETIME,
+    pub Subject: CRYPT_BLOB,
+}
+
+/// `CERT_CONTEXT` — the decoded certificate. Only `pCertInfo` (for the validity
+/// window) is dereferenced; the context pointer itself is handed to
+/// `CertGetNameStringW` / `CertGetCertificateContextProperty`. Layout locked by
+/// an offset test.
+#[repr(C)]
+pub struct CERT_CONTEXT {
+    pub dwCertEncodingType: DWORD,
+    pub pbCertEncoded: *const u8,
+    pub cbCertEncoded: DWORD,
+    pub pCertInfo: *const CERT_INFO,
+    pub hCertStore: HANDLE,
+}
+
+#[link(name = "crypt32")]
+extern "system" {
+    /// Reads a cached context property (here `CERT_SHA1_HASH_PROP_ID`, the
+    /// thumbprint). Two-call size pattern via `pcbData`.
+    pub fn CertGetCertificateContextProperty(
+        pCertContext: *const c_void,
+        dwPropId: DWORD,
+        pvData: PVOID,
+        pcbData: *mut DWORD,
+    ) -> BOOL;
+}
+
+#[link(name = "advapi32")]
+extern "system" {
+    /// Resolves a privilege `LUID` to its programmatic name (e.g.
+    /// "SeDebugPrivilege"). Two-call size pattern via `cchName`.
+    pub fn LookupPrivilegeNameW(
+        lpSystemName: LPCWSTR,
+        lpLuid: *const LUID,
+        lpName: LPWSTR,
+        cchName: *mut DWORD,
+    ) -> BOOL;
+}
+
+// --- Process mitigation policies (kernel32) ---------------------------------
+/// `PROCESS_MITIGATION_POLICY` values queried for the mitigation summary. Only
+/// the readable-everywhere subset is used; unreadable policies degrade silently.
+pub const PROCESS_DEP_POLICY: u32 = 0;
+pub const PROCESS_ASLR_POLICY: u32 = 1;
+pub const PROCESS_DYNAMIC_CODE_POLICY: u32 = 3;
+pub const PROCESS_CONTROL_FLOW_GUARD_POLICY: u32 = 7;
+pub const PROCESS_IMAGE_LOAD_POLICY: u32 = 10;
+pub const PROCESS_CHILD_PROCESS_POLICY: u32 = 13;
+
+/// Exact `dwLength` for `GetProcessMitigationPolicy` per policy. The DEP policy
+/// struct carries an extra `BOOLEAN Permanent` (padded to 8); the others are a
+/// single flags DWORD. The API rejects a mismatched length, so these are exact.
+pub const MITIGATION_DEP_POLICY_SIZE: usize = 8;
+pub const MITIGATION_FLAGS_POLICY_SIZE: usize = 4;
+
+#[link(name = "kernel32")]
+extern "system" {
+    /// Reads a process's mitigation policy into `lpBuffer` (`dwLength` must equal
+    /// the policy struct's exact size). Needs `PROCESS_QUERY_INFORMATION`.
+    pub fn GetProcessMitigationPolicy(
+        hProcess: HANDLE,
+        MitigationPolicy: u32,
+        lpBuffer: PVOID,
+        dwLength: usize,
+    ) -> BOOL;
+}

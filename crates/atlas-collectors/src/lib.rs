@@ -37,6 +37,8 @@ pub mod reg;
 pub mod resources;
 pub mod sampler;
 #[cfg(windows)]
+pub mod security_meta;
+#[cfg(windows)]
 pub mod services;
 pub mod snapshot;
 #[cfg(windows)]
@@ -98,6 +100,10 @@ pub use privacy::{
 pub use resources::{find_resource_owners, ResourceOwner, ResourceOwnersResult};
 pub use sampler::{ProcKey, ProcSample, SampleSet, Sampler, SystemSample};
 #[cfg(windows)]
+pub use security_meta::{
+    security_metadata, SecurityMetadata, SecurityMetadataResult, TokenPrivilegeInfo,
+};
+#[cfg(windows)]
 pub use services::{
     enumerate_services, ServiceEntry, ServiceStartType, ServiceState as CollectorServiceState,
 };
@@ -110,6 +116,6 @@ pub use startup::{
 pub use tasks::{enumerate_tasks, ScheduledTask};
 #[cfg(windows)]
 pub use winver::{
-    read_version_info, verify_signature, verify_signature_info, FileVersionInfo, SignatureInfo,
-    SignatureStatus,
+    read_version_info, verify_signature, verify_signature_detail, verify_signature_info,
+    CertDetail, FileVersionInfo, SignatureDetail, SignatureInfo, SignatureStatus,
 };

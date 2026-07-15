@@ -80,6 +80,13 @@ pub use v0::{
 // R3 remote support bundle (AtlasQuery, PRD §9.18/§18.3). One redacted, self-
 // contained diagnostic document assembled from data Atlas already has.
 pub use v0::{SupportBundleReply, SupportBundleRequest, SupportBundleSection};
+// R3 expert security metadata (AtlasQuery, PRD §9.4.1/§9.4.6). On-demand deep
+// security detail for one process: file hash, signing cert chain, token
+// privileges/groups/capabilities, and process mitigation policies.
+pub use v0::{
+    CertInfo, GetSecurityMetadataReply, GetSecurityMetadataRequest, SecurityMetadata,
+    TokenPrivilege,
+};
 // R2 rules engine + profiles (AtlasRules service, PRD §9.7).
 pub use v0::{
     CoreAffinityMode, CreateProfileReply, CreateProfileRequest, CreateRuleReply, CreateRuleRequest,
@@ -238,3 +245,11 @@ pub const CAP_SUPPORT_BUNDLE: &str = "support_bundle";
 /// slice of AtlasQuery. Store-backed (the `plugin` registry + audit); off by
 /// default (no plugin runs until the user registers, grants, and enables one).
 pub const CAP_PLUGINS: &str = "plugins";
+
+/// R3: the service answers the on-demand expert security metadata query for one
+/// process (`GetSecurityMetadata`, PRD §9.4.1/§9.4.6) — the on-disk image
+/// SHA-256, the signing certificate chain, the token privileges/groups/
+/// capabilities, and the readable process mitigation policies. A live OS read
+/// (no store); cross-user/protected fields degrade honestly (`limited`). Always
+/// available on Windows here.
+pub const CAP_SECURITY_METADATA: &str = "security_metadata";
