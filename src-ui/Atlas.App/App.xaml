@@ -19,6 +19,7 @@
             <conv:MonitorTokenToBrushConverter x:Key="MonitorTokenToBrush" />
             <conv:ChangeCategoryToBrushConverter x:Key="ChangeCategoryToBrush" />
             <conv:CrashCautionToBrushConverter x:Key="CrashCautionToBrush" />
+            <conv:SignatureTokenToBrushConverter x:Key="SignatureTokenToBrush" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>

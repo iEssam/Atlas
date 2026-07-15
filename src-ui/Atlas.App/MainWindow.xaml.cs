@@ -50,6 +50,7 @@ public sealed partial class MainWindow : Window
             "diagnostics" => typeof(DiagnosticsPage),
             "systemchanges" => typeof(SystemChangesPage),
             "reliability" => typeof(ReliabilityPage),
+            "plugins" => typeof(PluginsPage),
             "settings" => typeof(SettingsPage),
             _ => null,
         };

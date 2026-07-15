@@ -19,6 +19,7 @@ public sealed class AtlasChannel : IDisposable
     private readonly AtlasQuery.AtlasQueryClient _client;
     private readonly AtlasControl.AtlasControlClient _control;
     private readonly AtlasRules.AtlasRulesClient _rules;
+    private readonly AtlasPlugins.AtlasPluginsClient _plugins;
 
     private AtlasChannel(GrpcChannel channel)
     {
@@ -26,6 +27,7 @@ public sealed class AtlasChannel : IDisposable
         _client = new AtlasQuery.AtlasQueryClient(channel);
         _control = new AtlasControl.AtlasControlClient(channel);
         _rules = new AtlasRules.AtlasRulesClient(channel);
+        _plugins = new AtlasPlugins.AtlasPluginsClient(channel);
     }
 
     /// <summary>
@@ -886,6 +888,100 @@ public sealed class AtlasChannel : IDisposable
         CancellationToken cancellationToken = default) =>
         GuardAsync(() => _rules.SetDynamicProtectionAsync(
             new SetDynamicProtectionRequest { Config = config },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    // ----------------------------------------------------------------------
+    // R3: signed plugin registry management (AtlasPlugins, PRD §18.3). A NEW
+    // service — its own client alongside AtlasQuery/AtlasControl/AtlasRules.
+    // These five RPCs are the first-party UI's registry surface: list, register,
+    // enable/disable, edit the granted capabilities, and remove. Plugins are
+    // out-of-process, Authenticode-signed, capability-scoped READ-ONLY extensions
+    // that are OFF by default; registering an unsigned executable is refused
+    // unless the user explicitly opts in (proto R3 header). Same Unimplemented→
+    // Unsupported guard so the Plugins page degrades to a calm "unavailable" state
+    // against an older service that serves these RPCs as Unimplemented (the server
+    // side lands after the UI — task brief).
+    //
+    // OpenPluginSession is deliberately NOT wrapped here: that call belongs to a
+    // launched plugin process exchanging its one-time nonce for a scoped session
+    // token, never to the first-party UI (which does registry management only).
+    // ----------------------------------------------------------------------
+
+    /// <summary>All registered plugins (enabled and disabled), in server order.</summary>
+    public Task<RpcOutcome<ListPluginsReply>> ListPluginsAsync(
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _plugins.ListPluginsAsync(
+            new ListPluginsRequest(), cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>
+    /// Registers the executable at <paramref name="exePath"/>, granting it the
+    /// given read-only <paramref name="capabilities"/> to start with (the user
+    /// edits the grant later). The service verifies the Authenticode signature
+    /// first; an unsigned executable is <b>refused</b> unless
+    /// <paramref name="allowUnsigned"/> is set — an explicit, unsafe opt-in. The
+    /// reply's <c>ok</c>/<c>message</c> carry the result (including a plain refusal
+    /// reason such as "refused: executable is not signed"); a newly registered
+    /// plugin is disabled until the user enables it, so registering changes nothing
+    /// on the system by itself.
+    /// </summary>
+    public Task<RpcOutcome<RegisterPluginReply>> RegisterPluginAsync(
+        string exePath,
+        IEnumerable<PluginCapability>? capabilities = null,
+        bool allowUnsigned = false,
+        CancellationToken cancellationToken = default)
+    {
+        var req = new RegisterPluginRequest
+        {
+            ExePath = exePath ?? string.Empty,
+            AllowUnsigned = allowUnsigned,
+        };
+        if (capabilities is not null)
+        {
+            req.Requested.AddRange(capabilities);
+        }
+        return GuardAsync(() => _plugins.RegisterPluginAsync(
+            req, cancellationToken: cancellationToken).ResponseAsync);
+    }
+
+    /// <summary>
+    /// Enables or disables a plugin by id. Enabling IS the consent gesture that lets
+    /// the plugin be launched with its granted read-only capabilities; disabling
+    /// stops it. Off by default (proto R3 header). The reply's <c>ok</c>/<c>message</c>
+    /// carry the server-side result.
+    /// </summary>
+    public Task<RpcOutcome<SetPluginEnabledReply>> SetPluginEnabledAsync(
+        long id,
+        bool enabled,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _plugins.SetPluginEnabledAsync(
+            new SetPluginEnabledRequest { Id = id, Enabled = enabled },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>
+    /// Replaces the set of read-only capabilities granted to a plugin (a re-grant).
+    /// A plugin only ever gets the capabilities the user grants here — each is a
+    /// read-only slice of the query surface. The reply's <c>ok</c> carries the result.
+    /// </summary>
+    public Task<RpcOutcome<GrantPluginCapabilitiesReply>> GrantPluginCapabilitiesAsync(
+        long id,
+        IEnumerable<PluginCapability> granted,
+        CancellationToken cancellationToken = default)
+    {
+        var req = new GrantPluginCapabilitiesRequest { Id = id };
+        if (granted is not null)
+        {
+            req.Granted.AddRange(granted);
+        }
+        return GuardAsync(() => _plugins.GrantPluginCapabilitiesAsync(
+            req, cancellationToken: cancellationToken).ResponseAsync);
+    }
+
+    /// <summary>Removes a plugin from the registry by id. The reply's <c>ok</c> carries the result.</summary>
+    public Task<RpcOutcome<RemovePluginReply>> RemovePluginAsync(
+        long id,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _plugins.RemovePluginAsync(
+            new RemovePluginRequest { Id = id },
             cancellationToken: cancellationToken).ResponseAsync);
 
     public void Dispose() => _channel.Dispose();

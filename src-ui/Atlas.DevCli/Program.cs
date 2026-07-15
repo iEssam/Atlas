@@ -19,6 +19,7 @@ bool probeR2 = false;
 bool probeRules = false;
 bool probePrivacyAlerts = false;
 bool probeSupportBundle = false;
+bool probePlugins = false;
 uint probePid = 0;
 
 for (int i = 0; i < args.Length; i++)
@@ -58,6 +59,11 @@ for (int i = 0; i < args.Length; i++)
         case "--probe-support-bundle":
             probeSupportBundle = true;
             break;
+        // R3 plugins live check: exercise the AtlasPlugins registry RPCs and report
+        // how each degrades (Supported vs Unsupported→"server too old").
+        case "--probe-plugins":
+            probePlugins = true;
+            break;
         case "--pid" when i + 1 < args.Length:
             if (!uint.TryParse(args[++i], out probePid))
             {
@@ -70,7 +76,7 @@ for (int i = 0; i < args.Length; i++)
             Console.WriteLine(
                 "usage: atlas-devcli [--pipe <who>] [--top <n>] [--watch] "
                 + "[--probe-r2 [--pid <pid>]] [--probe-rules] [--probe-privacy-alerts] "
-                + "[--probe-support-bundle]");
+                + "[--probe-support-bundle] [--probe-plugins]");
             return 0;
         default:
             Console.Error.WriteLine($"unknown argument: {args[i]}");
@@ -96,6 +102,11 @@ if (probePrivacyAlerts)
 if (probeSupportBundle)
 {
     return await ProbeSupportBundleAsync(who);
+}
+
+if (probePlugins)
+{
+    return await ProbePluginsAsync(who);
 }
 
 var pipePath = AtlasPipe.FullPath(who ?? AtlasPipe.DefaultWho());
@@ -398,6 +409,95 @@ static async Task<int> ProbeSupportBundleAsync(string? who)
         Console.WriteLine(bundle.Supported
             ? "The support bundle is served — the Settings dialog will show a live preview."
             : "The support bundle is not served — the Settings dialog will show its calm "
+              + "\"unavailable — server too old\" state, and the app stays fully usable.");
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"error: {ex.Message}");
+        return 1;
+    }
+}
+
+// Exercises the R3 AtlasPlugins registry RPCs (ListPlugins, and — only when the
+// read side is Supported — a careful RegisterPlugin → GrantPluginCapabilities →
+// SetPluginEnabled → RemovePlugin roundtrip) and prints, for each, whether the
+// server supported it or degraded to Unsupported. This is the console equivalent of
+// navigating the UI's Plugins page: against a server too old to serve AtlasPlugins
+// (a NEW service that lands after this UI), every call should come back Unsupported
+// (not throw), which is exactly what drives the page's calm "unavailable — server
+// too old" state. The mutating probes only fire if the read side is already
+// Supported, so this never writes into an older-but-partially-serving service.
+// OpenPluginSession is deliberately not exercised — that call belongs to a launched
+// plugin process, never to the first-party UI/CLI.
+static async Task<int> ProbePluginsAsync(string? who)
+{
+    try
+    {
+        using var atlas = AtlasChannel.Connect(who);
+        Console.WriteLine("Probing AtlasPlugins RPCs ...");
+        Console.WriteLine();
+
+        var list = await atlas.ListPluginsAsync();
+        Console.WriteLine(list.Supported
+            ? $"ListPlugins             : Supported ({list.Value.Plugins.Count} plugins)"
+            : $"ListPlugins             : Unsupported — {list.UnsupportedReason}");
+
+        if (list.Supported)
+        {
+            // Read side works — exercise the mutating RPCs end to end with a
+            // throwaway registration. A bogus path is expected to be refused
+            // (ok=false) by a real server, which still proves the wrapper path.
+            var caps = new[]
+            {
+                Atlas.V0.PluginCapability.PluginCapSnapshot,
+                Atlas.V0.PluginCapability.PluginCapNetwork,
+            };
+            var registered = await atlas.RegisterPluginAsync(
+                @"C:\Program Files\Atlas Plugins\devcli-probe\devcli-probe.exe", caps, allowUnsigned: false);
+            Console.WriteLine(registered.Supported
+                ? $"RegisterPlugin          : Supported (ok={registered.Value.Ok}, msg=\"{registered.Value.Message}\")"
+                : $"RegisterPlugin          : Unsupported — {registered.UnsupportedReason}");
+
+            if (registered.Supported && registered.Value.Ok && registered.Value.Plugin is not null)
+            {
+                long id = registered.Value.Plugin.Id;
+
+                var granted = await atlas.GrantPluginCapabilitiesAsync(
+                    id, new[] { Atlas.V0.PluginCapability.PluginCapSnapshot });
+                Console.WriteLine(granted.Supported
+                    ? $"GrantPluginCapabilities : Supported (ok={granted.Value.Ok})"
+                    : $"GrantPluginCapabilities : Unsupported — {granted.UnsupportedReason}");
+
+                var enabled = await atlas.SetPluginEnabledAsync(id, true);
+                Console.WriteLine(enabled.Supported
+                    ? $"SetPluginEnabled        : Supported (ok={enabled.Value.Ok})"
+                    : $"SetPluginEnabled        : Unsupported — {enabled.UnsupportedReason}");
+
+                var removed = await atlas.RemovePluginAsync(id);
+                Console.WriteLine(removed.Supported
+                    ? $"RemovePlugin            : Supported (ok={removed.Value.Ok})"
+                    : $"RemovePlugin            : Unsupported — {removed.UnsupportedReason}");
+            }
+            else
+            {
+                Console.WriteLine("GrantPluginCapabilities : skipped (registration did not create a plugin)");
+                Console.WriteLine("SetPluginEnabled        : skipped (registration did not create a plugin)");
+                Console.WriteLine("RemovePlugin            : skipped (registration did not create a plugin)");
+            }
+        }
+        else
+        {
+            Console.WriteLine("RegisterPlugin          : skipped (read side Unsupported)");
+            Console.WriteLine("GrantPluginCapabilities : skipped (read side Unsupported)");
+            Console.WriteLine("SetPluginEnabled        : skipped (read side Unsupported)");
+            Console.WriteLine("RemovePlugin            : skipped (read side Unsupported)");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine(list.Supported
+            ? "AtlasPlugins is served — the Plugins page will show live data."
+            : "AtlasPlugins is not served — the Plugins page will show its calm "
               + "\"unavailable — server too old\" state, and the app stays fully usable.");
         return 0;
     }
