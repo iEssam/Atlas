@@ -6,9 +6,9 @@
         installer/out/SystemAtlas-<version>-<platform>.msi
 
     Usage:
-        pwsh installer/build.ps1 -Version 0.1.0.0
-        pwsh installer/build.ps1 -Version 0.1.0.0 -Platform x64
-        pwsh installer/build.ps1 -Version 0.1.0.0 -SkipPrereqs   # .wxs only
+        pwsh installer/build.ps1 -Version 0.3.0.0
+        pwsh installer/build.ps1 -Version 0.3.0.0 -Platform x64
+        pwsh installer/build.ps1 -Version 0.3.0.0 -SkipPrereqs   # .wxs only
 
     Design notes:
       * On THIS machine an Application Control policy (docs/phases.md decision
@@ -26,7 +26,7 @@
 param(
     # Product version. MSI compares the first 3 fields for upgrade logic; keep
     # the 4th field (build) monotonic. See Package.wxs UpgradeCode/MajorUpgrade.
-    [string]$Version = "0.1.0.0",
+    [string]$Version = "0.3.0.0",
 
     # Target architecture. x64 is primary; arm64 is a first-class goal
     # (tech-stack sec 8). See the ARM64 note in Package.wxs / README.md - the

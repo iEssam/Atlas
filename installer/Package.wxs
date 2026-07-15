@@ -44,7 +44,7 @@
     (build) monotonic but know it is ignored by MajorUpgrade.
   -->
   <?ifndef ProductVersion ?>
-  <?define ProductVersion = "0.1.0.0" ?>
+  <?define ProductVersion = "0.3.0.0" ?>
   <?endif?>
 
   <!--
