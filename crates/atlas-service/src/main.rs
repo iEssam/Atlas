@@ -174,6 +174,31 @@ enum Cmd {
         #[arg(long, default_value_t = 60)]
         buckets: u32,
     },
+    /// Report per-tier sample-block storage + a simulated footprint comparison
+    /// (R3 extended retention tiers). Shows block counts + bytes for T0/T1/T2 and
+    /// a tiered-vs-raw-only retained-footprint estimate over a synthetic series.
+    ///
+    /// With `--rollup`, force a compaction pass first using tiny retentions so a
+    /// short recording visibly demotes T0 blocks into T1/T2 (e.g.
+    /// `storage --rollup --raw-retention-secs 5`).
+    Storage {
+        /// Database path (default: %LOCALAPPDATA%\SystemAtlas\dev\atlas.db).
+        #[arg(long)]
+        db: Option<PathBuf>,
+        /// Force a roll-up + retention pass before reporting.
+        #[arg(long)]
+        rollup: bool,
+        /// T0 (raw) retention seconds for the forced pass — samples older than
+        /// this roll into T1 (default 5, so a ~20 s recording visibly demotes).
+        #[arg(long, default_value_t = 5)]
+        raw_retention_secs: u64,
+        /// T1 retention seconds for the forced pass — older T1 rolls into T2.
+        #[arg(long, default_value_t = 3600)]
+        t1_retention_secs: u64,
+        /// Days of synthetic 1 s history for the footprint simulation.
+        #[arg(long, default_value_t = 30)]
+        sim_days: u64,
+    },
     /// Full-text/substring search over processes, events, and bookmarks (M6).
     Search {
         #[arg(long)]
@@ -772,6 +797,19 @@ fn run() -> Result<()> {
             minutes,
             buckets,
         ),
+        Cmd::Storage {
+            db,
+            rollup,
+            raw_retention_secs,
+            t1_retention_secs,
+            sim_days,
+        } => cmd_storage(
+            db.unwrap_or_else(default_db_path),
+            rollup,
+            raw_retention_secs,
+            t1_retention_secs,
+            sim_days,
+        ),
         Cmd::Search { db, query, limit } => {
             cmd_search(db.unwrap_or_else(default_db_path), &query, limit)
         }
@@ -1099,6 +1137,64 @@ struct FlushBatch {
 }
 
 const RETENTION_HOURS: i64 = 72;
+
+// ---------------------------------------------------------------------------
+// R3 extended retention tiers (PRD §9.3.1/§13.5, tech-stack §4.2).
+//
+// The compaction job demotes aged raw (T0) samples into coarser roll-up tiers so
+// 30–90 days of history stay at a bounded FOOTPRINT while peaks survive (min/max
+// stored explicitly). Note the honest scope: tiering bounds the *retained
+// footprint* over long windows — it does NOT change the ~MB/day WRITE rate,
+// which is governed by adaptive cadence + batching, not by roll-up. The
+// compaction pass runs idle-only on the writer thread (and once at startup), so
+// it never fights the 1 Hz sampling path.
+// ---------------------------------------------------------------------------
+
+/// T0 raw retention (default 72 h) — raw 1 s samples older than this are rolled
+/// into T1 and then dropped.
+const RAW_RETENTION_MS: i64 = RETENTION_HOURS * 3_600_000;
+/// T1 (10 s roll-up) retention (default 14 d) — older T1 is rolled into T2.
+const T1_RETENTION_MS: i64 = 14 * 24 * 3_600_000;
+/// T2 (60 s roll-up) retention (default 90 d) — the long tail; dropped past this.
+const T2_RETENTION_MS: i64 = 90 * 24 * 3_600_000;
+/// Margin around a pinned incident/bookmark within which blocks are never
+/// demoted or deleted (they keep full 1 s resolution).
+const PIN_MARGIN_MS: i64 = 60_000;
+/// Idle cadence for the compaction pass on the writer thread (5 min). Cheap and
+/// idle-only — it runs between flush windows, never on the sampling loop.
+const COMPACT_EVERY_MS: u128 = 5 * 60_000;
+
+/// One compaction pass: roll T0→T1 (blocks older than `raw_ret_ms`), then
+/// T1→T2 (older than `t1_ret_ms`), then apply per-tier retention deletion —
+/// all pin-aware, so bookmarked incident windows are never downsampled or swept
+/// (tech-stack §4.2). Best-effort: returns the roll-up/retention tallies for
+/// logging. `now` is wall-clock ms so callers can pass a controlled clock.
+fn run_compaction(
+    store: &mut Store,
+    now: i64,
+    raw_ret_ms: i64,
+    t1_ret_ms: i64,
+    t2_ret_ms: i64,
+) -> Result<()> {
+    let s1 = store.rollup_tier(atlas_tsdb::TIER_RAW, now - raw_ret_ms, PIN_MARGIN_MS)?;
+    let s2 = store.rollup_tier(atlas_tsdb::TIER_T1, now - t1_ret_ms, PIN_MARGIN_MS)?;
+    let pins = store.pinned_windows(PIN_MARGIN_MS)?;
+    let r0 = store.apply_block_retention_tier(atlas_tsdb::TIER_RAW, now - raw_ret_ms, &pins)?;
+    let r1 = store.apply_block_retention_tier(atlas_tsdb::TIER_T1, now - t1_ret_ms, &pins)?;
+    let r2 = store.apply_block_retention_tier(atlas_tsdb::TIER_T2, now - t2_ret_ms, &pins)?;
+    if s1.consumed_blocks + s2.consumed_blocks + (r0 + r1 + r2) as u64 > 0 {
+        tracing::info!(
+            t0_to_t1_consumed = s1.consumed_blocks,
+            t0_to_t1_produced = s1.produced_blocks,
+            t1_to_t2_consumed = s2.consumed_blocks,
+            t1_to_t2_produced = s2.produced_blocks,
+            pinned_skipped = s1.pinned_skipped + s2.pinned_skipped,
+            retention_deleted = (r0 + r1 + r2) as u64,
+            "compaction pass"
+        );
+    }
+    Ok(())
+}
 
 /// Rolling window the per-flush incident detection pass scans (M8). Short
 /// incidents only become visible once their sample blocks seal (point/age caps),
@@ -1653,6 +1749,20 @@ fn writer_thread(
     // detector's percent-of-total threshold. Effectively constant per machine.
     let mut latest_mem_total: u64 = 0;
 
+    // R3: one compaction pass at startup so a service that was down long enough
+    // for data to age still demotes/sweeps promptly, then on an idle cadence
+    // between flush windows (never on the sampling loop).
+    if let Err(e) = run_compaction(
+        &mut store,
+        now_ms(),
+        RAW_RETENTION_MS,
+        T1_RETENTION_MS,
+        T2_RETENTION_MS,
+    ) {
+        tracing::warn!("startup compaction pass failed: {e}");
+    }
+    let mut last_compaction = Instant::now();
+
     for batch in rx {
         // Any windows the sampler dropped since the last landed batch are
         // recorded as a gap so charts can render missing data honestly.
@@ -1750,6 +1860,22 @@ fn writer_thread(
             Ok(_) => {}
             Err(e) => tracing::warn!("incident detection pass failed: {e}"),
         }
+
+        // R3: idle-cadence compaction — roll aged tiers + sweep retention. Runs
+        // at most every COMPACT_EVERY_MS, on the writer thread between flushes,
+        // so it never competes with the 1 Hz sampler. Best-effort.
+        if last_compaction.elapsed().as_millis() >= COMPACT_EVERY_MS {
+            if let Err(e) = run_compaction(
+                &mut store,
+                now_ms(),
+                RAW_RETENTION_MS,
+                T1_RETENTION_MS,
+                T2_RETENTION_MS,
+            ) {
+                tracing::warn!("compaction pass failed: {e}");
+            }
+            last_compaction = Instant::now();
+        }
     }
 
     // Final drain: seal everything still open so the last samples land.
@@ -1769,10 +1895,23 @@ fn writer_thread(
         Err(e) => tracing::warn!("final incident detection pass failed: {e}"),
     }
 
-    let cutoff = now_ms() - RETENTION_HOURS * 3_600_000;
+    let now = now_ms();
+    let cutoff = now - RETENTION_HOURS * 3_600_000;
+    // Deprecated interim per-window tables (no longer written) still get swept.
     let pruned = store.apply_retention(cutoff)?;
-    let blocks_pruned = store.apply_block_retention(cutoff)?;
-    tracing::info!(blocks_pruned, "block retention swept");
+    // R3: a final compaction pass rolls aged tiers + sweeps per-tier retention
+    // (pin-aware) so a clean shutdown leaves the store in its demoted steady
+    // state rather than a raw-only one.
+    if let Err(e) = run_compaction(
+        &mut store,
+        now,
+        RAW_RETENTION_MS,
+        T1_RETENTION_MS,
+        T2_RETENTION_MS,
+    ) {
+        tracing::warn!("shutdown compaction pass failed: {e}");
+    }
+    tracing::info!("shutdown compaction complete");
     Ok(pruned)
 }
 
@@ -2892,6 +3031,24 @@ fn print_overhead_report(
              overhead reflects the snapshot+storage path only"
         }
     );
+
+    // R3 tiered-retention footprint projection. This is a *retained footprint*
+    // figure (30-day window, tiered vs raw-only), NOT a write-rate: the MB/day
+    // WRITE budget above is unchanged by tiering — roll-up bounds how much
+    // history is KEPT, not how fast it is written.
+    let (raw_bps, t1_bpb, t2_bpb) = measure_tier_sizes();
+    let (raw_only, tiered) = simulate_footprint(raw_bps, t1_bpb, t2_bpb, 30);
+    let reduction = if raw_only > 0.0 {
+        (raw_only - tiered) / raw_only * 100.0
+    } else {
+        0.0
+    };
+    println!(
+        "retention tiers 30-day footprint/series: raw-only {:.2} MB -> tiered {:.2} MB ({:.1}% smaller)",
+        raw_only / 1_048_576.0,
+        tiered / 1_048_576.0,
+        reduction
+    );
     println!("=======================================");
 }
 
@@ -2953,6 +3110,141 @@ fn cmd_history(
             b.samples
         );
     }
+    Ok(())
+}
+
+/// Per-series retained bytes under raw-only vs tiered retention over `sim_days`,
+/// from measured encoded sizes: `raw_bps` = raw bytes/sample, `t1_bpb`/`t2_bpb`
+/// = roll-up bytes per 10 s / 60 s bucket. Raw-only keeps 1 s samples for the
+/// whole window; tiered keeps raw for [`RAW_RETENTION_MS`], T1 out to
+/// [`T1_RETENTION_MS`], and T2 out to the window end. Pure + unit-tested.
+fn simulate_footprint(raw_bps: f64, t1_bpb: f64, t2_bpb: f64, sim_days: u64) -> (f64, f64) {
+    let total_s = (sim_days as i64 * 86_400) as f64;
+    let raw_s = RAW_RETENTION_MS as f64 / 1000.0;
+    let t1_s = T1_RETENTION_MS as f64 / 1000.0;
+
+    // Raw-only: one 1 s sample per second for the whole window.
+    let raw_only = raw_bps * total_s;
+
+    // Tiered: raw for the recent window, then 10 s buckets, then 60 s buckets.
+    let raw_window = total_s.min(raw_s);
+    let t1_window = (total_s.min(t1_s) - raw_s).max(0.0);
+    let t2_window = (total_s - t1_s).max(0.0);
+    let tiered = raw_bps * raw_window + t1_bpb * (t1_window / 10.0) + t2_bpb * (t2_window / 60.0);
+    (raw_only, tiered)
+}
+
+/// Encoded size of a representative synthetic 1-hour 1 s series at each tier, so
+/// the footprint simulation uses real codec sizes rather than guesses. Returns
+/// (raw_bytes_per_sample, t1_bytes_per_bucket, t2_bytes_per_bucket).
+fn measure_tier_sizes() -> (f64, f64, f64) {
+    use atlas_tsdb::{
+        encode_rollup, rollup_buckets, rollup_raw, BlockBuilder, T1_BUCKET_SECS, T2_BUCKET_SECS,
+    };
+    let pts: Vec<(i64, f64)> = (0..3600)
+        .map(|i| {
+            (
+                i * 1000,
+                300.0 + (i as f64 * 0.13).sin() * 60.0 + (i % 7) as f64,
+            )
+        })
+        .collect();
+    let mut raw = BlockBuilder::new();
+    for &(t, v) in &pts {
+        let _ = raw.append(t, v);
+    }
+    let raw_bytes = raw.finish().len() as f64;
+    let raw_bps = raw_bytes / pts.len() as f64;
+
+    let t1 = rollup_raw(&pts, T1_BUCKET_SECS * 1000);
+    let t1_bytes = encode_rollup(&t1, T1_BUCKET_SECS).len() as f64;
+    let t1_bpb = t1_bytes / t1.len().max(1) as f64;
+
+    let t2 = rollup_buckets(&t1, T2_BUCKET_SECS * 1000);
+    let t2_bytes = encode_rollup(&t2, T2_BUCKET_SECS).len() as f64;
+    let t2_bpb = t2_bytes / t2.len().max(1) as f64;
+    (raw_bps, t1_bpb, t2_bpb)
+}
+
+/// `storage`: per-tier block/byte breakdown + a simulated tiered-vs-raw
+/// footprint comparison (R3). Optionally forces a compaction pass first.
+fn cmd_storage(
+    db_path: PathBuf,
+    rollup: bool,
+    raw_retention_secs: u64,
+    t1_retention_secs: u64,
+    sim_days: u64,
+) -> Result<()> {
+    let mut store = Store::open(&db_path)?;
+
+    if rollup {
+        let before = store.block_counts_by_tier()?;
+        let now = now_ms();
+        run_compaction(
+            &mut store,
+            now,
+            raw_retention_secs as i64 * 1000,
+            t1_retention_secs as i64 * 1000,
+            T2_RETENTION_MS,
+        )?;
+        let after = store.block_counts_by_tier()?;
+        println!(
+            "Forced compaction (raw_retention={raw_retention_secs}s, t1_retention={t1_retention_secs}s):"
+        );
+        println!(
+            "  T0 blocks {} -> {}   T1 blocks {} -> {}   T2 blocks {} -> {}",
+            before[0], after[0], before[1], after[1], before[2], after[2]
+        );
+    }
+
+    let counts = store.block_counts_by_tier()?;
+    let bytes = store.sample_storage_bytes_by_tier()?;
+    let samples = store.sample_count()?;
+    println!(
+        "\nStored sample blocks by tier (source {}):",
+        db_path.display()
+    );
+    println!("  {:<6} {:>10} {:>14}", "TIER", "BLOCKS", "BYTES");
+    for (i, label) in ["T0 raw", "T1 10s", "T2 60s"].iter().enumerate() {
+        println!("  {label:<6} {:>10} {:>14}", counts[i], bytes[i]);
+    }
+    println!(
+        "  {:<6} {:>10} {:>14}   ({} samples on record)",
+        "total",
+        counts.iter().sum::<u64>(),
+        bytes.iter().sum::<u64>(),
+        samples
+    );
+
+    // Simulated footprint over a synthetic series, using real codec sizes.
+    let (raw_bps, t1_bpb, t2_bpb) = measure_tier_sizes();
+    let (raw_only, tiered) = simulate_footprint(raw_bps, t1_bpb, t2_bpb, sim_days);
+    let reduction = if raw_only > 0.0 {
+        (raw_only - tiered) / raw_only * 100.0
+    } else {
+        0.0
+    };
+    // Scale to a representative series count so the totals are concrete. Prefer
+    // the live series count if present.
+    let series = store.distinct_series_count().unwrap_or(0).max(1);
+    println!(
+        "\nSimulated {sim_days}-day footprint (per series; raw {raw_bps:.2} B/sample, \
+         T1 {t1_bpb:.2} B/bucket, T2 {t2_bpb:.2} B/bucket):"
+    );
+    println!(
+        "  raw-only (1 s kept {sim_days} d) : {:>10.2} MB/series   {:>10.2} MB × {series} series",
+        raw_only / 1_048_576.0,
+        raw_only / 1_048_576.0 * series as f64
+    );
+    println!(
+        "  tiered (T0 72h / T1 14d / T2 90d): {:>10.2} MB/series   {:>10.2} MB × {series} series",
+        tiered / 1_048_576.0,
+        tiered / 1_048_576.0 * series as f64
+    );
+    println!(
+        "  footprint reduction              : {reduction:>9.1}%   (tiering bounds the RETAINED \
+         footprint over long windows; it does not change the MB/day WRITE rate)"
+    );
     Ok(())
 }
 
@@ -4890,6 +5182,36 @@ mod tests {
             read_bps: 0,
             write_bps: 0,
         }
+    }
+
+    /// The tiered footprint simulation must show a large reduction over a 30-day
+    /// window: raw kept 72 h, T1 (10 s) out to 14 d, T2 (60 s) beyond — the long
+    /// tail collapses to a fraction of raw-only retention.
+    #[test]
+    fn simulated_footprint_shrinks_over_30_days() {
+        let (raw_bps, t1_bpb, t2_bpb) = measure_tier_sizes();
+        assert!(raw_bps > 0.0 && t1_bpb > 0.0 && t2_bpb > 0.0);
+        let (raw_only, tiered) = simulate_footprint(raw_bps, t1_bpb, t2_bpb, 30);
+        assert!(
+            tiered < raw_only,
+            "tiered must retain fewer bytes than raw-only"
+        );
+        // The 30-day tiered footprint should be well under half of raw-only —
+        // most of the window is 60 s buckets, ~60× fewer points than 1 s raw.
+        assert!(
+            tiered * 2.0 < raw_only,
+            "expected >50% footprint reduction: raw_only={raw_only} tiered={tiered}"
+        );
+    }
+
+    /// A run shorter than the raw retention keeps everything raw — no coarser
+    /// tier applies, so tiered == raw-only for that window.
+    #[test]
+    fn simulated_footprint_within_raw_window_equals_raw() {
+        let (raw_bps, t1_bpb, t2_bpb) = measure_tier_sizes();
+        // 1 day < 72 h raw retention → the whole window stays raw.
+        let (raw_only, tiered) = simulate_footprint(raw_bps, t1_bpb, t2_bpb, 1);
+        assert!((raw_only - tiered).abs() < 1e-6);
     }
 
     /// A head that reaches the point cap seals into exactly the six system

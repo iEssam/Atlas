@@ -76,8 +76,9 @@ impl std::fmt::Display for BlockError {
 impl std::error::Error for BlockError {}
 
 /// A hand-rolled CRC-32 (IEEE polynomial, reflected) — no external deps. Used
-/// only for corruption detection, not security.
-fn crc32(data: &[u8]) -> u32 {
+/// only for corruption detection, not security. `pub(crate)` so the roll-up
+/// container ([`crate::rollup`]) frames itself with the same checksum.
+pub(crate) fn crc32(data: &[u8]) -> u32 {
     // Standard reflected CRC-32 (poly 0xEDB88320), computed without a table.
     let mut crc: u32 = 0xFFFF_FFFF;
     for &b in data {
