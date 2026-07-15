@@ -419,6 +419,53 @@ CREATE INDEX IF NOT EXISTS ix_sample_block_tier
     ON sample_block(metric, scope, tier, start_ms);
 "#;
 
+// Additive v13 migration (docs/phases.md Phase 3 / R3, PRD §18.3, tech-stack
+// §4.6): the signed plugin registry.
+//
+// `plugin` is the registry of out-of-process, Authenticode-signed, capability-
+// scoped READ-ONLY extensions. Each row is one registered plugin executable:
+// `signature` carries the proto `PluginSignature` discriminant recorded at
+// registration (and re-checked on enable — an enable is refused if it degraded);
+// `publisher` is taken from the verified signing certificate subject (empty when
+// unsigned); `granted_caps` is a bitmask of proto `PluginCapability`
+// discriminants (bit `1 << cap`) — the read-only slice of AtlasQuery a plugin
+// may reach. `enabled` is 0 by default (off until the user opts in). Registering
+// an unsigned executable is refused unless the user explicitly overrides, so a
+// stored row with `signature = PLUGIN_UNSIGNED (2)` only exists via that opt-in.
+//
+// `plugin_launch_nonce` bridges the CLI→service process boundary for the launch
+// handshake. The one-time nonce that proves "the service/user launched this
+// plugin" must be known to BOTH the launcher (`plugin launch`, a separate
+// process) and the running `serve` process that validates it in
+// OpenPluginSession. It is therefore persisted here (single-use, short-TTL)
+// rather than an in-process map — the actual capability grant (the session
+// token) is NEVER persisted and lives only in the serve process's memory.
+// `used` makes a claim single-shot; expired/used rows are swept opportunistically.
+//
+// All objects are created IF NOT EXISTS so a v12 database upgrades in place.
+const SCHEMA_V13_PLUGIN: &str = r#"
+CREATE TABLE IF NOT EXISTS plugin (
+    id            INTEGER PRIMARY KEY,
+    name          TEXT    NOT NULL,
+    version       TEXT    NOT NULL,
+    publisher     TEXT    NOT NULL,   -- from the signing cert subject; "" if unsigned
+    exe_path      TEXT    NOT NULL,
+    signature     INTEGER NOT NULL,   -- proto PluginSignature discriminant
+    enabled       INTEGER NOT NULL,   -- 0 by default (off until the user opts in)
+    granted_caps  INTEGER NOT NULL,   -- bitmask of proto PluginCapability (1 << cap)
+    registered_ms INTEGER NOT NULL,
+    description   TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_plugin_enabled ON plugin(enabled);
+
+CREATE TABLE IF NOT EXISTS plugin_launch_nonce (
+    nonce      TEXT    PRIMARY KEY,
+    plugin_id  INTEGER NOT NULL,
+    expires_ms INTEGER NOT NULL,
+    used       INTEGER NOT NULL DEFAULT 0
+);
+"#;
+
 /// Whether `table` already has a column named `column`, via `PRAGMA table_info`.
 /// Used to make the v3 `ADD COLUMN` migration idempotent (SQLite lacks
 /// `ADD COLUMN IF NOT EXISTS`).
@@ -606,6 +653,27 @@ pub struct AuditRow {
     pub decision: String,
     /// Free-form reason (denial cause, result message, error text).
     pub detail: String,
+}
+
+/// One registered signed plugin (docs/phases.md Phase 3 / R3, PRD §18.3). The
+/// store row is wire-shaped: `signature` carries the proto `PluginSignature`
+/// discriminant, `granted_caps` is a bitmask of proto `PluginCapability`
+/// discriminants (bit `1 << cap`). `publisher` is the verified signing-cert
+/// subject (empty when unsigned). `enabled` is false until the user opts in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginRow {
+    pub id: i64,
+    pub name: String,
+    pub version: String,
+    pub publisher: String,
+    pub exe_path: String,
+    /// proto `PluginSignature` discriminant (1=signed, 2=unsigned, 3=unknown).
+    pub signature: i32,
+    pub enabled: bool,
+    /// Bitmask of granted proto `PluginCapability` discriminants (`1 << cap`).
+    pub granted_caps: i64,
+    pub registered_ms: i64,
+    pub description: String,
 }
 
 /// One detected incident (docs/phases.md M8, PRD §9.3.7). `kind` and `severity`
@@ -851,6 +919,10 @@ impl Store {
             }
             self.conn.execute_batch(SCHEMA_V12_TIER_INDEX)?;
             self.conn.execute_batch("PRAGMA user_version = 12;")?;
+        }
+        if version < 13 {
+            self.conn.execute_batch(SCHEMA_V13_PLUGIN)?;
+            self.conn.execute_batch("PRAGMA user_version = 13;")?;
         }
         // FTS5 objects are built (idempotently, IF NOT EXISTS) on every open
         // once the module is confirmed present, independent of user_version: a
@@ -2403,6 +2475,153 @@ impl Store {
     }
 
     // -----------------------------------------------------------------------
+    // R3 signed-plugin registry CRUD (schema v13, PRD §18.3). The service's
+    // AtlasPlugins RPC surface and the `plugin` dev CLI share these methods;
+    // signature verification + capability enforcement live in the service.
+    // -----------------------------------------------------------------------
+
+    const PLUGIN_COLS: &'static str = "id, name, version, publisher, exe_path, signature, \
+         enabled, granted_caps, registered_ms, description";
+
+    fn map_plugin(row: &rusqlite::Row) -> rusqlite::Result<PluginRow> {
+        Ok(PluginRow {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            version: row.get(2)?,
+            publisher: row.get(3)?,
+            exe_path: row.get(4)?,
+            signature: row.get::<_, i64>(5)? as i32,
+            enabled: row.get::<_, i64>(6)? != 0,
+            granted_caps: row.get(7)?,
+            registered_ms: row.get(8)?,
+            description: row.get(9)?,
+        })
+    }
+
+    /// Inserts a plugin registry row (id ignored). Returns the new row id.
+    pub fn insert_plugin(&self, p: &PluginRow) -> Result<i64> {
+        let registered = if p.registered_ms == 0 {
+            now_ms()
+        } else {
+            p.registered_ms
+        };
+        self.conn.execute(
+            "INSERT INTO plugin
+                 (name, version, publisher, exe_path, signature, enabled,
+                  granted_caps, registered_ms, description)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                p.name,
+                p.version,
+                p.publisher,
+                p.exe_path,
+                p.signature as i64,
+                p.enabled as i64,
+                p.granted_caps,
+                registered,
+                p.description,
+            ],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Fetches one plugin by id.
+    pub fn get_plugin(&self, id: i64) -> Result<Option<PluginRow>> {
+        let sql = format!("SELECT {} FROM plugin WHERE id = ?1", Self::PLUGIN_COLS);
+        let row = self
+            .conn
+            .query_row(&sql, params![id], Self::map_plugin)
+            .optional()?;
+        Ok(row)
+    }
+
+    /// Lists all registered plugins, newest registration first.
+    pub fn list_plugins(&self) -> Result<Vec<PluginRow>> {
+        let sql = format!(
+            "SELECT {} FROM plugin ORDER BY registered_ms DESC, id DESC",
+            Self::PLUGIN_COLS
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map([], Self::map_plugin)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Toggles a plugin's enabled flag. Returns whether a row was affected.
+    pub fn set_plugin_enabled(&self, id: i64, enabled: bool) -> Result<bool> {
+        let n = self.conn.execute(
+            "UPDATE plugin SET enabled = ?2 WHERE id = ?1",
+            params![id, enabled as i64],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// Replaces a plugin's granted-capability bitmask. Returns whether a row
+    /// was affected.
+    pub fn set_plugin_caps(&self, id: i64, granted_caps: i64) -> Result<bool> {
+        let n = self.conn.execute(
+            "UPDATE plugin SET granted_caps = ?2 WHERE id = ?1",
+            params![id, granted_caps],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// Updates a plugin's recorded signature verdict + publisher (used when a
+    /// re-verification on enable changes the result). Returns whether a row
+    /// was affected.
+    pub fn set_plugin_signature(&self, id: i64, signature: i32, publisher: &str) -> Result<bool> {
+        let n = self.conn.execute(
+            "UPDATE plugin SET signature = ?2, publisher = ?3 WHERE id = ?1",
+            params![id, signature as i64, publisher],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// Removes a plugin from the registry. Returns whether a row went.
+    pub fn delete_plugin(&self, id: i64) -> Result<bool> {
+        let n = self
+            .conn
+            .execute("DELETE FROM plugin WHERE id = ?1", params![id])?;
+        Ok(n > 0)
+    }
+
+    /// Records a one-time launch nonce for `plugin_id`, expiring at `expires_ms`
+    /// (Unix ms). Persisted so a separate launcher process and the running
+    /// service agree on it (the session token it is later exchanged for is never
+    /// persisted). Opportunistically sweeps used/expired rows first.
+    pub fn record_plugin_nonce(&self, nonce: &str, plugin_id: i64, expires_ms: i64) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM plugin_launch_nonce WHERE used = 1 OR expires_ms < ?1",
+            params![now_ms()],
+        )?;
+        self.conn.execute(
+            "INSERT OR REPLACE INTO plugin_launch_nonce (nonce, plugin_id, expires_ms, used)
+             VALUES (?1, ?2, ?3, 0)",
+            params![nonce, plugin_id, expires_ms],
+        )?;
+        Ok(())
+    }
+
+    /// Atomically claims a launch nonce: it must exist, be unused, unexpired at
+    /// `now_ms`, and bound to `plugin_id`. On success marks it used and returns
+    /// `Some(plugin_id)`; otherwise `None`. Single-use by construction (the
+    /// `used = 0` guard in the UPDATE).
+    pub fn claim_plugin_nonce(
+        &self,
+        nonce: &str,
+        plugin_id: i64,
+        now_ms: i64,
+    ) -> Result<Option<i64>> {
+        let n = self.conn.execute(
+            "UPDATE plugin_launch_nonce SET used = 1
+                 WHERE nonce = ?1 AND plugin_id = ?2 AND used = 0 AND expires_ms >= ?3",
+            params![nonce, plugin_id, now_ms],
+        )?;
+        Ok(if n > 0 { Some(plugin_id) } else { None })
+    }
+
+    // -----------------------------------------------------------------------
     // R2 advanced-privacy-alerts CRUD (schema v9, PRD §9.10.3). Rules persist
     // across restarts; the ConsentStore change-watcher's evaluator (in `serve`)
     // reads enabled rules and records `fired_alert` rows. The AtlasQuery service
@@ -3085,7 +3304,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 12, "migration walks v1 up to the current schema");
+        assert_eq!(version, 13, "migration walks v1 up to the current schema");
 
         store
             .write_self_sample(&SelfSampleRow {
@@ -3161,7 +3380,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 12, "migration walks a v2 db to the current schema");
+        assert_eq!(version, 13, "migration walks a v2 db to the current schema");
         assert!(column_exists(&store.conn, "process_instance", "exit_status").unwrap());
 
         // Pre-existing row survived and has a NULL exit_status.
@@ -3271,13 +3490,64 @@ mod tests {
     }
 
     #[test]
-    fn fresh_database_is_v12() {
+    fn fresh_database_is_v13() {
         let store = Store::open_in_memory().unwrap();
         let version: i64 = store
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 12);
+        assert_eq!(version, 13);
+    }
+
+    #[test]
+    fn plugin_crud_round_trips() {
+        let store = Store::open_in_memory().unwrap();
+        let id = store
+            .insert_plugin(&PluginRow {
+                id: 0,
+                name: "Example".to_string(),
+                version: "1.2.3".to_string(),
+                publisher: "Contoso".to_string(),
+                exe_path: r"C:\x\example.exe".to_string(),
+                signature: 1, // PLUGIN_SIGNED
+                enabled: false,
+                granted_caps: (1 << 1) | (1 << 2),
+                registered_ms: 111,
+                description: "demo".to_string(),
+            })
+            .unwrap();
+        let row = store.get_plugin(id).unwrap().unwrap();
+        assert_eq!(row.name, "Example");
+        assert_eq!(row.publisher, "Contoso");
+        assert!(!row.enabled);
+        assert_eq!(row.granted_caps, (1 << 1) | (1 << 2));
+
+        assert!(store.set_plugin_enabled(id, true).unwrap());
+        assert!(store.set_plugin_caps(id, 1 << 3).unwrap());
+        assert!(store.set_plugin_signature(id, 3, "").unwrap());
+        let row = store.get_plugin(id).unwrap().unwrap();
+        assert!(row.enabled);
+        assert_eq!(row.granted_caps, 1 << 3);
+        assert_eq!(row.signature, 3);
+
+        assert_eq!(store.list_plugins().unwrap().len(), 1);
+        assert!(store.delete_plugin(id).unwrap());
+        assert!(store.get_plugin(id).unwrap().is_none());
+    }
+
+    #[test]
+    fn plugin_launch_nonce_is_single_use() {
+        let store = Store::open_in_memory().unwrap();
+        store.record_plugin_nonce("abc", 7, 10_000).unwrap();
+        // Wrong plugin id is rejected.
+        assert!(store.claim_plugin_nonce("abc", 9, 5_000).unwrap().is_none());
+        // Correct plugin id + unexpired claims once.
+        assert_eq!(store.claim_plugin_nonce("abc", 7, 5_000).unwrap(), Some(7));
+        // Second claim fails (single-use).
+        assert!(store.claim_plugin_nonce("abc", 7, 5_000).unwrap().is_none());
+        // An expired nonce never claims.
+        store.record_plugin_nonce("old", 7, 1_000).unwrap();
+        assert!(store.claim_plugin_nonce("old", 7, 2_000).unwrap().is_none());
     }
 
     fn sample_rule(name: &str, image: &str) -> RuleRow {

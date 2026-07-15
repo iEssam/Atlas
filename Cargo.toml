@@ -8,6 +8,7 @@ members = [
     "crates/atlas-service",
     "crates/atlas-mcp",
     "crates/atlas-cli",
+    "crates/atlas-plugin-example",
 ]
 
 [workspace.package]

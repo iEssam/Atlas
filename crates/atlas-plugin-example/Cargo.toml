@@ -1,0 +1,21 @@
+[package]
+name = "atlas-plugin-example"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "atlas-plugin-example"
+path = "src/main.rs"
+
+[dependencies]
+# The read-only contract client + named-pipe transport. This sample plugin
+# proves the signed-plugin framework end to end: it opens a capability-scoped
+# session, calls a GRANTED AtlasQuery read (works), and attempts an UNGRANTED
+# read + a mutation (both rejected by the server interceptor). It never links a
+# write client for its own sake — the mutation attempts exist only to show the
+# rejection.
+atlas-ipc = { path = "../atlas-ipc" }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+tonic = { workspace = true }
