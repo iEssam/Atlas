@@ -15,7 +15,7 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!-- Title + controls -->
+        <!-- ===== Page heading + controls ===== -->
         <Grid Grid.Row="0" ColumnSpacing="12">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
@@ -24,22 +24,29 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
 
-            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
-                <TextBlock Text="Timeline" Style="{StaticResource TitleTextBlockStyle}" />
-                <TextBlock VerticalAlignment="Bottom"
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                           Text="System CPU" />
+            <StackPanel Grid.Column="0" Spacing="4">
+                <TextBlock Text="OBSERVE / TIMELINE" Style="{StaticResource AtlasEyebrowStyle}" />
+                <StackPanel Orientation="Horizontal" Spacing="12">
+                    <TextBlock Text="Timeline" Style="{StaticResource AtlasPageHeadingStyle}" />
+                    <TextBlock VerticalAlignment="Bottom" Margin="0,0,0,3"
+                               Style="{StaticResource AtlasMonoMutedStyle}"
+                               Text="System CPU" />
+                </StackPanel>
+                <TextBlock Style="{StaticResource AtlasPageDescriptionStyle}"
+                           Text="System-CPU history (min/max band + average) over the selected window, with process events and bookmarks." />
             </StackPanel>
 
             <ComboBox Grid.Column="1"
                       x:Name="WindowPicker"
                       Header="Window"
                       AutomationProperties.Name="Time window"
+                      VerticalAlignment="Bottom"
                       MinWidth="160"
                       ItemsSource="{x:Bind ViewModel.Windows}"
                       SelectedItem="{x:Bind ViewModel.SelectedWindow, Mode=TwoWay}" />
 
             <Button Grid.Column="2"
+                    Style="{StaticResource AtlasGhostButtonStyle}"
                     VerticalAlignment="Bottom"
                     AutomationProperties.Name="Refresh timeline"
                     Click="Refresh_Click">
@@ -50,6 +57,7 @@
             </Button>
 
             <Button Grid.Column="3"
+                    Style="{StaticResource AtlasGhostButtonStyle}"
                     VerticalAlignment="Bottom"
                     AutomationProperties.Name="Bookmark now"
                     Click="BookmarkNow_Click">
@@ -64,15 +72,13 @@
         <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="12">
             <ProgressRing IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
                           Width="16" Height="16" />
-            <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+            <TextBlock Style="{StaticResource AtlasMonoMutedStyle}"
+                       VerticalAlignment="Center"
                        Text="{x:Bind ViewModel.StatusText, Mode=OneWay}" />
         </StackPanel>
 
         <!-- Chart + event lane -->
-        <Border Grid.Row="2"
-                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                BorderThickness="1" CornerRadius="2">
+        <Border Grid.Row="2" Style="{StaticResource AtlasPanelFlatStyle}">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="*" MinHeight="180" />
@@ -91,20 +97,17 @@
                                 Spacing="8"
                                 Visibility="{x:Bind ViewModel.IsUnavailable, Mode=OneWay}">
                         <FontIcon Glyph="&#xE7BA;" FontSize="28"
-                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                  Foreground="{ThemeResource AtlasDimBrush}"
                                   HorizontalAlignment="Center" />
                         <TextBlock Text="History unavailable"
-                                   Style="{StaticResource SubtitleTextBlockStyle}"
-                                   HorizontalAlignment="Center" />
+                                   Style="{StaticResource AtlasEmptyStateTitleStyle}" />
                         <TextBlock Text="The connected service is too old to serve stored samples."
-                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                   TextWrapping="Wrap" MaxWidth="360"
-                                   HorizontalTextAlignment="Center" />
+                                   Style="{StaticResource AtlasEmptyStateBodyStyle}" />
                     </StackPanel>
                 </Grid>
 
                 <Border Grid.Row="1" Height="1"
-                        Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                        Background="{ThemeResource AtlasLineBrush}" />
 
                 <!-- Event lane -->
                 <Grid Grid.Row="2" Padding="12,8">
@@ -112,8 +115,9 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
-                    <TextBlock Grid.Row="0" Text="Process events" FontWeight="SemiBold"
-                               Margin="0,0,0,4" />
+                    <TextBlock Grid.Row="0" Text="PROCESS EVENTS"
+                               Style="{StaticResource AtlasSectionLabelStyle}"
+                               Margin="0,0,0,6" />
                     <ListView Grid.Row="1"
                               AutomationProperties.Name="Process event lane"
                               ItemsSource="{x:Bind ViewModel.Events, Mode=OneWay}"
@@ -121,14 +125,17 @@
                         <ListView.ItemContainerStyle>
                             <Style TargetType="ListViewItem">
                                 <Setter Property="MinHeight" Value="0" />
-                                <Setter Property="Padding" Value="8,2" />
+                                <Setter Property="Padding" Value="8,3" />
+                                <Setter Property="CornerRadius" Value="0" />
                             </Style>
                         </ListView.ItemContainerStyle>
                         <ListView.ItemTemplate>
                             <DataTemplate x:DataType="vm:TimelineEventItem">
                                 <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <FontIcon FontSize="12" Glyph="{x:Bind IconGlyph}" />
-                                    <TextBlock Text="{x:Bind Text}" />
+                                    <FontIcon FontSize="12" Glyph="{x:Bind IconGlyph}"
+                                              Foreground="{ThemeResource AtlasDimBrush}" />
+                                    <TextBlock Text="{x:Bind Text}"
+                                               Style="{StaticResource AtlasMonoStyle}" />
                                 </StackPanel>
                             </DataTemplate>
                         </ListView.ItemTemplate>
@@ -139,7 +146,7 @@
 
         <!-- Bookmarks legend -->
         <TextBlock Grid.Row="3"
-                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                   Style="{StaticResource AtlasWarningTextStyle}"
                    Text="Vertical amber lines mark bookmarks. Gaps in the line are missing data, not zero." />
     </Grid>
 </Page>

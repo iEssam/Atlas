@@ -13,23 +13,20 @@
         <StackPanel Spacing="14" MinWidth="440" MaxWidth="520" Margin="0,4,0,0">
 
             <!-- What this is -->
-            <TextBlock TextWrapping="Wrap"
-                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                       Text="Atlas will note it in your alerts when an app uses a capability the way you describe here. This only tells you — it never blocks the app." />
+            <TextBlock Style="{StaticResource AtlasPageDescriptionStyle}"
+                       Text="Atlas will note it in your alerts when an app uses a capability the way you describe here. This only tells you - it never blocks the app." />
 
             <!-- Name -->
-            <StackPanel Spacing="4">
-                <TextBlock Text="Alert name" Style="{StaticResource CaptionTextBlockStyle}"
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            <StackPanel Spacing="6">
+                <TextBlock Text="ALERT NAME" Style="{StaticResource AtlasSectionLabelStyle}" />
                 <TextBox x:Name="NameBox"
                          AutomationProperties.Name="Alert name"
                          PlaceholderText="e.g. Camera in the background" />
             </StackPanel>
 
             <!-- Capability -->
-            <StackPanel Spacing="4">
-                <TextBlock Text="Capability to watch" Style="{StaticResource CaptionTextBlockStyle}"
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            <StackPanel Spacing="6">
+                <TextBlock Text="CAPABILITY TO WATCH" Style="{StaticResource AtlasSectionLabelStyle}" />
                 <ComboBox x:Name="CapabilityBox"
                           AutomationProperties.Name="Capability to watch"
                           HorizontalAlignment="Stretch" SelectedIndex="0">
@@ -41,9 +38,8 @@
             </StackPanel>
 
             <!-- Condition -->
-            <StackPanel Spacing="4">
-                <TextBlock Text="Tell me when it's used" Style="{StaticResource CaptionTextBlockStyle}"
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            <StackPanel Spacing="6">
+                <TextBlock Text="TELL ME WHEN IT'S USED" Style="{StaticResource AtlasSectionLabelStyle}" />
                 <ComboBox x:Name="ConditionBox"
                           AutomationProperties.Name="When to alert"
                           HorizontalAlignment="Stretch" SelectedIndex="0"
@@ -57,17 +53,16 @@
             </StackPanel>
 
             <!-- Threshold (only for "longer than") -->
-            <StackPanel x:Name="ThresholdPanel" Spacing="4" Visibility="Collapsed">
-                <TextBlock Text="Longer than (seconds)" Style="{StaticResource CaptionTextBlockStyle}"
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            <StackPanel x:Name="ThresholdPanel" Spacing="6" Visibility="Collapsed">
+                <TextBlock Text="LONGER THAN (SECONDS)" Style="{StaticResource AtlasSectionLabelStyle}" />
                 <NumberBox x:Name="ThresholdBox"
                            AutomationProperties.Name="Threshold in seconds"
                            Value="60" SpinButtonPlacementMode="Inline"
                            Minimum="1" Maximum="86400" SmallChange="10" LargeChange="60" />
                 <TextBlock Text="Alert when a single session stays active longer than this many seconds."
-                           Style="{StaticResource CaptionTextBlockStyle}"
-                           TextWrapping="Wrap"
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                           Style="{StaticResource AtlasMonoMutedStyle}"
+                           FontSize="11.5"
+                           TextWrapping="Wrap" />
             </StackPanel>
 
             <!-- Enabled -->

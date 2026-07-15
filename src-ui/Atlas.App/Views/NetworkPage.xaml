@@ -16,15 +16,15 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <!-- Title -->
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="12">
-            <TextBlock Text="Network" Style="{StaticResource TitleTextBlockStyle}" />
-            <TextBlock VerticalAlignment="Bottom"
-                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                       Text="Connections and listening ports" />
+        <!-- ===== Page heading ===== -->
+        <StackPanel Grid.Row="0" Spacing="4">
+            <TextBlock Text="INVENTORY / NETWORK" Style="{StaticResource AtlasEyebrowStyle}" />
+            <TextBlock Text="Network" Style="{StaticResource AtlasPageHeadingStyle}" />
+            <TextBlock Style="{StaticResource AtlasPageDescriptionStyle}"
+                       Text="Active connections and listening ports, by owning process. Read-only inventory." />
         </StackPanel>
 
-        <!-- Sub-view toggle + filter -->
+        <!-- ===== Sub-view toggle + filter ===== -->
         <Grid Grid.Row="1" ColumnSpacing="12">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
@@ -51,48 +51,48 @@
                      Text="{x:Bind ViewModel.Filter, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
         </Grid>
 
-        <!-- Status line + read-only note -->
-        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="12">
+        <!-- ===== Status line + read-only note ===== -->
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
             <ProgressRing IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
                           Width="16" Height="16" />
-            <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+            <TextBlock Style="{StaticResource AtlasMonoMutedStyle}"
+                       VerticalAlignment="Center"
                        Text="{x:Bind ViewModel.StatusText, Mode=OneWay}" />
-            <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                       Text="• Read-only" />
+            <TextBlock Style="{StaticResource AtlasMonoMutedStyle}"
+                       VerticalAlignment="Center"
+                       Text="· READ-ONLY" />
         </StackPanel>
 
-        <!-- Refresh -->
+        <!-- ===== Refresh ===== -->
         <Button Grid.Row="3" HorizontalAlignment="Left"
                 Content="Refresh"
+                Style="{StaticResource AtlasGhostButtonStyle}"
                 AutomationProperties.Name="Refresh network list"
                 Click="Refresh_Click" />
 
-        <!-- Table / empty / unavailable -->
+        <!-- ===== Table / empty / unavailable ===== -->
         <Grid Grid.Row="4">
             <!-- Unavailable placeholder -->
             <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
                         Visibility="{x:Bind ViewModel.IsUnavailable, Mode=OneWay}">
                 <FontIcon Glyph="&#xE7BA;" FontSize="28"
-                          Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                          Foreground="{ThemeResource AtlasDimBrush}"
                           HorizontalAlignment="Center" />
                 <TextBlock Text="Network unavailable"
-                           Style="{StaticResource SubtitleTextBlockStyle}"
-                           HorizontalAlignment="Center" />
+                           Style="{StaticResource AtlasEmptyStateTitleStyle}" />
                 <TextBlock Text="{x:Bind ViewModel.UnavailableText, Mode=OneWay}"
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                           TextWrapping="Wrap" MaxWidth="420"
-                           HorizontalTextAlignment="Center" />
+                           Style="{StaticResource AtlasEmptyStateBodyStyle}"
+                           MaxWidth="420" />
             </StackPanel>
 
             <!-- Empty placeholder -->
             <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
                         Visibility="{x:Bind ViewModel.IsEmpty, Mode=OneWay}">
                 <FontIcon Glyph="&#xE721;" FontSize="28"
-                          Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                          Foreground="{ThemeResource AtlasDimBrush}"
                           HorizontalAlignment="Center" />
                 <TextBlock Text="Nothing to show here"
-                           Style="{StaticResource SubtitleTextBlockStyle}"
-                           HorizontalAlignment="Center" />
+                           Style="{StaticResource AtlasEmptyStateTitleStyle}" />
             </StackPanel>
 
             <!-- Connections table -->
@@ -104,7 +104,7 @@
                     </Grid.RowDefinitions>
 
                     <!-- Column header -->
-                    <Grid Grid.Row="0" Padding="16,4,16,8" ColumnSpacing="12">
+                    <Grid Grid.Row="0" Padding="12,0,12,8" ColumnSpacing="12">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="1.8*" />
                             <ColumnDefinition Width="Auto" MinWidth="60" />
@@ -113,40 +113,28 @@
                             <ColumnDefinition Width="1.6*" />
                             <ColumnDefinition Width="Auto" MinWidth="120" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="App"
-                                   Style="{StaticResource CaptionTextBlockStyle}"
-                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                        <TextBlock Grid.Column="1" Text="Proto"
-                                   Style="{StaticResource CaptionTextBlockStyle}"
-                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                        <TextBlock Grid.Column="2" Text="Local"
-                                   Style="{StaticResource CaptionTextBlockStyle}"
-                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                        <TextBlock Grid.Column="3" Text="Remote"
-                                   Style="{StaticResource CaptionTextBlockStyle}"
-                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                        <TextBlock Grid.Column="4" Text="Domain"
-                                   Style="{StaticResource CaptionTextBlockStyle}"
-                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                        <TextBlock Grid.Column="5" Text="State"
-                                   Style="{StaticResource CaptionTextBlockStyle}"
-                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <TextBlock Grid.Column="0" Text="APP"
+                                   Style="{StaticResource AtlasColumnHeaderStyle}" />
+                        <TextBlock Grid.Column="1" Text="PROTO"
+                                   Style="{StaticResource AtlasColumnHeaderStyle}" />
+                        <TextBlock Grid.Column="2" Text="LOCAL"
+                                   Style="{StaticResource AtlasColumnHeaderStyle}" />
+                        <TextBlock Grid.Column="3" Text="REMOTE"
+                                   Style="{StaticResource AtlasColumnHeaderStyle}" />
+                        <TextBlock Grid.Column="4" Text="DOMAIN"
+                                   Style="{StaticResource AtlasColumnHeaderStyle}" />
+                        <TextBlock Grid.Column="5" Text="STATE"
+                                   Style="{StaticResource AtlasColumnHeaderStyle}" />
                     </Grid>
 
                     <ListView Grid.Row="1"
                               AutomationProperties.Name="Connections table"
+                              ItemContainerStyle="{StaticResource AtlasRowContainerStyle}"
                               ItemsSource="{x:Bind ViewModel.Connections, Mode=OneWay}"
                               SelectionMode="Single">
-                        <ListView.ItemContainerStyle>
-                            <Style TargetType="ListViewItem">
-                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                                <Setter Property="Padding" Value="8,4" />
-                                <Setter Property="MinHeight" Value="0" />
-                            </Style>
-                        </ListView.ItemContainerStyle>
                         <ListView.ItemTemplate>
                             <DataTemplate x:DataType="vm:ConnectionItem">
-                                <Grid ColumnSpacing="12" Padding="8,4">
+                                <Grid ColumnSpacing="12">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="1.8*" />
                                         <ColumnDefinition Width="Auto" MinWidth="60" />
@@ -159,20 +147,20 @@
                                                Text="{x:Bind Process}"
                                                TextTrimming="CharacterEllipsis" />
                                     <TextBlock Grid.Column="1" VerticalAlignment="Center"
-                                               Text="{x:Bind Protocol}"
-                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                               Style="{StaticResource AtlasMonoMutedStyle}"
+                                               Text="{x:Bind Protocol}" />
                                     <TextBlock Grid.Column="2" VerticalAlignment="Center"
+                                               Style="{StaticResource AtlasMonoStyle}"
                                                Text="{x:Bind LocalEndpoint}"
-                                               FontFamily="Consolas"
                                                TextTrimming="CharacterEllipsis" />
                                     <TextBlock Grid.Column="3" VerticalAlignment="Center"
+                                               Style="{StaticResource AtlasMonoStyle}"
                                                Text="{x:Bind RemoteEndpoint}"
-                                               FontFamily="Consolas"
                                                TextTrimming="CharacterEllipsis" />
                                     <TextBlock Grid.Column="4" VerticalAlignment="Center"
+                                               Style="{StaticResource AtlasMonoMutedStyle}"
                                                Text="{x:Bind Domain}"
-                                               TextTrimming="CharacterEllipsis"
-                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                               TextTrimming="CharacterEllipsis" />
                                     <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="8"
                                                 VerticalAlignment="Center">
                                         <Ellipse Width="8" Height="8"
@@ -194,41 +182,31 @@
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
 
-                    <Grid Grid.Row="0" Padding="16,4,16,8" ColumnSpacing="12">
+                    <Grid Grid.Row="0" Padding="12,0,12,8" ColumnSpacing="12">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="2*" />
                             <ColumnDefinition Width="Auto" MinWidth="60" />
                             <ColumnDefinition Width="2*" />
                             <ColumnDefinition Width="Auto" MinWidth="80" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="App"
-                                   Style="{StaticResource CaptionTextBlockStyle}"
-                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                        <TextBlock Grid.Column="1" Text="Proto"
-                                   Style="{StaticResource CaptionTextBlockStyle}"
-                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                        <TextBlock Grid.Column="2" Text="Bind endpoint"
-                                   Style="{StaticResource CaptionTextBlockStyle}"
-                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                        <TextBlock Grid.Column="3" Text="Family"
-                                   Style="{StaticResource CaptionTextBlockStyle}"
-                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <TextBlock Grid.Column="0" Text="APP"
+                                   Style="{StaticResource AtlasColumnHeaderStyle}" />
+                        <TextBlock Grid.Column="1" Text="PROTO"
+                                   Style="{StaticResource AtlasColumnHeaderStyle}" />
+                        <TextBlock Grid.Column="2" Text="BIND ENDPOINT"
+                                   Style="{StaticResource AtlasColumnHeaderStyle}" />
+                        <TextBlock Grid.Column="3" Text="FAMILY"
+                                   Style="{StaticResource AtlasColumnHeaderStyle}" />
                     </Grid>
 
                     <ListView Grid.Row="1"
                               AutomationProperties.Name="Listening ports table"
+                              ItemContainerStyle="{StaticResource AtlasRowContainerStyle}"
                               ItemsSource="{x:Bind ViewModel.Ports, Mode=OneWay}"
                               SelectionMode="Single">
-                        <ListView.ItemContainerStyle>
-                            <Style TargetType="ListViewItem">
-                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                                <Setter Property="Padding" Value="8,4" />
-                                <Setter Property="MinHeight" Value="0" />
-                            </Style>
-                        </ListView.ItemContainerStyle>
                         <ListView.ItemTemplate>
                             <DataTemplate x:DataType="vm:ListeningPortItem">
-                                <Grid ColumnSpacing="12" Padding="8,4">
+                                <Grid ColumnSpacing="12">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="2*" />
                                         <ColumnDefinition Width="Auto" MinWidth="60" />
@@ -239,15 +217,15 @@
                                                Text="{x:Bind Process}"
                                                TextTrimming="CharacterEllipsis" />
                                     <TextBlock Grid.Column="1" VerticalAlignment="Center"
-                                               Text="{x:Bind Protocol}"
-                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                               Style="{StaticResource AtlasMonoMutedStyle}"
+                                               Text="{x:Bind Protocol}" />
                                     <TextBlock Grid.Column="2" VerticalAlignment="Center"
+                                               Style="{StaticResource AtlasMonoStyle}"
                                                Text="{x:Bind Endpoint}"
-                                               FontFamily="Consolas"
                                                TextTrimming="CharacterEllipsis" />
                                     <TextBlock Grid.Column="3" VerticalAlignment="Center"
-                                               Text="{x:Bind Family}"
-                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                               Style="{StaticResource AtlasMonoMutedStyle}"
+                                               Text="{x:Bind Family}" />
                                 </Grid>
                             </DataTemplate>
                         </ListView.ItemTemplate>

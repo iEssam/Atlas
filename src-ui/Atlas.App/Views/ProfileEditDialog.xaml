@@ -13,16 +13,14 @@
     <StackPanel Spacing="14" MinWidth="440" MaxWidth="520" Margin="0,4,0,0">
 
         <StackPanel Spacing="4">
-            <TextBlock Text="Profile name" Style="{StaticResource CaptionTextBlockStyle}"
-                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            <TextBlock Text="PROFILE NAME" Style="{StaticResource AtlasSectionLabelStyle}" />
             <TextBox x:Name="NameBox"
                      AutomationProperties.Name="Profile name"
                      PlaceholderText="e.g. Gaming" />
         </StackPanel>
 
         <StackPanel Spacing="4">
-            <TextBlock Text="Power mode" Style="{StaticResource CaptionTextBlockStyle}"
-                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            <TextBlock Text="POWER MODE" Style="{StaticResource AtlasSectionLabelStyle}" />
             <ComboBox x:Name="PowerModeBox"
                       AutomationProperties.Name="Power mode"
                       HorizontalAlignment="Stretch" SelectedIndex="0">
@@ -34,8 +32,7 @@
         </StackPanel>
 
         <StackPanel Spacing="4">
-            <TextBlock Text="Member rules" Style="{StaticResource CaptionTextBlockStyle}"
-                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            <TextBlock Text="MEMBER RULES" Style="{StaticResource AtlasSectionLabelStyle}" />
             <TextBlock Text="Activating this profile enables the rules you check here."
                        Style="{StaticResource CaptionTextBlockStyle}"
                        TextWrapping="Wrap"
@@ -48,32 +45,35 @@
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                        Text="No rules exist yet. Create rules first, then add them to a profile." />
 
-            <ListView x:Name="RulesList"
-                      AutomationProperties.Name="Member rules"
-                      MaxHeight="240"
-                      SelectionMode="None"
-                      Margin="0,4,0,0">
-                <ListView.ItemContainerStyle>
-                    <Style TargetType="ListViewItem">
-                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                        <Setter Property="Padding" Value="8,4" />
-                        <Setter Property="MinHeight" Value="0" />
-                    </Style>
-                </ListView.ItemContainerStyle>
-                <ListView.ItemTemplate>
-                    <DataTemplate x:DataType="views:SelectableRule">
-                        <CheckBox IsChecked="{x:Bind IsSelected, Mode=TwoWay}"
-                                  AutomationProperties.Name="{x:Bind Name}">
-                            <StackPanel Spacing="1">
-                                <TextBlock Text="{x:Bind Name}" />
-                                <TextBlock Text="{x:Bind Summary}"
-                                           Style="{StaticResource CaptionTextBlockStyle}"
-                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                            </StackPanel>
-                        </CheckBox>
-                    </DataTemplate>
-                </ListView.ItemTemplate>
-            </ListView>
+            <Border Style="{StaticResource AtlasPanelFlatStyle}" Margin="0,4,0,0">
+                <ListView x:Name="RulesList"
+                          AutomationProperties.Name="Member rules"
+                          MaxHeight="240"
+                          SelectionMode="None">
+                    <ListView.ItemContainerStyle>
+                        <Style TargetType="ListViewItem">
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                            <Setter Property="Padding" Value="8,6" />
+                            <Setter Property="MinHeight" Value="0" />
+                            <Setter Property="CornerRadius" Value="0" />
+                            <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+                            <Setter Property="BorderThickness" Value="0,0,0,1" />
+                        </Style>
+                    </ListView.ItemContainerStyle>
+                    <ListView.ItemTemplate>
+                        <DataTemplate x:DataType="views:SelectableRule">
+                            <CheckBox IsChecked="{x:Bind IsSelected, Mode=TwoWay}"
+                                      AutomationProperties.Name="{x:Bind Name}">
+                                <StackPanel Spacing="1">
+                                    <TextBlock Text="{x:Bind Name}" />
+                                    <TextBlock Text="{x:Bind Summary}"
+                                               Style="{StaticResource AtlasMonoMutedStyle}" />
+                                </StackPanel>
+                            </CheckBox>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+            </Border>
         </StackPanel>
 
         <InfoBar x:Name="ValidationBar" IsOpen="False" IsClosable="False"

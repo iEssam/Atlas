@@ -14,22 +14,31 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <!-- Title + New -->
+        <!-- ===== Page heading ===== -->
         <Grid Grid.Row="0">
-            <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
-                <TextBlock Text="Profiles" Style="{StaticResource TitleTextBlockStyle}" />
-                <TextBlock VerticalAlignment="Bottom"
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                           Text="Activatable bundles of rules" />
-                <Border x:Name="DemoBadge" Visibility="Collapsed"
-                        VerticalAlignment="Center"
-                        Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
-                        CornerRadius="2" Padding="8,2">
-                    <TextBlock Text="Demo data" Style="{StaticResource CaptionTextBlockStyle}" />
-                </Border>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0" Spacing="4">
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                    <TextBlock Text="CONTROL / PROFILES" Style="{StaticResource AtlasEyebrowStyle}"
+                               VerticalAlignment="Center" />
+                    <Border x:Name="DemoBadge" Visibility="Collapsed"
+                            Style="{StaticResource AtlasStatusPillStyle}"
+                            Background="{ThemeResource AtlasAmberTintBrush}"
+                            BorderBrush="{ThemeResource AtlasAmberBrush}">
+                        <TextBlock Text="DEMO DATA"
+                                   Style="{StaticResource AtlasSectionLabelStyle}"
+                                   Foreground="{ThemeResource AtlasAmberBrush}" />
+                    </Border>
+                </StackPanel>
+                <TextBlock Text="Profiles" Style="{StaticResource AtlasPageHeadingStyle}" />
+                <TextBlock Style="{StaticResource AtlasPageDescriptionStyle}"
+                           Text="Activatable bundles of rules with an optional power mode. Activating one turns on its member rules together." />
             </StackPanel>
-            <Button x:Name="NewProfileButton"
-                    HorizontalAlignment="Right"
+            <Button x:Name="NewProfileButton" Grid.Column="1"
+                    HorizontalAlignment="Right" VerticalAlignment="Top"
                     AutomationProperties.Name="New profile"
                     Style="{StaticResource AccentButtonStyle}"
                     Click="NewProfile_Click">
@@ -41,9 +50,10 @@
         </Grid>
 
         <!-- Status -->
-        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="12">
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
             <ProgressRing IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}" Width="16" Height="16" />
-            <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+            <TextBlock Style="{StaticResource AtlasMonoMutedStyle}"
+                       VerticalAlignment="Center"
                        Text="{x:Bind ViewModel.StatusText, Mode=OneWay}" />
         </StackPanel>
 
@@ -55,12 +65,9 @@
                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                           HorizontalAlignment="Center" />
                 <TextBlock Text="Profiles unavailable"
-                           Style="{StaticResource SubtitleTextBlockStyle}"
-                           HorizontalAlignment="Center" />
-                <TextBlock Text="The connected service is too old to manage profiles. Update the Atlas service to use them."
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                           TextWrapping="Wrap" MaxWidth="420"
-                           HorizontalTextAlignment="Center" />
+                           Style="{StaticResource AtlasEmptyStateTitleStyle}" />
+                <TextBlock Style="{StaticResource AtlasEmptyStateBodyStyle}"
+                           Text="The connected service is too old to manage profiles. Update the Atlas service to use them." />
             </StackPanel>
 
             <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
@@ -69,12 +76,9 @@
                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                           HorizontalAlignment="Center" />
                 <TextBlock Text="No profiles yet"
-                           Style="{StaticResource SubtitleTextBlockStyle}"
-                           HorizontalAlignment="Center" />
-                <TextBlock Text="Bundle a set of rules into a profile — like “Gaming” or “Battery saver” — and switch them all on with one toggle."
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                           TextWrapping="Wrap" MaxWidth="420"
-                           HorizontalTextAlignment="Center" />
+                           Style="{StaticResource AtlasEmptyStateTitleStyle}" />
+                <TextBlock Style="{StaticResource AtlasEmptyStateBodyStyle}"
+                           Text="Bundle a set of rules into a profile - like “Gaming” or “Battery saver” - and switch them all on with one toggle." />
             </StackPanel>
 
             <ScrollViewer VerticalScrollBarVisibility="Auto"
@@ -84,9 +88,7 @@
                     <ItemsControl.ItemTemplate>
                         <DataTemplate x:DataType="vm:ProfileRowViewModel">
                             <Border Margin="0,0,0,10"
-                                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                    BorderThickness="1" CornerRadius="2" Padding="16,12">
+                                    Style="{StaticResource AtlasPanelStyle}">
                                 <Grid ColumnSpacing="12">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
@@ -98,18 +100,20 @@
                                             <TextBlock Text="{x:Bind Name}"
                                                        Style="{StaticResource BodyStrongTextBlockStyle}"
                                                        VerticalAlignment="Center" />
-                                            <Border Background="{ThemeResource SystemFillColorSuccessBackgroundBrush}"
-                                                    CornerRadius="2" Padding="8,1"
+                                            <Border Style="{StaticResource AtlasStatusPillStyle}"
+                                                    Background="{ThemeResource AtlasGreenTintBrush}"
+                                                    BorderBrush="{ThemeResource AtlasGreenBrush}"
                                                     VerticalAlignment="Center"
                                                     Visibility="{x:Bind Active, Mode=OneWay}">
-                                                <TextBlock Text="Active"
-                                                           Style="{StaticResource CaptionTextBlockStyle}"
-                                                           Foreground="{ThemeResource SystemFillColorSuccessBrush}" />
+                                                <TextBlock Text="ACTIVE"
+                                                           Style="{StaticResource AtlasSectionLabelStyle}"
+                                                           Foreground="{ThemeResource AtlasGreenBrush}" />
                                             </Border>
                                         </StackPanel>
                                         <TextBlock Text="{x:Bind PowerModeLabel}"
-                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                   Style="{StaticResource AtlasMonoMutedStyle}" />
                                         <TextBlock Text="{x:Bind MemberSummary}"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                                    TextWrapping="Wrap" />
                                     </StackPanel>
 

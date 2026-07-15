@@ -16,22 +16,31 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!-- Title + New -->
+        <!-- ===== Page heading ===== -->
         <Grid Grid.Row="0">
-            <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
-                <TextBlock Text="Rules" Style="{StaticResource TitleTextBlockStyle}" />
-                <TextBlock VerticalAlignment="Bottom"
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                           Text="Performance &amp; optimization rules" />
-                <Border x:Name="DemoBadge" Visibility="Collapsed"
-                        VerticalAlignment="Center"
-                        Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
-                        CornerRadius="2" Padding="8,2">
-                    <TextBlock Text="Demo data" Style="{StaticResource CaptionTextBlockStyle}" />
-                </Border>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0" Spacing="4">
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                    <TextBlock Text="CONTROL / RULES" Style="{StaticResource AtlasEyebrowStyle}"
+                               VerticalAlignment="Center" />
+                    <Border x:Name="DemoBadge" Visibility="Collapsed"
+                            Style="{StaticResource AtlasStatusPillStyle}"
+                            Background="{ThemeResource AtlasAmberTintBrush}"
+                            BorderBrush="{ThemeResource AtlasAmberBrush}">
+                        <TextBlock Text="DEMO DATA"
+                                   Style="{StaticResource AtlasSectionLabelStyle}"
+                                   Foreground="{ThemeResource AtlasAmberBrush}" />
+                    </Border>
+                </StackPanel>
+                <TextBlock Text="Rules" Style="{StaticResource AtlasPageHeadingStyle}" />
+                <TextBlock Style="{StaticResource AtlasPageDescriptionStyle}"
+                           Text="Performance &amp; optimization rules applied to matching processes. Nothing applies until you save - every change is reversible." />
             </StackPanel>
-            <Button x:Name="NewRuleButton"
-                    HorizontalAlignment="Right"
+            <Button x:Name="NewRuleButton" Grid.Column="1"
+                    HorizontalAlignment="Right" VerticalAlignment="Top"
                     AutomationProperties.Name="New rule"
                     Style="{StaticResource AccentButtonStyle}"
                     Click="NewRule_Click">
@@ -43,9 +52,10 @@
         </Grid>
 
         <!-- Status line -->
-        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="12">
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
             <ProgressRing IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}" Width="16" Height="16" />
-            <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+            <TextBlock Style="{StaticResource AtlasMonoMutedStyle}"
+                       VerticalAlignment="Center"
                        Text="{x:Bind ViewModel.StatusText, Mode=OneWay}" />
         </StackPanel>
 
@@ -58,12 +68,9 @@
                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                           HorizontalAlignment="Center" />
                 <TextBlock Text="Rules unavailable"
-                           Style="{StaticResource SubtitleTextBlockStyle}"
-                           HorizontalAlignment="Center" />
-                <TextBlock Text="The connected service is too old to manage rules. Update the Atlas service to use the rules engine."
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                           TextWrapping="Wrap" MaxWidth="420"
-                           HorizontalTextAlignment="Center" />
+                           Style="{StaticResource AtlasEmptyStateTitleStyle}" />
+                <TextBlock Style="{StaticResource AtlasEmptyStateBodyStyle}"
+                           Text="The connected service is too old to manage rules. Update the Atlas service to use the rules engine." />
             </StackPanel>
 
             <!-- Empty -->
@@ -73,12 +80,9 @@
                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                           HorizontalAlignment="Center" />
                 <TextBlock Text="No rules yet"
-                           Style="{StaticResource SubtitleTextBlockStyle}"
-                           HorizontalAlignment="Center" />
-                <TextBlock Text="Create a rule to steer a process's priority, cores, or efficiency mode. You can always preview the impact before it applies."
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                           TextWrapping="Wrap" MaxWidth="420"
-                           HorizontalTextAlignment="Center" />
+                           Style="{StaticResource AtlasEmptyStateTitleStyle}" />
+                <TextBlock Style="{StaticResource AtlasEmptyStateBodyStyle}"
+                           Text="Create a rule to steer a process's priority, cores, or efficiency mode. You can always preview the impact before it applies." />
             </StackPanel>
 
             <Grid Visibility="{x:Bind ViewModel.IsUnavailable, Mode=OneWay, Converter={StaticResource InverseBoolToVisibility}}">
@@ -87,8 +91,8 @@
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
-                <!-- Header -->
-                <Grid Grid.Row="0" Padding="16,4,16,8" ColumnSpacing="12">
+                <!-- Column headers -->
+                <Grid Grid.Row="0" Padding="16,0,16,8" ColumnSpacing="12">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="2*" />
                         <ColumnDefinition Width="1.4*" />
@@ -98,129 +102,128 @@
                         <ColumnDefinition Width="Auto" MinWidth="96" />
                         <ColumnDefinition Width="Auto" MinWidth="132" />
                     </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="Name" Style="{StaticResource CaptionTextBlockStyle}"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                    <TextBlock Grid.Column="1" Text="Match" Style="{StaticResource CaptionTextBlockStyle}"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                    <TextBlock Grid.Column="2" Text="When" Style="{StaticResource CaptionTextBlockStyle}"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                    <TextBlock Grid.Column="3" Text="Action" Style="{StaticResource CaptionTextBlockStyle}"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                    <TextBlock Grid.Column="4" Text="Prec." Style="{StaticResource CaptionTextBlockStyle}"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                    <TextBlock Grid.Column="5" Text="Enabled" Style="{StaticResource CaptionTextBlockStyle}"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <TextBlock Grid.Column="0" Text="NAME" Style="{StaticResource AtlasColumnHeaderStyle}" />
+                    <TextBlock Grid.Column="1" Text="MATCH" Style="{StaticResource AtlasColumnHeaderStyle}" />
+                    <TextBlock Grid.Column="2" Text="WHEN" Style="{StaticResource AtlasColumnHeaderStyle}" />
+                    <TextBlock Grid.Column="3" Text="ACTION" Style="{StaticResource AtlasColumnHeaderStyle}" />
+                    <TextBlock Grid.Column="4" Text="PREC" Style="{StaticResource AtlasColumnHeaderStyle}" />
+                    <TextBlock Grid.Column="5" Text="ENABLED" Style="{StaticResource AtlasColumnHeaderStyle}" />
                 </Grid>
 
                 <!-- Rows -->
-                <ListView Grid.Row="1"
-                          AutomationProperties.Name="Rules table"
-                          ItemsSource="{x:Bind ViewModel.Rules, Mode=OneWay}"
-                          SelectionMode="None">
-                    <ListView.ItemContainerStyle>
-                        <Style TargetType="ListViewItem">
-                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                            <Setter Property="Padding" Value="8,6" />
-                            <Setter Property="MinHeight" Value="0" />
-                        </Style>
-                    </ListView.ItemContainerStyle>
-                    <ListView.ItemTemplate>
-                        <DataTemplate x:DataType="vm:RuleRowViewModel">
-                            <Grid ColumnSpacing="12" Padding="8,2">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="2*" />
-                                    <ColumnDefinition Width="1.4*" />
-                                    <ColumnDefinition Width="1.2*" />
-                                    <ColumnDefinition Width="2*" />
-                                    <ColumnDefinition Width="Auto" MinWidth="70" />
-                                    <ColumnDefinition Width="Auto" MinWidth="96" />
-                                    <ColumnDefinition Width="Auto" MinWidth="132" />
-                                </Grid.ColumnDefinitions>
+                <Border Grid.Row="1" Style="{StaticResource AtlasPanelFlatStyle}">
+                    <ListView AutomationProperties.Name="Rules table"
+                              ItemsSource="{x:Bind ViewModel.Rules, Mode=OneWay}"
+                              SelectionMode="None">
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem">
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                <Setter Property="Padding" Value="8,7" />
+                                <Setter Property="MinHeight" Value="0" />
+                                <Setter Property="CornerRadius" Value="0" />
+                                <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+                                <Setter Property="BorderThickness" Value="0,0,0,1" />
+                            </Style>
+                        </ListView.ItemContainerStyle>
+                        <ListView.ItemTemplate>
+                            <DataTemplate x:DataType="vm:RuleRowViewModel">
+                                <Grid ColumnSpacing="12" Padding="8,2">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="2*" />
+                                        <ColumnDefinition Width="1.4*" />
+                                        <ColumnDefinition Width="1.2*" />
+                                        <ColumnDefinition Width="2*" />
+                                        <ColumnDefinition Width="Auto" MinWidth="70" />
+                                        <ColumnDefinition Width="Auto" MinWidth="96" />
+                                        <ColumnDefinition Width="Auto" MinWidth="132" />
+                                    </Grid.ColumnDefinitions>
 
-                                <TextBlock Grid.Column="0" VerticalAlignment="Center"
-                                           Text="{x:Bind Name}"
-                                           TextTrimming="CharacterEllipsis" />
-                                <TextBlock Grid.Column="1" VerticalAlignment="Center"
-                                           Text="{x:Bind MatchImage}"
-                                           FontFamily="Consolas"
-                                           TextTrimming="CharacterEllipsis"
-                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                <TextBlock Grid.Column="2" VerticalAlignment="Center"
-                                           Text="{x:Bind TriggerText}"
-                                           TextTrimming="CharacterEllipsis"
-                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                <TextBlock Grid.Column="3" VerticalAlignment="Center"
-                                           Text="{x:Bind ActionSummary}"
-                                           TextTrimming="CharacterEllipsis" />
-                                <TextBlock Grid.Column="4" VerticalAlignment="Center"
-                                           Text="{x:Bind Precedence}"
-                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                <ToggleSwitch Grid.Column="5" VerticalAlignment="Center"
-                                              MinWidth="0"
-                                              AutomationProperties.Name="Enable rule"
-                                              IsOn="{x:Bind Enabled}"
-                                              OnContent="" OffContent=""
-                                              Toggled="EnabledToggle_Toggled" />
+                                    <TextBlock Grid.Column="0" VerticalAlignment="Center"
+                                               Text="{x:Bind Name}"
+                                               TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Grid.Column="1" VerticalAlignment="Center"
+                                               Text="{x:Bind MatchImage}"
+                                               Style="{StaticResource AtlasMonoMutedStyle}"
+                                               TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Grid.Column="2" VerticalAlignment="Center"
+                                               Text="{x:Bind TriggerText}"
+                                               TextTrimming="CharacterEllipsis"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    <TextBlock Grid.Column="3" VerticalAlignment="Center"
+                                               Text="{x:Bind ActionSummary}"
+                                               TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Grid.Column="4" VerticalAlignment="Center"
+                                               Text="{x:Bind Precedence}"
+                                               Style="{StaticResource AtlasMonoMutedStyle}" />
+                                    <ToggleSwitch Grid.Column="5" VerticalAlignment="Center"
+                                                  MinWidth="0"
+                                                  AutomationProperties.Name="Enable rule"
+                                                  IsOn="{x:Bind Enabled}"
+                                                  OnContent="" OffContent=""
+                                                  Toggled="EnabledToggle_Toggled" />
 
-                                <!-- Per-row actions -->
-                                <StackPanel Grid.Column="6" Orientation="Horizontal" Spacing="2"
-                                            VerticalAlignment="Center">
-                                    <Button AutomationProperties.Name="Preview impact"
-                                            ToolTipService.ToolTip="Preview impact"
-                                            Background="Transparent" BorderThickness="0"
-                                            Click="PreviewRule_Click">
-                                        <FontIcon Glyph="&#xE7B3;" FontSize="15" />
-                                    </Button>
-                                    <Button AutomationProperties.Name="Edit rule"
-                                            ToolTipService.ToolTip="Edit"
-                                            Background="Transparent" BorderThickness="0"
-                                            Click="EditRule_Click">
-                                        <FontIcon Glyph="&#xE70F;" FontSize="15" />
-                                    </Button>
-                                    <Button AutomationProperties.Name="Delete rule"
-                                            ToolTipService.ToolTip="Delete"
-                                            Background="Transparent" BorderThickness="0"
-                                            Click="DeleteRule_Click">
-                                        <FontIcon Glyph="&#xE74D;" FontSize="15" />
-                                    </Button>
-                                </StackPanel>
-                            </Grid>
-                        </DataTemplate>
-                    </ListView.ItemTemplate>
-                </ListView>
+                                    <!-- Per-row actions -->
+                                    <StackPanel Grid.Column="6" Orientation="Horizontal" Spacing="2"
+                                                VerticalAlignment="Center">
+                                        <Button AutomationProperties.Name="Preview impact"
+                                                ToolTipService.ToolTip="Preview impact"
+                                                Background="Transparent" BorderThickness="0"
+                                                Click="PreviewRule_Click">
+                                            <FontIcon Glyph="&#xE7B3;" FontSize="15" />
+                                        </Button>
+                                        <Button AutomationProperties.Name="Edit rule"
+                                                ToolTipService.ToolTip="Edit"
+                                                Background="Transparent" BorderThickness="0"
+                                                Click="EditRule_Click">
+                                            <FontIcon Glyph="&#xE70F;" FontSize="15" />
+                                        </Button>
+                                        <Button AutomationProperties.Name="Delete rule"
+                                                ToolTipService.ToolTip="Delete"
+                                                Background="Transparent" BorderThickness="0"
+                                                Click="DeleteRule_Click">
+                                            <FontIcon Glyph="&#xE74D;" FontSize="15" />
+                                        </Button>
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </Border>
             </Grid>
         </Grid>
 
         <!-- Dynamic responsiveness protection (R3, PRD §9.7.3). A CPU watchdog
              that, when explicitly enabled, TEMPORARILY eases back a background
-             app monopolising the CPU and auto-restores it — never the app you're
+             app monopolising the CPU and auto-restores it - never the app you're
              using or system-critical processes. The whole point of this card is
              the safety framing: temporary, reversible, off by default. -->
-        <Border Grid.Row="3"
-                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                BorderThickness="1" CornerRadius="2" Padding="16,12">
+        <Border Grid.Row="3" Style="{StaticResource AtlasPanelStyle}">
             <StackPanel Spacing="10">
                 <!-- Header -->
                 <Grid>
                     <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                        <FontIcon Glyph="&#xE72E;" FontSize="16" VerticalAlignment="Center" />
-                        <TextBlock Text="Dynamic responsiveness protection"
-                                   Style="{StaticResource BodyStrongTextBlockStyle}"
+                        <FontIcon Glyph="&#xE72E;" FontSize="14"
+                                  Foreground="{ThemeResource AtlasCyanBrush}"
+                                  VerticalAlignment="Center" />
+                        <TextBlock Text="DYNAMIC RESPONSIVENESS PROTECTION"
+                                   Style="{StaticResource AtlasSectionLabelStyle}"
                                    VerticalAlignment="Center" />
                     </StackPanel>
                     <Border HorizontalAlignment="Right" VerticalAlignment="Center"
-                            Background="{ThemeResource SystemFillColorSuccessBackgroundBrush}"
-                            CornerRadius="2" Padding="8,2"
+                            Style="{StaticResource AtlasStatusPillStyle}"
+                            Background="{ThemeResource AtlasGreenTintBrush}"
+                            BorderBrush="{ThemeResource AtlasGreenBrush}"
                             Visibility="{x:Bind ViewModel.DynProtectionEnabled, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
-                        <TextBlock Text="On" Style="{StaticResource CaptionTextBlockStyle}" />
+                        <TextBlock Text="ON"
+                                   Style="{StaticResource AtlasSectionLabelStyle}"
+                                   Foreground="{ThemeResource AtlasGreenBrush}" />
                     </Border>
                 </Grid>
 
                 <!-- Unavailable state: keep the rest of the page working -->
                 <StackPanel Spacing="4"
                             Visibility="{x:Bind ViewModel.DynProtectionSupported, Mode=OneWay, Converter={StaticResource InverseBoolToVisibility}}">
-                    <TextBlock Text="Dynamic protection is unavailable — the connected service is too old. The rest of this page still works; update the Atlas service to use it."
+                    <TextBlock Text="Dynamic protection is unavailable - the connected service is too old. The rest of this page still works; update the Atlas service to use it."
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                TextWrapping="Wrap" />
                 </StackPanel>
@@ -266,8 +269,8 @@
 
                             <!-- CPU threshold -->
                             <StackPanel Grid.Row="0" Grid.Column="0" Spacing="4">
-                                <TextBlock Text="CPU threshold (%)"
-                                           Style="{StaticResource CaptionTextBlockStyle}" />
+                                <TextBlock Text="CPU THRESHOLD (%)"
+                                           Style="{StaticResource AtlasSectionLabelStyle}" />
                                 <NumberBox AutomationProperties.Name="CPU threshold percent"
                                            Value="{x:Bind ViewModel.DynThresholdPercent, Mode=TwoWay}"
                                            Minimum="{x:Bind ViewModel.ThresholdMin}"
@@ -283,8 +286,8 @@
 
                             <!-- Sustain duration -->
                             <StackPanel Grid.Row="0" Grid.Column="1" Spacing="4">
-                                <TextBlock Text="Sustain (seconds)"
-                                           Style="{StaticResource CaptionTextBlockStyle}" />
+                                <TextBlock Text="SUSTAIN (SECONDS)"
+                                           Style="{StaticResource AtlasSectionLabelStyle}" />
                                 <NumberBox AutomationProperties.Name="Sustain duration in seconds"
                                            Value="{x:Bind ViewModel.DynSustainSeconds, Mode=TwoWay}"
                                            Minimum="{x:Bind ViewModel.SustainMin}"
@@ -292,7 +295,7 @@
                                            SpinButtonPlacementMode="Inline"
                                            SmallChange="5" LargeChange="30"
                                            ValidationMode="InvalidInputOverwritten" />
-                                <TextBlock Text="It must stay above the threshold this long first — brief spikes are ignored."
+                                <TextBlock Text="It must stay above the threshold this long first - brief spikes are ignored."
                                            Style="{StaticResource CaptionTextBlockStyle}"
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                            TextWrapping="Wrap" />
@@ -300,8 +303,8 @@
 
                             <!-- Max intervention duration -->
                             <StackPanel Grid.Row="0" Grid.Column="2" Spacing="4">
-                                <TextBlock Text="Max ease-back (seconds)"
-                                           Style="{StaticResource CaptionTextBlockStyle}" />
+                                <TextBlock Text="MAX EASE-BACK (SECONDS)"
+                                           Style="{StaticResource AtlasSectionLabelStyle}" />
                                 <NumberBox AutomationProperties.Name="Maximum intervention duration in seconds"
                                            Value="{x:Bind ViewModel.DynMaxSeconds, Mode=TwoWay}"
                                            Minimum="{x:Bind ViewModel.MaxInterventionMin}"
@@ -309,7 +312,7 @@
                                            SpinButtonPlacementMode="Inline"
                                            SmallChange="30" LargeChange="60"
                                            ValidationMode="InvalidInputOverwritten" />
-                                <TextBlock Text="A hard cap — Atlas always restores the app within this time, whatever happens."
+                                <TextBlock Text="A hard cap - Atlas always restores the app within this time, whatever happens."
                                            Style="{StaticResource CaptionTextBlockStyle}"
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                            TextWrapping="Wrap" />
@@ -346,11 +349,11 @@
             </StackPanel>
         </Border>
 
-        <!-- Active interventions (transparency, PRD §9.7.3) -->
-        <Border Grid.Row="4"
-                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                BorderThickness="1" CornerRadius="2" Padding="16,12"
+        <!-- Active interventions (transparency, PRD §9.7.3). Live changes Atlas is
+             currently applying - styled amber/elevated. Each is temporary and
+             auto-reverting; the row shows what was applied, the rule, and how long. -->
+        <Border Grid.Row="4" Style="{StaticResource AtlasPanelStyle}"
+                BorderBrush="{ThemeResource AtlasAmberBrush}"
                 MaxHeight="240">
             <Grid RowSpacing="8">
                 <Grid.RowDefinitions>
@@ -360,9 +363,12 @@
                 </Grid.RowDefinitions>
 
                 <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8">
-                    <FontIcon Glyph="&#xE9D9;" FontSize="16" VerticalAlignment="Center" />
-                    <TextBlock Text="Active interventions"
-                               Style="{StaticResource BodyStrongTextBlockStyle}"
+                    <FontIcon Glyph="&#xE9D9;" FontSize="14"
+                              Foreground="{ThemeResource AtlasAmberBrush}"
+                              VerticalAlignment="Center" />
+                    <TextBlock Text="ACTIVE INTERVENTIONS"
+                               Style="{StaticResource AtlasSectionLabelStyle}"
+                               Foreground="{ThemeResource AtlasAmberBrush}"
                                VerticalAlignment="Center" />
                 </StackPanel>
 
@@ -384,7 +390,7 @@
                                   AutomationProperties.Name="Active interventions list">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate x:DataType="vm:InterventionRowViewModel">
-                                <Grid ColumnSpacing="12" Padding="0,5"
+                                <Grid ColumnSpacing="12" Padding="0,6"
                                       BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
                                       BorderThickness="0,0,0,1">
                                     <Grid.ColumnDefinitions>
@@ -395,12 +401,15 @@
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8"
                                                 VerticalAlignment="Center">
-                                        <TextBlock Text="{x:Bind ImageName}" />
+                                        <TextBlock Text="{x:Bind ImageName}"
+                                                   Style="{StaticResource AtlasMonoStyle}" />
                                         <TextBlock Text="{x:Bind PidText}"
-                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                   Style="{StaticResource AtlasMonoMutedStyle}" />
                                     </StackPanel>
                                     <TextBlock Grid.Column="1" VerticalAlignment="Center"
                                                Text="{x:Bind Applied}"
+                                               Style="{StaticResource AtlasMonoStyle}"
+                                               Foreground="{ThemeResource AtlasAmberBrush}"
                                                TextTrimming="CharacterEllipsis" />
                                     <TextBlock Grid.Column="2" VerticalAlignment="Center"
                                                Text="{x:Bind RuleName}"
@@ -409,7 +418,7 @@
                                     <TextBlock Grid.Column="3" VerticalAlignment="Center"
                                                HorizontalAlignment="Right"
                                                Text="{x:Bind Since}"
-                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                               Style="{StaticResource AtlasMonoMutedStyle}" />
                                 </Grid>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>

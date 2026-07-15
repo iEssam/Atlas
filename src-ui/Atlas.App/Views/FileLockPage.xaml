@@ -16,15 +16,15 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <!-- Title -->
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="12">
-            <TextBlock Text="File Lock Search" Style="{StaticResource TitleTextBlockStyle}" />
-            <TextBlock VerticalAlignment="Bottom"
-                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                       Text="Find what is using a file" />
+        <!-- ===== Page heading ===== -->
+        <StackPanel Grid.Row="0" Spacing="4">
+            <TextBlock Text="OBSERVE / FILE LOCK" Style="{StaticResource AtlasEyebrowStyle}" />
+            <TextBlock Text="File Lock Search" Style="{StaticResource AtlasPageHeadingStyle}" />
+            <TextBlock Style="{StaticResource AtlasPageDescriptionStyle}"
+                       Text="Find which processes are holding a file open. Read-only inspection - release arrives via the guarded safe-action flow." />
         </StackPanel>
 
-        <!-- Path input row -->
+        <!-- ===== Path input row ===== -->
         <Grid Grid.Row="1" ColumnSpacing="8">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
@@ -35,9 +35,11 @@
                      x:Name="PathBox"
                      AutomationProperties.Name="File path to search"
                      PlaceholderText="Paste a full file path, or use Browse…"
+                     FontFamily="{ThemeResource AtlasMonoFontFamily}"
                      Text="{x:Bind ViewModel.PathInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                      KeyDown="OnPathKeyDown" />
             <Button Grid.Column="1" Click="OnBrowseClick"
+                    Style="{StaticResource AtlasGhostButtonStyle}"
                     AutomationProperties.Name="Browse for a file">
                 <StackPanel Orientation="Horizontal" Spacing="8">
                     <FontIcon Glyph="&#xE838;" FontSize="14" />
@@ -54,16 +56,16 @@
             </Button>
         </Grid>
 
-        <!-- Status line -->
+        <!-- ===== Status line ===== -->
         <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="12">
             <ProgressRing IsActive="{x:Bind ViewModel.IsSearching, Mode=OneWay}"
                           Width="16" Height="16" />
             <TextBlock VerticalAlignment="Center"
-                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Style="{StaticResource AtlasMonoMutedStyle}"
                        Text="{x:Bind ViewModel.StatusText, Mode=OneWay}" />
         </StackPanel>
 
-        <!-- Future-facing hint about the safe release action -->
+        <!-- ===== Guarded-release notice (the safe-action flow) ===== -->
         <InfoBar Grid.Row="3"
                  IsOpen="{x:Bind ViewModel.ShowReleaseHint, Mode=OneWay}"
                  IsClosable="False"
@@ -71,34 +73,32 @@
                  Title="Read-only"
                  Message="Releasing or closing a file through Atlas will arrive via the safe-action flow. For now, this shows you what is holding the file." />
 
-        <!-- Results / states -->
+        <!-- ===== Results / states ===== -->
         <Grid Grid.Row="4">
             <!-- Unavailable (server too old / path not found / access denied) -->
-            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="10"
                         Visibility="{x:Bind ViewModel.IsUnavailable, Mode=OneWay}">
                 <FontIcon Glyph="&#xE7BA;" FontSize="28"
-                          Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                          Foreground="{ThemeResource AtlasAmberBrush}"
                           HorizontalAlignment="Center" />
                 <TextBlock Text="Couldn't complete the search"
-                           Style="{StaticResource SubtitleTextBlockStyle}"
-                           HorizontalAlignment="Center" />
+                           Style="{StaticResource AtlasEmptyStateTitleStyle}" />
                 <TextBlock Text="{x:Bind ViewModel.UnavailableText, Mode=OneWay}"
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                           TextWrapping="Wrap" MaxWidth="420" HorizontalTextAlignment="Center" />
+                           Style="{StaticResource AtlasEmptyStateBodyStyle}"
+                           MaxWidth="420" />
             </StackPanel>
 
-            <!-- Empty (nothing holding the file — a clean, positive result) -->
-            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
+            <!-- Empty (nothing holding the file - a clean, positive result) -->
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="10"
                         Visibility="{x:Bind ViewModel.IsEmpty, Mode=OneWay}">
                 <FontIcon Glyph="&#xE73E;" FontSize="28"
-                          Foreground="{ThemeResource SystemFillColorSuccessBrush}"
+                          Foreground="{ThemeResource AtlasGreenBrush}"
                           HorizontalAlignment="Center" />
                 <TextBlock Text="Nothing is using this file"
-                           Style="{StaticResource SubtitleTextBlockStyle}"
-                           HorizontalAlignment="Center" />
+                           Style="{StaticResource AtlasEmptyStateTitleStyle}" />
                 <TextBlock Text="{x:Bind ViewModel.EmptyText, Mode=OneWay}"
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                           TextWrapping="Wrap" MaxWidth="420" HorizontalTextAlignment="Center" />
+                           Style="{StaticResource AtlasEmptyStateBodyStyle}"
+                           MaxWidth="420" />
             </StackPanel>
 
             <!-- Owner list -->
@@ -108,60 +108,71 @@
                 <ListView.ItemContainerStyle>
                     <Style TargetType="ListViewItem">
                         <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                        <Setter Property="Padding" Value="8,6" />
+                        <Setter Property="Padding" Value="0" />
+                        <Setter Property="MinHeight" Value="0" />
+                        <Setter Property="Margin" Value="0,0,0,8" />
                     </Style>
                 </ListView.ItemContainerStyle>
                 <ListView.ItemTemplate>
                     <DataTemplate x:DataType="vm:ResourceOwnerItem">
-                        <Grid ColumnSpacing="12" Padding="8,6"
-                              Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                              BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                              BorderThickness="1" CornerRadius="2">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
+                        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                BorderThickness="1" CornerRadius="2" Padding="12,10">
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
 
-                            <FontIcon Grid.Column="0" Glyph="&#xE9F5;" FontSize="18"
-                                      VerticalAlignment="Center" Margin="4,0,4,0"
-                                      Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <FontIcon Grid.Column="0" Glyph="&#xE9F5;" FontSize="18"
+                                          VerticalAlignment="Center" Margin="2,0,4,0"
+                                          Foreground="{ThemeResource AtlasMutedBrush}" />
 
-                            <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
-                                <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <TextBlock Text="{x:Bind ImageName}"
-                                               Style="{StaticResource BodyStrongTextBlockStyle}" />
-                                    <TextBlock Text="{x:Bind PidText}"
-                                               VerticalAlignment="Center"
-                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                    <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
-                                            CornerRadius="2" Padding="6,1" VerticalAlignment="Center">
-                                        <TextBlock Text="{x:Bind KindText}" FontSize="11"
-                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                    </Border>
+                                <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
+                                    <StackPanel Orientation="Horizontal" Spacing="10">
+                                        <TextBlock Text="{x:Bind ImageName}"
+                                                   Style="{StaticResource AtlasMonoStyle}"
+                                                   VerticalAlignment="Center" />
+                                        <TextBlock Text="{x:Bind PidText}"
+                                                   Style="{StaticResource AtlasMonoMutedStyle}"
+                                                   VerticalAlignment="Center" />
+                                        <Border Style="{StaticResource AtlasStatusPillStyle}">
+                                            <TextBlock Text="{x:Bind KindText}"
+                                                       Style="{StaticResource AtlasSectionLabelStyle}" />
+                                        </Border>
+                                    </StackPanel>
+                                    <TextBlock Text="{x:Bind Description}"
+                                               Style="{StaticResource AtlasMonoMutedStyle}"
+                                               TextTrimming="CharacterEllipsis"
+                                               ToolTipService.ToolTip="{x:Bind ImagePath}" />
                                 </StackPanel>
-                                <TextBlock Text="{x:Bind Description}"
-                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                           TextTrimming="CharacterEllipsis"
-                                           ToolTipService.ToolTip="{x:Bind ImagePath}" />
-                            </StackPanel>
 
-                            <!-- Future-facing safe-release hint (non-functional) -->
-                            <Button Grid.Column="2" IsEnabled="False" VerticalAlignment="Center"
-                                    Content="Release…"
-                                    AutomationProperties.Name="Release file (coming soon)"
-                                    ToolTipService.ToolTip="Closing or releasing a file will arrive via the safe-action flow." />
+                                <!-- Guarded release action (caution - arrives via safe-action flow, disabled for now) -->
+                                <Button Grid.Column="2" IsEnabled="False" VerticalAlignment="Center"
+                                        Style="{StaticResource AtlasGhostButtonStyle}"
+                                        BorderBrush="{ThemeResource AtlasAmberBrush}"
+                                        Foreground="{ThemeResource AtlasAmberBrush}"
+                                        AutomationProperties.Name="Release file (coming soon)"
+                                        ToolTipService.ToolTip="Closing or releasing a file will arrive via the safe-action flow.">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <FontIcon Glyph="&#xE785;" FontSize="14" />
+                                        <TextBlock Text="Release…" />
+                                    </StackPanel>
+                                </Button>
 
-                            <Button Grid.Column="3" VerticalAlignment="Center"
-                                    Click="OnInspectOwnerClick"
-                                    AutomationProperties.Name="Inspect this process">
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <FontIcon Glyph="&#xE7B3;" FontSize="14" />
-                                    <TextBlock Text="Inspect" />
-                                </StackPanel>
-                            </Button>
-                        </Grid>
+                                <Button Grid.Column="3" VerticalAlignment="Center"
+                                        Style="{StaticResource AtlasGhostButtonStyle}"
+                                        Click="OnInspectOwnerClick"
+                                        AutomationProperties.Name="Inspect this process">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <FontIcon Glyph="&#xE7B3;" FontSize="14" />
+                                        <TextBlock Text="Inspect" />
+                                    </StackPanel>
+                                </Button>
+                            </Grid>
+                        </Border>
                     </DataTemplate>
                 </ListView.ItemTemplate>
             </ListView>

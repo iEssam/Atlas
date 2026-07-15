@@ -9,6 +9,8 @@
     DefaultButton="Close">
 
     <StackPanel Spacing="12" MinWidth="360" MaxWidth="440">
+        <TextBlock Text="GUARDED SYSTEM ACTION"
+                   Style="{StaticResource AtlasSectionLabelStyle}" />
         <!-- Target + reversibility -->
         <TextBlock x:Name="TargetText" TextWrapping="Wrap"
                    Style="{StaticResource BodyStrongTextBlockStyle}" />
@@ -24,7 +26,8 @@
                 <StackPanel Orientation="Horizontal" Spacing="8">
                     <FontIcon x:Name="RiskIcon" Glyph="&#xE7BA;" FontSize="16"
                               VerticalAlignment="Center" />
-                    <TextBlock Text="Before you continue" FontWeight="SemiBold"
+                    <TextBlock Text="RISK AND REVERSIBILITY"
+                               Style="{StaticResource AtlasSectionLabelStyle}"
                                VerticalAlignment="Center" />
                 </StackPanel>
                 <TextBlock x:Name="RiskText" TextWrapping="Wrap"

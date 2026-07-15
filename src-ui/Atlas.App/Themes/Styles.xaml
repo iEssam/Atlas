@@ -1,5 +1,5 @@
 <!--
-    System Atlas — reusable component styles (evidence-console design system).
+    System Atlas - reusable component styles (evidence-console design system).
 
     Depends on Themes/DesignTokens.xaml for palette brushes + fonts. Brush/font
     references use {ThemeResource} because those keys live in ThemeDictionaries.

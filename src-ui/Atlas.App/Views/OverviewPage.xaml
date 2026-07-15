@@ -29,7 +29,7 @@
                 </StackPanel>
             </StackPanel>
             <TextBlock Style="{StaticResource AtlasPageDescriptionStyle}"
-                       Text="Live system summary and top consumers. Measured values only — no health score." />
+                       Text="Live system summary and top consumers. Measured values only - no health score." />
         </StackPanel>
 
         <!-- ===== Metric strip ===== -->

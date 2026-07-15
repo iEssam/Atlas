@@ -13,15 +13,20 @@
     <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="620">
         <StackPanel Spacing="14" MinWidth="460" MaxWidth="540" Margin="0,4,0,0">
 
+            <TextBlock Text="PLUGIN ACCESS / READ ONLY"
+                       Style="{StaticResource AtlasSectionLabelStyle}" />
+
             <TextBlock x:Name="HeaderText" Style="{StaticResource BodyStrongTextBlockStyle}"
                        TextWrapping="Wrap" />
 
             <TextBlock TextWrapping="Wrap"
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                       Text="Each capability is a read-only slice of Atlas data. This plugin can read only what you tick here and nothing else — grant as little as it needs. Untick everything to leave it with no access at all." />
+                       Text="Each capability is a read-only slice of Atlas data. This plugin can read only what you tick here and nothing else - grant as little as it needs. Untick everything to leave it with no access at all." />
 
             <ItemsControl x:Name="CapabilityList"
-                          AutomationProperties.Name="Granted capabilities">
+                          AutomationProperties.Name="Granted capabilities"
+                          Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                          Padding="12">
                 <ItemsControl.ItemTemplate>
                     <DataTemplate x:DataType="vm:CapabilityChoiceViewModel">
                         <CheckBox IsChecked="{x:Bind IsSelected, Mode=TwoWay}"

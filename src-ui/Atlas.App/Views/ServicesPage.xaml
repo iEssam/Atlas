@@ -16,58 +16,56 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!-- Title -->
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="12">
-            <TextBlock Text="Services" Style="{StaticResource TitleTextBlockStyle}" />
-            <TextBlock VerticalAlignment="Bottom"
-                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                       Text="Windows services" />
+        <!-- ===== Page heading ===== -->
+        <StackPanel Grid.Row="0" Spacing="4">
+            <TextBlock Text="INVENTORY / SERVICES" Style="{StaticResource AtlasEyebrowStyle}" />
+            <TextBlock Text="Services" Style="{StaticResource AtlasPageHeadingStyle}" />
+            <TextBlock Style="{StaticResource AtlasPageDescriptionStyle}"
+                       Text="Windows services with state, start type, host PID and account. Read-only inventory." />
         </StackPanel>
 
-        <!-- Filter -->
+        <!-- ===== Filter ===== -->
         <TextBox Grid.Row="1"
                  x:Name="FilterBox"
                  AutomationProperties.Name="Filter services by name"
                  PlaceholderText="Filter by name…"
                  Text="{x:Bind ViewModel.Filter, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
 
-        <!-- Status line + read-only note -->
-        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="12">
+        <!-- ===== Status line + read-only note ===== -->
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
             <ProgressRing IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
                           Width="16" Height="16" />
-            <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+            <TextBlock Style="{StaticResource AtlasMonoMutedStyle}"
+                       VerticalAlignment="Center"
                        Text="{x:Bind ViewModel.StatusText, Mode=OneWay}" />
-            <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+            <TextBlock Style="{StaticResource AtlasMonoMutedStyle}"
+                       VerticalAlignment="Center"
                        ToolTipService.ToolTip="Starting and stopping services is coming soon."
-                       Text="• Read-only" />
+                       Text="· READ-ONLY" />
         </StackPanel>
 
-        <!-- Table / empty / unavailable -->
+        <!-- ===== Table / empty / unavailable ===== -->
         <Grid Grid.Row="3">
             <!-- Unavailable placeholder -->
             <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
                         Visibility="{x:Bind ViewModel.IsUnavailable, Mode=OneWay}">
                 <FontIcon Glyph="&#xE7BA;" FontSize="28"
-                          Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                          Foreground="{ThemeResource AtlasDimBrush}"
                           HorizontalAlignment="Center" />
                 <TextBlock Text="Services unavailable"
-                           Style="{StaticResource SubtitleTextBlockStyle}"
-                           HorizontalAlignment="Center" />
+                           Style="{StaticResource AtlasEmptyStateTitleStyle}" />
                 <TextBlock Text="The connected service is too old to list services."
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                           TextWrapping="Wrap" MaxWidth="380"
-                           HorizontalTextAlignment="Center" />
+                           Style="{StaticResource AtlasEmptyStateBodyStyle}" />
             </StackPanel>
 
             <!-- Empty placeholder -->
             <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
                         Visibility="{x:Bind ViewModel.IsEmpty, Mode=OneWay}">
                 <FontIcon Glyph="&#xE721;" FontSize="28"
-                          Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                          Foreground="{ThemeResource AtlasDimBrush}"
                           HorizontalAlignment="Center" />
                 <TextBlock Text="No services match"
-                           Style="{StaticResource SubtitleTextBlockStyle}"
-                           HorizontalAlignment="Center" />
+                           Style="{StaticResource AtlasEmptyStateTitleStyle}" />
             </StackPanel>
 
             <Grid Visibility="{x:Bind ViewModel.IsUnavailable, Mode=OneWay, Converter={StaticResource InverseBoolToVisibility}}">
@@ -77,7 +75,7 @@
                 </Grid.RowDefinitions>
 
                 <!-- Column header -->
-                <Grid Grid.Row="0" Padding="16,4,16,8" ColumnSpacing="12">
+                <Grid Grid.Row="0" Padding="12,0,12,8" ColumnSpacing="12">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="2*" />
                         <ColumnDefinition Width="1.4*" />
@@ -86,42 +84,30 @@
                         <ColumnDefinition Width="Auto" MinWidth="60" />
                         <ColumnDefinition Width="1.2*" />
                     </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="Display name"
-                               Style="{StaticResource CaptionTextBlockStyle}"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                    <TextBlock Grid.Column="1" Text="Service name"
-                               Style="{StaticResource CaptionTextBlockStyle}"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                    <TextBlock Grid.Column="2" Text="State"
-                               Style="{StaticResource CaptionTextBlockStyle}"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                    <TextBlock Grid.Column="3" Text="Start type"
-                               Style="{StaticResource CaptionTextBlockStyle}"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <TextBlock Grid.Column="0" Text="DISPLAY NAME"
+                               Style="{StaticResource AtlasColumnHeaderStyle}" />
+                    <TextBlock Grid.Column="1" Text="SERVICE NAME"
+                               Style="{StaticResource AtlasColumnHeaderStyle}" />
+                    <TextBlock Grid.Column="2" Text="STATE"
+                               Style="{StaticResource AtlasColumnHeaderStyle}" />
+                    <TextBlock Grid.Column="3" Text="START TYPE"
+                               Style="{StaticResource AtlasColumnHeaderStyle}" />
                     <TextBlock Grid.Column="4" Text="PID"
-                               Style="{StaticResource CaptionTextBlockStyle}"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                    <TextBlock Grid.Column="5" Text="Account"
-                               Style="{StaticResource CaptionTextBlockStyle}"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                               Style="{StaticResource AtlasColumnHeaderStyle}" />
+                    <TextBlock Grid.Column="5" Text="ACCOUNT"
+                               Style="{StaticResource AtlasColumnHeaderStyle}" />
                 </Grid>
 
                 <!-- Virtualized rows -->
                 <ListView Grid.Row="1"
                           AutomationProperties.Name="Services table"
+                          ItemContainerStyle="{StaticResource AtlasRowContainerStyle}"
                           ItemsSource="{x:Bind ViewModel.Services, Mode=OneWay}"
                           SelectedItem="{x:Bind ViewModel.SelectedService, Mode=TwoWay}"
                           SelectionMode="Single">
-                    <ListView.ItemContainerStyle>
-                        <Style TargetType="ListViewItem">
-                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                            <Setter Property="Padding" Value="8,4" />
-                            <Setter Property="MinHeight" Value="0" />
-                        </Style>
-                    </ListView.ItemContainerStyle>
                     <ListView.ItemTemplate>
                         <DataTemplate x:DataType="vm:ServiceItem">
-                            <Grid ColumnSpacing="12" Padding="8,4">
+                            <Grid ColumnSpacing="12">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="2*" />
                                     <ColumnDefinition Width="1.4*" />
@@ -134,9 +120,9 @@
                                            Text="{x:Bind DisplayName}"
                                            TextTrimming="CharacterEllipsis" />
                                 <TextBlock Grid.Column="1" VerticalAlignment="Center"
+                                           Style="{StaticResource AtlasMonoMutedStyle}"
                                            Text="{x:Bind ServiceName}"
-                                           TextTrimming="CharacterEllipsis"
-                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                           TextTrimming="CharacterEllipsis" />
                                 <!-- State: colored dot + label -->
                                 <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8"
                                             VerticalAlignment="Center">
@@ -145,14 +131,15 @@
                                     <TextBlock Text="{x:Bind StateText}" />
                                 </StackPanel>
                                 <TextBlock Grid.Column="3" VerticalAlignment="Center"
+                                           Style="{StaticResource AtlasMonoMutedStyle}"
                                            Text="{x:Bind StartTypeText}" />
                                 <TextBlock Grid.Column="4" VerticalAlignment="Center"
-                                           Text="{x:Bind PidText}"
-                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                           Style="{StaticResource AtlasMonoMutedStyle}"
+                                           Text="{x:Bind PidText}" />
                                 <TextBlock Grid.Column="5" VerticalAlignment="Center"
+                                           Style="{StaticResource AtlasMonoMutedStyle}"
                                            Text="{x:Bind Account}"
-                                           TextTrimming="CharacterEllipsis"
-                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                           TextTrimming="CharacterEllipsis" />
                             </Grid>
                         </DataTemplate>
                     </ListView.ItemTemplate>
@@ -160,27 +147,26 @@
             </Grid>
         </Grid>
 
-        <!-- Detail pane for the selected service -->
+        <!-- ===== Detail pane for the selected service ===== -->
         <Border Grid.Row="4"
-                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                BorderThickness="1" CornerRadius="2" Padding="16,12"
+                Style="{StaticResource AtlasPanelStyle}"
                 Margin="0,4,0,0"
                 Visibility="{x:Bind ViewModel.HasSelection, Mode=OneWay}">
-            <StackPanel Spacing="6">
+            <StackPanel Spacing="8">
+                <TextBlock Text="SELECTED SERVICE" Style="{StaticResource AtlasSectionLabelStyle}" />
                 <TextBlock Text="{x:Bind ViewModel.SelectedService.DisplayName, Mode=OneWay}"
                            Style="{StaticResource BodyStrongTextBlockStyle}" />
                 <TextBlock Text="{x:Bind ViewModel.SelectedService.Description, Mode=OneWay}"
                            TextWrapping="Wrap"
                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
-                    <TextBlock Text="Binary path:"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <TextBlock Text="BINARY PATH" Style="{StaticResource AtlasSectionLabelStyle}"
+                           Margin="0,4,0,0" />
+                <Border Style="{StaticResource AtlasInsetStyle}">
                     <TextBlock Text="{x:Bind ViewModel.SelectedService.BinaryPath, Mode=OneWay}"
-                               FontFamily="Consolas"
+                               Style="{StaticResource AtlasMonoStyle}"
                                TextWrapping="Wrap"
                                IsTextSelectionEnabled="True" />
-                </StackPanel>
+                </Border>
             </StackPanel>
         </Border>
     </Grid>

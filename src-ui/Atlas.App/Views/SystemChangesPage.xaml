@@ -15,12 +15,12 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <!-- Title -->
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="12">
-            <TextBlock Text="System Changes" Style="{StaticResource TitleTextBlockStyle}" />
-            <TextBlock VerticalAlignment="Bottom"
-                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                       Text="What changed on this PC — read-only, factual, newest first" />
+        <!-- ===== Page heading ===== -->
+        <StackPanel Grid.Row="0" Spacing="4">
+            <TextBlock Text="EXPLAIN / SYSTEM CHANGES" Style="{StaticResource AtlasEyebrowStyle}" />
+            <TextBlock Text="System Changes" Style="{StaticResource AtlasPageHeadingStyle}" />
+            <TextBlock Style="{StaticResource AtlasPageDescriptionStyle}"
+                       Text="What changed on this PC - read-only, factual, newest first." />
         </StackPanel>
 
         <!-- Controls: window + kind filter + text filter + refresh -->
@@ -51,6 +51,7 @@
 
             <Button Grid.Column="3"
                     x:Name="RefreshButton"
+                    Style="{StaticResource AtlasGhostButtonStyle}"
                     AutomationProperties.Name="Refresh changes"
                     Click="OnRefreshClick">
                 <StackPanel Orientation="Horizontal" Spacing="8">
@@ -64,7 +65,7 @@
         <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="12">
             <ProgressRing IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
                           Width="16" Height="16" />
-            <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+            <TextBlock Style="{StaticResource AtlasMonoMutedStyle}"
                        VerticalAlignment="Center"
                        Text="{x:Bind ViewModel.StatusText, Mode=OneWay}" />
         </StackPanel>
@@ -77,39 +78,32 @@
             </Grid.ColumnDefinitions>
 
             <!-- Timeline list / empty / unavailable -->
-            <Border Grid.Column="0"
-                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                    BorderThickness="1" CornerRadius="2">
+            <Border Grid.Column="0" Style="{StaticResource AtlasPanelFlatStyle}">
                 <Grid>
                     <!-- Unavailable (server too old) -->
                     <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
                                 Padding="24" MaxWidth="420"
                                 Visibility="{x:Bind ViewModel.IsUnavailable, Mode=OneWay}">
                         <FontIcon Glyph="&#xE7BA;" FontSize="28"
-                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                  Foreground="{ThemeResource AtlasMutedBrush}"
                                   HorizontalAlignment="Center" />
                         <TextBlock Text="System changes unavailable"
-                                   Style="{StaticResource SubtitleTextBlockStyle}"
-                                   HorizontalTextAlignment="Center" />
+                                   Style="{StaticResource AtlasEmptyStateTitleStyle}" />
                         <TextBlock Text="The connected service is too old to record system changes. Update the service to see what changed."
-                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                   TextWrapping="Wrap" HorizontalTextAlignment="Center" />
+                                   Style="{StaticResource AtlasEmptyStateBodyStyle}" />
                     </StackPanel>
 
-                    <!-- Empty (calm — nothing changed is fine) -->
+                    <!-- Empty (calm - nothing changed is fine) -->
                     <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
                                 Padding="24" MaxWidth="420"
                                 Visibility="{x:Bind ViewModel.IsEmpty, Mode=OneWay}">
                         <FontIcon Glyph="&#xE73E;" FontSize="28"
-                                  Foreground="{ThemeResource SystemFillColorSuccessBrush}"
+                                  Foreground="{ThemeResource AtlasGreenBrush}"
                                   HorizontalAlignment="Center" />
                         <TextBlock Text="No changes here"
-                                   Style="{StaticResource SubtitleTextBlockStyle}"
-                                   HorizontalTextAlignment="Center" />
+                                   Style="{StaticResource AtlasEmptyStateTitleStyle}" />
                         <TextBlock Text="Nothing was installed, updated, or reconfigured in this window."
-                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                   TextWrapping="Wrap" HorizontalTextAlignment="Center" />
+                                   Style="{StaticResource AtlasEmptyStateBodyStyle}" />
                     </StackPanel>
 
                     <!-- The timeline -->
@@ -120,7 +114,11 @@
                         <ListView.ItemContainerStyle>
                             <Style TargetType="ListViewItem">
                                 <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                <Setter Property="MinHeight" Value="0" />
                                 <Setter Property="Padding" Value="12,10" />
+                                <Setter Property="CornerRadius" Value="0" />
+                                <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+                                <Setter Property="BorderThickness" Value="0,0,0,1" />
                             </Style>
                         </ListView.ItemContainerStyle>
                         <ListView.ItemTemplate>
@@ -140,15 +138,14 @@
                                     <StackPanel Grid.Column="1" Spacing="3">
                                         <StackPanel Orientation="Horizontal" Spacing="8">
                                             <TextBlock Text="{x:Bind KindLabel}"
-                                                       Style="{StaticResource CaptionTextBlockStyle}"
-                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                       Style="{StaticResource AtlasMonoMutedStyle}"
+                                                       FontSize="11.5" />
                                             <Border VerticalAlignment="Center"
                                                     Visibility="{x:Bind IsReversible}"
-                                                    Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
-                                                    CornerRadius="2" Padding="6,1">
+                                                    Style="{StaticResource AtlasStatusPillStyle}"
+                                                    Padding="6,1">
                                                 <TextBlock Text="{x:Bind ReversibleLabel}"
-                                                           Style="{StaticResource CaptionTextBlockStyle}"
-                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                           Style="{StaticResource AtlasSectionLabelStyle}" />
                                             </Border>
                                         </StackPanel>
                                         <TextBlock Text="{x:Bind Subject}"
@@ -160,15 +157,16 @@
                                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                         <TextBlock Text="{x:Bind Provenance}"
                                                    Visibility="{x:Bind HasProvenance}"
-                                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                                   Style="{StaticResource AtlasMonoMutedStyle}"
+                                                   FontSize="11.5"
                                                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                                                    TextWrapping="Wrap" />
                                     </StackPanel>
 
                                     <TextBlock Grid.Column="2" VerticalAlignment="Top"
                                                Text="{x:Bind TimeText}"
-                                               Style="{StaticResource CaptionTextBlockStyle}"
-                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                               Style="{StaticResource AtlasMonoMutedStyle}"
+                                               FontSize="11.5" />
                                 </Grid>
                             </DataTemplate>
                         </ListView.ItemTemplate>
@@ -177,21 +175,17 @@
             </Border>
 
             <!-- Detail pane -->
-            <Border Grid.Column="1"
-                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                    BorderThickness="1" CornerRadius="2">
+            <Border Grid.Column="1" Style="{StaticResource AtlasPanelFlatStyle}">
                 <Grid>
                     <!-- Placeholder when nothing selected -->
                     <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
                                 Padding="20" MaxWidth="280"
                                 Visibility="{x:Bind ViewModel.HasSelection, Mode=OneWay, Converter={StaticResource InverseBoolToVisibility}}">
                         <FontIcon Glyph="&#xE946;" FontSize="24"
-                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                  Foreground="{ThemeResource AtlasMutedBrush}"
                                   HorizontalAlignment="Center" />
                         <TextBlock Text="Select a change to see its full detail"
-                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                   TextWrapping="Wrap" HorizontalTextAlignment="Center" />
+                                   Style="{StaticResource AtlasEmptyStateBodyStyle}" />
                     </StackPanel>
 
                     <!-- Full detail -->
@@ -205,23 +199,21 @@
                                               Foreground="{x:Bind ViewModel.SelectedChange.CategoryToken, Mode=OneWay, Converter={StaticResource ChangeCategoryToBrush}}" />
                                     <TextBlock Text="{x:Bind ViewModel.SelectedChange.KindLabel, Mode=OneWay}"
                                                VerticalAlignment="Center"
-                                               Style="{StaticResource CaptionTextBlockStyle}"
-                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                               Style="{StaticResource AtlasMonoMutedStyle}"
+                                               FontSize="11.5" />
                                 </StackPanel>
                                 <TextBlock Text="{x:Bind ViewModel.SelectedChange.Subject, Mode=OneWay}"
                                            Style="{StaticResource SubtitleTextBlockStyle}"
                                            TextWrapping="Wrap" />
                                 <TextBlock Text="{x:Bind ViewModel.SelectedChange.AbsoluteTimeText, Mode=OneWay}"
-                                           Style="{StaticResource CaptionTextBlockStyle}"
-                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                           Style="{StaticResource AtlasMonoMutedStyle}" />
                             </StackPanel>
 
                             <!-- Before -> after detail -->
                             <StackPanel Spacing="4"
                                         Visibility="{x:Bind ViewModel.SelectedChange.HasDetail, Mode=OneWay}">
-                                <TextBlock Text="What changed"
-                                           Style="{StaticResource CaptionTextBlockStyle}"
-                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock Text="WHAT CHANGED"
+                                           Style="{StaticResource AtlasSectionLabelStyle}" />
                                 <TextBlock Text="{x:Bind ViewModel.SelectedChange.DetailText, Mode=OneWay}"
                                            TextWrapping="Wrap" IsTextSelectionEnabled="True" />
                             </StackPanel>
@@ -229,36 +221,34 @@
                             <!-- Publisher -->
                             <StackPanel Spacing="4"
                                         Visibility="{x:Bind ViewModel.SelectedChange.HasPublisher, Mode=OneWay}">
-                                <TextBlock Text="Publisher"
-                                           Style="{StaticResource CaptionTextBlockStyle}"
-                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock Text="PUBLISHER"
+                                           Style="{StaticResource AtlasSectionLabelStyle}" />
                                 <TextBlock Text="{x:Bind ViewModel.SelectedChange.Publisher, Mode=OneWay}"
+                                           Style="{StaticResource AtlasMonoStyle}"
                                            TextWrapping="Wrap" IsTextSelectionEnabled="True" />
                             </StackPanel>
 
                             <!-- Responsible -->
                             <StackPanel Spacing="4"
                                         Visibility="{x:Bind ViewModel.SelectedChange.HasResponsible, Mode=OneWay}">
-                                <TextBlock Text="Applied by"
-                                           Style="{StaticResource CaptionTextBlockStyle}"
-                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock Text="APPLIED BY"
+                                           Style="{StaticResource AtlasSectionLabelStyle}" />
                                 <TextBlock Text="{x:Bind ViewModel.SelectedChange.Responsible, Mode=OneWay}"
-                                           FontFamily="Consolas" TextWrapping="Wrap"
+                                           Style="{StaticResource AtlasMonoStyle}" TextWrapping="Wrap"
                                            IsTextSelectionEnabled="True" />
                             </StackPanel>
 
                             <!-- Reversibility note (informational) -->
                             <Border Visibility="{x:Bind ViewModel.SelectedChange.IsReversible, Mode=OneWay}"
-                                    Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
-                                    CornerRadius="2" Padding="12,8">
+                                    Style="{StaticResource AtlasInsetStyle}" Padding="12,8">
                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                     <FontIcon Glyph="&#xE7A7;" FontSize="14"
-                                              Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                              Foreground="{ThemeResource AtlasMutedBrush}"
                                               VerticalAlignment="Top" />
                                     <TextBlock TextWrapping="Wrap"
-                                               Style="{StaticResource CaptionTextBlockStyle}"
-                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                               Text="Atlas knows a way to reverse this change. (Informational — no action is taken here.)" />
+                                               Style="{StaticResource AtlasMonoMutedStyle}"
+                                               FontSize="11.5"
+                                               Text="Atlas knows a way to reverse this change. (Informational - no action is taken here.)" />
                                 </StackPanel>
                             </Border>
                         </StackPanel>

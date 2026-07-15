@@ -10,14 +10,11 @@
     <Grid Padding="20" RowSpacing="12"
           Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
         <Grid.Resources>
-            <Style x:Key="FieldLabelStyle" TargetType="TextBlock">
-                <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
+            <!-- Local field/column label styles re-based on the shared console styles. -->
+            <Style x:Key="FieldLabelStyle" TargetType="TextBlock" BasedOn="{StaticResource AtlasSectionLabelStyle}">
                 <Setter Property="VerticalAlignment" Value="Top" />
             </Style>
-            <Style x:Key="ColHeaderStyle" TargetType="TextBlock">
-                <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
-                <Setter Property="FontSize" Value="12" />
-            </Style>
+            <Style x:Key="ColHeaderStyle" TargetType="TextBlock" BasedOn="{StaticResource AtlasColumnHeaderStyle}" />
         </Grid.Resources>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -25,11 +22,12 @@
         </Grid.RowDefinitions>
 
         <!-- Header -->
-        <StackPanel Grid.Row="0" Spacing="2">
+        <StackPanel Grid.Row="0" Spacing="4">
+            <TextBlock Text="INSPECT / PROCESS" Style="{StaticResource AtlasEyebrowStyle}" />
             <TextBlock Text="{x:Bind ViewModel.OverviewName, Mode=OneWay}"
-                       Style="{StaticResource TitleTextBlockStyle}" />
+                       Style="{StaticResource AtlasPageHeadingStyle}" />
             <TextBlock Text="{x:Bind ViewModel.HeaderText}"
-                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                       Style="{StaticResource AtlasMonoMutedStyle}" />
         </StackPanel>
 
         <!-- Tabs -->
@@ -148,15 +146,15 @@
 
                                     <TextBlock Grid.Row="2" Grid.Column="0" Text="Path" Style="{StaticResource FieldLabelStyle}" />
                                     <TextBlock Grid.Row="2" Grid.Column="1" Text="{x:Bind ViewModel.OverviewPath, Mode=OneWay}"
-                                               TextWrapping="Wrap" FontFamily="Consolas" IsTextSelectionEnabled="True" />
+                                               TextWrapping="Wrap" FontFamily="{ThemeResource AtlasMonoFontFamily}" IsTextSelectionEnabled="True" />
 
                                     <TextBlock Grid.Row="3" Grid.Column="0" Text="Command line" Style="{StaticResource FieldLabelStyle}" />
                                     <TextBlock Grid.Row="3" Grid.Column="1" Text="{x:Bind ViewModel.OverviewCommandLine, Mode=OneWay}"
-                                               TextWrapping="Wrap" FontFamily="Consolas" IsTextSelectionEnabled="True" />
+                                               TextWrapping="Wrap" FontFamily="{ThemeResource AtlasMonoFontFamily}" IsTextSelectionEnabled="True" />
 
                                     <TextBlock Grid.Row="4" Grid.Column="0" Text="Working dir" Style="{StaticResource FieldLabelStyle}" />
                                     <TextBlock Grid.Row="4" Grid.Column="1" Text="{x:Bind ViewModel.OverviewWorkingDir, Mode=OneWay}"
-                                               TextWrapping="Wrap" FontFamily="Consolas" IsTextSelectionEnabled="True" />
+                                               TextWrapping="Wrap" FontFamily="{ThemeResource AtlasMonoFontFamily}" IsTextSelectionEnabled="True" />
 
                                     <TextBlock Grid.Row="5" Grid.Column="0" Text="User" Style="{StaticResource FieldLabelStyle}" />
                                     <TextBlock Grid.Row="5" Grid.Column="1" Text="{x:Bind ViewModel.OverviewUser, Mode=OneWay}" IsTextSelectionEnabled="True" />
@@ -282,10 +280,10 @@
                                                        TextTrimming="CharacterEllipsis"
                                                        ToolTipService.ToolTip="{x:Bind NameText}" />
                                             <TextBlock Grid.Column="2" Text="{x:Bind HandleText}" VerticalAlignment="Center"
-                                                       FontFamily="Consolas"
+                                                       FontFamily="{ThemeResource AtlasMonoFontFamily}"
                                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                             <TextBlock Grid.Column="3" Text="{x:Bind AccessText}" VerticalAlignment="Center"
-                                                       FontFamily="Consolas" TextTrimming="CharacterEllipsis"
+                                                       FontFamily="{ThemeResource AtlasMonoFontFamily}" TextTrimming="CharacterEllipsis"
                                                        ToolTipService.ToolTip="{x:Bind AccessText}"
                                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                         </Grid>
@@ -377,7 +375,7 @@
                                             <TextBlock Grid.Column="0" Text="{x:Bind NameText}" VerticalAlignment="Center"
                                                        TextTrimming="CharacterEllipsis" ToolTipService.ToolTip="{x:Bind NameText}" />
                                             <TextBlock Grid.Column="1" Text="{x:Bind PathText}" VerticalAlignment="Center"
-                                                       FontFamily="Consolas" TextTrimming="CharacterEllipsis"
+                                                       FontFamily="{ThemeResource AtlasMonoFontFamily}" TextTrimming="CharacterEllipsis"
                                                        ToolTipService.ToolTip="{x:Bind PathText}"
                                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                             <TextBlock Grid.Column="2" Text="{x:Bind VersionText}" VerticalAlignment="Center" />
@@ -482,7 +480,7 @@
                                             </Grid.ColumnDefinitions>
                                             <TextBlock Grid.Column="0" Text="{x:Bind TidText}" VerticalAlignment="Center" />
                                             <TextBlock Grid.Column="1" Text="{x:Bind StartAddressText}" VerticalAlignment="Center"
-                                                       FontFamily="Consolas"
+                                                       FontFamily="{ThemeResource AtlasMonoFontFamily}"
                                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                             <TextBlock Grid.Column="2" Text="{x:Bind StateText}" VerticalAlignment="Center" />
                                             <TextBlock Grid.Column="3" Text="{x:Bind WaitReasonText}" VerticalAlignment="Center"
@@ -566,7 +564,7 @@
                                     </Border>
 
                                     <!-- No chain (unsigned / unavailable) -->
-                                    <TextBlock Text="No certificate chain — this file is unsigned or the chain couldn’t be read."
+                                    <TextBlock Text="No certificate chain - this file is unsigned or the chain couldn’t be read."
                                                Style="{StaticResource CaptionTextBlockStyle}"
                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                                TextWrapping="Wrap"
@@ -606,7 +604,7 @@
                                                         <TextBlock Grid.Row="2" Grid.Column="0" Text="Thumbprint"
                                                                    Style="{StaticResource FieldLabelStyle}" />
                                                         <TextBlock Grid.Row="2" Grid.Column="1" Text="{x:Bind ThumbprintText}"
-                                                                   FontFamily="Consolas" TextWrapping="Wrap"
+                                                                   FontFamily="{ThemeResource AtlasMonoFontFamily}" TextWrapping="Wrap"
                                                                    IsTextSelectionEnabled="True" />
 
                                                         <TextBlock Grid.Row="3" Grid.Column="0" Text="Validity"
@@ -643,7 +641,7 @@
                                         </Grid.ColumnDefinitions>
                                         <TextBlock Grid.Column="0" Text="SHA-256" Style="{StaticResource FieldLabelStyle}" />
                                         <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.SecuritySha256Grouped, Mode=OneWay}"
-                                                   FontFamily="Consolas" TextWrapping="Wrap"
+                                                   FontFamily="{ThemeResource AtlasMonoFontFamily}" TextWrapping="Wrap"
                                                    IsTextSelectionEnabled="True" />
                                         <Button Grid.Column="2" Click="OnCopySha256" VerticalAlignment="Top"
                                                 AutomationProperties.Name="Copy SHA-256 hash"
@@ -681,7 +679,7 @@
 
                                         <TextBlock Grid.Row="3" Grid.Column="0" Text="User SID" Style="{StaticResource FieldLabelStyle}" />
                                         <TextBlock Grid.Row="3" Grid.Column="1" Text="{x:Bind ViewModel.SecurityUserSid, Mode=OneWay}"
-                                                   FontFamily="Consolas" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+                                                   FontFamily="{ThemeResource AtlasMonoFontFamily}" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
                                     </Grid>
 
                                     <!-- Privileges -->
@@ -703,7 +701,7 @@
                                                         <ColumnDefinition Width="110" />
                                                     </Grid.ColumnDefinitions>
                                                     <TextBlock Grid.Column="0" Text="{x:Bind NameText}" VerticalAlignment="Center"
-                                                               FontFamily="Consolas" TextTrimming="CharacterEllipsis"
+                                                               FontFamily="{ThemeResource AtlasMonoFontFamily}" TextTrimming="CharacterEllipsis"
                                                                ToolTipService.ToolTip="{x:Bind NameText}" />
                                                     <TextBlock Grid.Column="1" Text="{x:Bind GlossText}" VerticalAlignment="Center"
                                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"

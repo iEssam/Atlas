@@ -15,7 +15,7 @@
 
             <!-- Format -->
             <StackPanel Spacing="6">
-                <TextBlock Text="Format" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                <TextBlock Text="REPORT FORMAT" Style="{StaticResource AtlasSectionLabelStyle}" />
                 <ComboBox x:Name="FormatCombo"
                           AutomationProperties.Name="Report format"
                           HorizontalAlignment="Stretch"
@@ -29,7 +29,7 @@
 
             <!-- Redaction -->
             <StackPanel Spacing="6">
-                <TextBlock Text="Redaction" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                <TextBlock Text="REDACTION" Style="{StaticResource AtlasSectionLabelStyle}" />
                 <TextBlock Text="Choose what to strip before the report is generated. Redaction happens on the service; nothing here leaves your machine."
                            TextWrapping="Wrap"
                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
@@ -45,8 +45,7 @@
                 <CheckBox x:Name="RedactCommandLines" Content="Command lines"
                           AutomationProperties.Name="Redact command lines"
                           Checked="OnRedactionChanged" Unchecked="OnRedactionChanged" />
-                <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
-                        CornerRadius="2" Padding="12,8">
+                <Border Style="{StaticResource AtlasInsetStyle}">
                     <TextBlock x:Name="RedactionSummaryText"
                                TextWrapping="Wrap"
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
@@ -73,16 +72,18 @@
                          IsReadOnly="True"
                          AcceptsReturn="True"
                          TextWrapping="NoWrap"
-                         FontFamily="Consolas"
+                         FontFamily="{ThemeResource AtlasMonoFontFamily}"
                          Height="200"
                          ScrollViewer.HorizontalScrollBarVisibility="Auto"
                          ScrollViewer.VerticalScrollBarVisibility="Auto" />
                 <StackPanel Orientation="Horizontal" Spacing="12">
                     <Button x:Name="SaveButton" Content="Save to file…"
                             AutomationProperties.Name="Save report to file"
+                            Style="{StaticResource AtlasGhostButtonStyle}"
                             Click="OnSaveClick" />
                     <Button x:Name="CopyButton" Content="Copy"
                             AutomationProperties.Name="Copy report to clipboard"
+                            Style="{StaticResource AtlasGhostButtonStyle}"
                             Click="OnCopyClick" />
                 </StackPanel>
             </StackPanel>

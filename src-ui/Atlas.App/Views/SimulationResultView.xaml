@@ -22,7 +22,7 @@
             <TextBlock Text="{x:Bind ViewModel.StatusText, Mode=OneWay}"
                        TextWrapping="Wrap"
                        VerticalAlignment="Center"
-                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                       Style="{StaticResource AtlasMonoMutedStyle}" />
         </StackPanel>
 
         <!-- Conflicts (PRD §9.7.6) -->
@@ -51,7 +51,7 @@
                       VerticalAlignment="Center" />
             <TextBlock TextWrapping="Wrap"
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                       Text="Highlighted rows are system-critical — Atlas won't touch them, even with this rule enabled." />
+                       Text="Highlighted rows are system-critical - Atlas won't touch them, even with this rule enabled." />
         </StackPanel>
 
         <!-- Unavailable / empty placeholders -->
@@ -107,8 +107,7 @@
                                                    TextTrimming="CharacterEllipsis" />
                                     </StackPanel>
                                     <TextBlock Text="{x:Bind PidText}"
-                                               Style="{StaticResource CaptionTextBlockStyle}"
-                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                               Style="{StaticResource AtlasMonoMutedStyle}" />
                                 </StackPanel>
 
                                 <!-- Blocked: the calm protection line -->

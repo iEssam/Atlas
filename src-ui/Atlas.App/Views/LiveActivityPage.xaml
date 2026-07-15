@@ -15,59 +15,60 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <!-- Title + connection status -->
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="12">
-            <TextBlock Text="Live Activity" Style="{StaticResource TitleTextBlockStyle}" />
-            <TextBlock VerticalAlignment="Bottom"
-                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                       Text="{x:Bind ViewModel.ConnectionStatus, Mode=OneWay}" />
+        <!-- ===== Page heading ===== -->
+        <StackPanel Grid.Row="0" Spacing="4">
+            <TextBlock Text="OBSERVE / LIVE ACTIVITY" Style="{StaticResource AtlasEyebrowStyle}" />
+            <StackPanel Orientation="Horizontal" Spacing="12">
+                <TextBlock Text="Live Activity" Style="{StaticResource AtlasPageHeadingStyle}" />
+                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Bottom" Margin="0,0,0,3">
+                    <Ellipse Width="6" Height="6" VerticalAlignment="Center"
+                             Fill="{ThemeResource AtlasCyanBrush}" />
+                    <TextBlock VerticalAlignment="Center"
+                               Style="{StaticResource AtlasMonoMutedStyle}"
+                               Text="{x:Bind ViewModel.ConnectionStatus, Mode=OneWay}" />
+                </StackPanel>
+            </StackPanel>
+            <TextBlock Style="{StaticResource AtlasPageDescriptionStyle}"
+                       Text="Live per-process measurements streaming from the service. Right-click a row for guarded actions." />
         </StackPanel>
 
         <!-- Capabilities line -->
         <TextBlock Grid.Row="1"
-                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                   Style="{StaticResource AtlasMonoMutedStyle}"
                    Text="{x:Bind CapabilitiesText, Mode=OneWay}" />
 
-        <!-- System gauges header -->
-        <Border Grid.Row="2"
-                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                BorderThickness="1" CornerRadius="2" Padding="16,12">
+        <!-- ===== System gauges strip ===== -->
+        <Border Grid.Row="2" Style="{StaticResource AtlasMetricCellStyle}" Padding="16,12">
             <StackPanel Orientation="Horizontal" Spacing="32">
-                <StackPanel>
-                    <TextBlock Text="System CPU" Style="{StaticResource CaptionTextBlockStyle}"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <StackPanel Spacing="4">
+                    <TextBlock Text="SYSTEM CPU" Style="{StaticResource AtlasSectionLabelStyle}" />
                     <TextBlock Text="{x:Bind CpuText, Mode=OneWay}"
-                               Style="{StaticResource SubtitleTextBlockStyle}" />
+                               Style="{StaticResource AtlasMetricValueStyle}" FontSize="18" />
                 </StackPanel>
-                <StackPanel>
-                    <TextBlock Text="Memory" Style="{StaticResource CaptionTextBlockStyle}"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <StackPanel Spacing="4">
+                    <TextBlock Text="MEMORY" Style="{StaticResource AtlasSectionLabelStyle}" />
                     <TextBlock Text="{x:Bind MemText, Mode=OneWay}"
-                               Style="{StaticResource SubtitleTextBlockStyle}" />
+                               Style="{StaticResource AtlasMetricValueStyle}" FontSize="18" />
                 </StackPanel>
-                <StackPanel>
-                    <TextBlock Text="Processes" Style="{StaticResource CaptionTextBlockStyle}"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <StackPanel Spacing="4">
+                    <TextBlock Text="PROCESSES" Style="{StaticResource AtlasSectionLabelStyle}" />
                     <TextBlock Text="{x:Bind ViewModel.ProcessCount, Mode=OneWay}"
-                               Style="{StaticResource SubtitleTextBlockStyle}" />
+                               Style="{StaticResource AtlasMetricValueStyle}" FontSize="18" />
                 </StackPanel>
-                <StackPanel>
-                    <TextBlock Text="Threads" Style="{StaticResource CaptionTextBlockStyle}"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <StackPanel Spacing="4">
+                    <TextBlock Text="THREADS" Style="{StaticResource AtlasSectionLabelStyle}" />
                     <TextBlock Text="{x:Bind ViewModel.ThreadCount, Mode=OneWay}"
-                               Style="{StaticResource SubtitleTextBlockStyle}" />
+                               Style="{StaticResource AtlasMetricValueStyle}" FontSize="18" />
                 </StackPanel>
-                <StackPanel>
-                    <TextBlock Text="Handles" Style="{StaticResource CaptionTextBlockStyle}"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <StackPanel Spacing="4">
+                    <TextBlock Text="HANDLES" Style="{StaticResource AtlasSectionLabelStyle}" />
                     <TextBlock Text="{x:Bind ViewModel.HandleCount, Mode=OneWay}"
-                               Style="{StaticResource SubtitleTextBlockStyle}" />
+                               Style="{StaticResource AtlasMetricValueStyle}" FontSize="18" />
                 </StackPanel>
             </StackPanel>
         </Border>
 
-        <!-- Process table -->
+        <!-- ===== Process table ===== -->
         <Grid Grid.Row="3" RowSpacing="0">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
@@ -76,7 +77,7 @@
 
             <!-- Column headers -->
             <Grid Grid.Row="0" Padding="12,8" ColumnSpacing="8"
-                  BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                  BorderBrush="{ThemeResource AtlasLineBrush}"
                   BorderThickness="0,0,0,1">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="220" />
@@ -87,13 +88,13 @@
                     <ColumnDefinition Width="80" />
                     <ColumnDefinition Width="90" />
                 </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="Name" FontWeight="SemiBold" />
-                <TextBlock Grid.Column="1" Text="PID" FontWeight="SemiBold" HorizontalTextAlignment="Right" />
-                <TextBlock Grid.Column="2" Text="CPU %" FontWeight="SemiBold" HorizontalTextAlignment="Right" />
-                <TextBlock Grid.Column="3" Text="WS MB" FontWeight="SemiBold" HorizontalTextAlignment="Right" />
-                <TextBlock Grid.Column="4" Text="Private MB" FontWeight="SemiBold" HorizontalTextAlignment="Right" />
-                <TextBlock Grid.Column="5" Text="Threads" FontWeight="SemiBold" HorizontalTextAlignment="Right" />
-                <TextBlock Grid.Column="6" Text="Handles" FontWeight="SemiBold" HorizontalTextAlignment="Right" />
+                <TextBlock Grid.Column="0" Text="NAME" Style="{StaticResource AtlasColumnHeaderStyle}" />
+                <TextBlock Grid.Column="1" Text="PID" Style="{StaticResource AtlasColumnHeaderStyle}" HorizontalTextAlignment="Right" />
+                <TextBlock Grid.Column="2" Text="CPU %" Style="{StaticResource AtlasColumnHeaderStyle}" HorizontalTextAlignment="Right" />
+                <TextBlock Grid.Column="3" Text="WS MB" Style="{StaticResource AtlasColumnHeaderStyle}" HorizontalTextAlignment="Right" />
+                <TextBlock Grid.Column="4" Text="PRIVATE MB" Style="{StaticResource AtlasColumnHeaderStyle}" HorizontalTextAlignment="Right" />
+                <TextBlock Grid.Column="5" Text="THREADS" Style="{StaticResource AtlasColumnHeaderStyle}" HorizontalTextAlignment="Right" />
+                <TextBlock Grid.Column="6" Text="HANDLES" Style="{StaticResource AtlasColumnHeaderStyle}" HorizontalTextAlignment="Right" />
             </Grid>
 
             <!-- Virtualized rows -->
@@ -103,8 +104,11 @@
                 <ListView.ItemContainerStyle>
                     <Style TargetType="ListViewItem">
                         <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                        <Setter Property="Padding" Value="12,4" />
+                        <Setter Property="Padding" Value="12,6" />
                         <Setter Property="MinHeight" Value="0" />
+                        <Setter Property="CornerRadius" Value="0" />
+                        <Setter Property="BorderBrush" Value="{ThemeResource AtlasLineBrush}" />
+                        <Setter Property="BorderThickness" Value="0,0,0,1" />
                     </Style>
                 </ListView.ItemContainerStyle>
                 <ListView.ItemTemplate>
@@ -138,19 +142,32 @@
                                 <ColumnDefinition Width="80" />
                                 <ColumnDefinition Width="90" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="{x:Bind ImageName, Mode=OneWay}"
+                            <TextBlock Grid.Column="0" VerticalAlignment="Center"
+                                       Text="{x:Bind ImageName, Mode=OneWay}"
                                        TextTrimming="CharacterEllipsis" />
-                            <TextBlock Grid.Column="1" Text="{x:Bind Pid}"
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center"
+                                       Style="{StaticResource AtlasMonoMutedStyle}"
+                                       Text="{x:Bind Pid}"
                                        HorizontalTextAlignment="Right" />
-                            <TextBlock Grid.Column="2" Text="{x:Bind CpuText, Mode=OneWay}"
+                            <TextBlock Grid.Column="2" VerticalAlignment="Center"
+                                       Style="{StaticResource AtlasMonoStyle}"
+                                       Text="{x:Bind CpuText, Mode=OneWay}"
                                        HorizontalTextAlignment="Right" />
-                            <TextBlock Grid.Column="3" Text="{x:Bind WorkingSetText, Mode=OneWay}"
+                            <TextBlock Grid.Column="3" VerticalAlignment="Center"
+                                       Style="{StaticResource AtlasMonoStyle}"
+                                       Text="{x:Bind WorkingSetText, Mode=OneWay}"
                                        HorizontalTextAlignment="Right" />
-                            <TextBlock Grid.Column="4" Text="{x:Bind PrivateText, Mode=OneWay}"
+                            <TextBlock Grid.Column="4" VerticalAlignment="Center"
+                                       Style="{StaticResource AtlasMonoMutedStyle}"
+                                       Text="{x:Bind PrivateText, Mode=OneWay}"
                                        HorizontalTextAlignment="Right" />
-                            <TextBlock Grid.Column="5" Text="{x:Bind ThreadCount, Mode=OneWay}"
+                            <TextBlock Grid.Column="5" VerticalAlignment="Center"
+                                       Style="{StaticResource AtlasMonoMutedStyle}"
+                                       Text="{x:Bind ThreadCount, Mode=OneWay}"
                                        HorizontalTextAlignment="Right" />
-                            <TextBlock Grid.Column="6" Text="{x:Bind HandleCount, Mode=OneWay}"
+                            <TextBlock Grid.Column="6" VerticalAlignment="Center"
+                                       Style="{StaticResource AtlasMonoMutedStyle}"
+                                       Text="{x:Bind HandleCount, Mode=OneWay}"
                                        HorizontalTextAlignment="Right" />
                         </Grid>
                     </DataTemplate>
