@@ -30,6 +30,7 @@ public sealed partial class LiveActivityViewModel : ObservableObject
     [ObservableProperty] private string _capabilityFlags = "-";
 
     [ObservableProperty] private double _systemCpuPercent;
+    [ObservableProperty] private double _systemGpuPercent;
     [ObservableProperty] private double _memUsedGb;
     [ObservableProperty] private double _memTotalGb;
     [ObservableProperty] private uint _processCount;
@@ -90,6 +91,7 @@ public sealed partial class LiveActivityViewModel : ObservableObject
     private void Apply(MetricsSnapshot snap)
     {
         SystemCpuPercent = snap.CpuPercent;
+        SystemGpuPercent = snap.GpuPercent;
         MemUsedGb = snap.MemUsed / (1024.0 * 1024.0 * 1024.0);
         MemTotalGb = snap.MemTotal / (1024.0 * 1024.0 * 1024.0);
         ProcessCount = snap.ProcessCount;

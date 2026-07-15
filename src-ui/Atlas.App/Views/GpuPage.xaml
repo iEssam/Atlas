@@ -1,0 +1,99 @@
+<Page
+    x:Class="Atlas.App.Views.GpuPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vm="using:Atlas.App.ViewModels">
+    <Grid Padding="24" RowSpacing="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" ColumnSpacing="20">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="320" /></Grid.ColumnDefinitions>
+            <StackPanel Spacing="5">
+                <TextBlock Text="Graphics processors" Style="{StaticResource AtlasPageHeadingStyle}" />
+                <TextBlock Text="Measured engine activity, graphics memory, sensors, and the processes using them."
+                           Style="{StaticResource AtlasPageDescriptionStyle}" />
+                <TextBlock Text="{x:Bind ViewModel.StatusText, Mode=OneWay}" Style="{StaticResource AtlasMonoMutedStyle}" />
+            </StackPanel>
+            <ComboBox Grid.Column="1" Header="Adapter" AutomationProperties.Name="Graphics adapter"
+                      ItemsSource="{x:Bind ViewModel.Adapters}" DisplayMemberPath="Name"
+                      SelectedItem="{x:Bind ViewModel.SelectedAdapter, Mode=TwoWay}" />
+        </Grid>
+
+        <Border Grid.Row="1" Style="{StaticResource AtlasPanelFlatStyle}" Padding="18"
+                Visibility="{x:Bind ViewModel.IsUnavailable, Mode=OneWay}">
+            <StackPanel Spacing="6">
+                <TextBlock Text="GPU telemetry unavailable" Style="{StaticResource AtlasEmptyStateTitleStyle}" />
+                <TextBlock Text="{x:Bind ViewModel.UnavailableReason, Mode=OneWay}"
+                           Style="{StaticResource AtlasEmptyStateBodyStyle}" TextWrapping="Wrap" />
+            </StackPanel>
+        </Border>
+
+        <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+            <StackPanel Spacing="18" Visibility="{x:Bind ViewModel.IsUnavailable, Mode=OneWay, Converter={StaticResource InverseBoolToVisibility}}">
+                <Grid ColumnSpacing="20">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="1.35*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                    <Border Style="{StaticResource AtlasPanelFlatStyle}" Padding="18">
+                        <StackPanel Spacing="14">
+                            <StackPanel Spacing="3">
+                                <TextBlock Text="{x:Bind ViewModel.SelectedAdapter.Name, Mode=OneWay}" Style="{StaticResource AtlasEmptyStateTitleStyle}" />
+                                <TextBlock Text="{x:Bind ViewModel.SelectedAdapter.DisplayRole, Mode=OneWay}" Style="{StaticResource AtlasMonoMutedStyle}" />
+                                <TextBlock Text="{x:Bind ViewModel.SelectedAdapter.DriverVersion, Mode=OneWay}" Style="{StaticResource AtlasMonoMutedStyle}" />
+                            </StackPanel>
+                            <Grid ColumnSpacing="18">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                <StackPanel><TextBlock Text="GPU" Style="{StaticResource AtlasSectionLabelStyle}" /><TextBlock Text="{x:Bind ViewModel.SelectedAdapter.UtilizationText, Mode=OneWay}" Style="{StaticResource AtlasMetricValueStyle}" /></StackPanel>
+                                <StackPanel Grid.Column="1"><TextBlock Text="DEDICATED MEMORY" Style="{StaticResource AtlasSectionLabelStyle}" /><TextBlock Text="{x:Bind ViewModel.SelectedAdapter.DedicatedText, Mode=OneWay}" TextWrapping="Wrap" /></StackPanel>
+                                <StackPanel Grid.Column="2"><TextBlock Text="SHARED MEMORY" Style="{StaticResource AtlasSectionLabelStyle}" /><TextBlock Text="{x:Bind ViewModel.SelectedAdapter.SharedText, Mode=OneWay}" TextWrapping="Wrap" /></StackPanel>
+                            </Grid>
+                            <ItemsControl ItemsSource="{x:Bind ViewModel.SelectedAdapter.Engines, Mode=OneWay}">
+                                <ItemsControl.ItemTemplate><DataTemplate x:DataType="vm:GpuEngineItem">
+                                    <Grid Margin="0,4" ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="120" /><ColumnDefinition Width="*" /><ColumnDefinition Width="64" /></Grid.ColumnDefinitions>
+                                        <TextBlock Text="{x:Bind Name}" VerticalAlignment="Center" />
+                                        <ProgressBar Grid.Column="1" Minimum="0" Maximum="100" Value="{x:Bind Percent}" VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="2" Text="{x:Bind PercentText}" HorizontalTextAlignment="Right" Style="{StaticResource AtlasMonoStyle}" />
+                                    </Grid>
+                                </DataTemplate></ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+                    <Border Grid.Column="1" Style="{StaticResource AtlasPanelFlatStyle}" Padding="18">
+                        <StackPanel Spacing="12">
+                            <TextBlock Text="Hardware sensors" Style="{StaticResource AtlasEmptyStateTitleStyle}" />
+                            <Grid ColumnSpacing="16" RowSpacing="10">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                                <StackPanel><TextBlock Text="TEMPERATURE" Style="{StaticResource AtlasSectionLabelStyle}" /><TextBlock Text="{x:Bind ViewModel.SelectedAdapter.TemperatureText, Mode=OneWay}" /></StackPanel>
+                                <StackPanel Grid.Column="1"><TextBlock Text="POWER" Style="{StaticResource AtlasSectionLabelStyle}" /><TextBlock Text="{x:Bind ViewModel.SelectedAdapter.PowerText, Mode=OneWay}" /></StackPanel>
+                                <StackPanel Grid.Row="1"><TextBlock Text="CLOCK" Style="{StaticResource AtlasSectionLabelStyle}" /><TextBlock Text="{x:Bind ViewModel.SelectedAdapter.ClockText, Mode=OneWay}" /></StackPanel>
+                                <StackPanel Grid.Row="1" Grid.Column="1"><TextBlock Text="FAN" Style="{StaticResource AtlasSectionLabelStyle}" /><TextBlock Text="{x:Bind ViewModel.SelectedAdapter.FanText, Mode=OneWay}" /></StackPanel>
+                                <StackPanel Grid.Row="2" Grid.ColumnSpan="2"><TextBlock Text="THERMAL STATE" Style="{StaticResource AtlasSectionLabelStyle}" /><TextBlock Text="{x:Bind ViewModel.SelectedAdapter.ThrottleText, Mode=OneWay}" /></StackPanel>
+                            </Grid>
+                            <TextBlock Text="{x:Bind ViewModel.SelectedAdapter.SensorStatus, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource AtlasMonoMutedStyle}" />
+                        </StackPanel>
+                    </Border>
+                </Grid>
+
+                <Border Style="{StaticResource AtlasPanelFlatStyle}">
+                    <Grid><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                        <TextBlock Margin="14,12" Text="Processes using graphics resources" Style="{StaticResource AtlasEmptyStateTitleStyle}" />
+                        <Grid Grid.Row="1" Padding="14,8" ColumnSpacing="12">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="80" /><ColumnDefinition Width="90" /><ColumnDefinition Width="110" /><ColumnDefinition Width="110" /></Grid.ColumnDefinitions>
+                            <TextBlock Text="NAME" Style="{StaticResource AtlasColumnHeaderStyle}" /><TextBlock Grid.Column="1" Text="PID" HorizontalTextAlignment="Right" Style="{StaticResource AtlasColumnHeaderStyle}" /><TextBlock Grid.Column="2" Text="GPU" HorizontalTextAlignment="Right" Style="{StaticResource AtlasColumnHeaderStyle}" /><TextBlock Grid.Column="3" Text="DEDICATED" HorizontalTextAlignment="Right" Style="{StaticResource AtlasColumnHeaderStyle}" /><TextBlock Grid.Column="4" Text="SHARED" HorizontalTextAlignment="Right" Style="{StaticResource AtlasColumnHeaderStyle}" />
+                        </Grid>
+                        <ListView Grid.Row="2" ItemsSource="{x:Bind ViewModel.Processes}" SelectionMode="None" MaxHeight="360">
+                            <ListView.ItemTemplate><DataTemplate x:DataType="vm:GpuProcessItem">
+                                <Grid Padding="10,7" ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="80" /><ColumnDefinition Width="90" /><ColumnDefinition Width="110" /><ColumnDefinition Width="110" /></Grid.ColumnDefinitions>
+                                    <TextBlock Text="{x:Bind Name}" TextTrimming="CharacterEllipsis" /><TextBlock Grid.Column="1" Text="{x:Bind PidText}" HorizontalTextAlignment="Right" Style="{StaticResource AtlasMonoStyle}" /><TextBlock Grid.Column="2" Text="{x:Bind UsageText}" HorizontalTextAlignment="Right" Style="{StaticResource AtlasMonoStyle}" /><TextBlock Grid.Column="3" Text="{x:Bind DedicatedText}" HorizontalTextAlignment="Right" Style="{StaticResource AtlasMonoStyle}" /><TextBlock Grid.Column="4" Text="{x:Bind SharedText}" HorizontalTextAlignment="Right" Style="{StaticResource AtlasMonoStyle}" />
+                                </Grid>
+                            </DataTemplate></ListView.ItemTemplate>
+                        </ListView>
+                    </Grid>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Page>

@@ -32,6 +32,7 @@ public sealed partial class MainWindow : Window
             "overview" => typeof(OverviewPage),
             "live" => typeof(LiveActivityPage),
             "timeline" => typeof(TimelinePage),
+            "gpu" => typeof(GpuPage),
             "search" => typeof(SearchPage),
             "privacy" => typeof(PrivacyPage),
             "privacyalerts" => typeof(PrivacyAlertsPage),

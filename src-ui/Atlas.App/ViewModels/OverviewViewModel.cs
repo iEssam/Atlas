@@ -26,6 +26,10 @@ public sealed partial class OverviewViewModel : ObservableObject
     private double _cpuPercent;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(GpuText))]
+    private double _gpuPercent;
+
+    [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(MemoryText))]
     [NotifyPropertyChangedFor(nameof(MemoryPercent))]
     private double _memUsedGb;
@@ -48,6 +52,7 @@ public sealed partial class OverviewViewModel : ObservableObject
     [ObservableProperty] private uint _handleCount;
 
     public string CpuText => $"{CpuPercent:F1} %";
+    public string GpuText => $"{GpuPercent:F1} %";
     public string MemoryText => $"{MemUsedGb:F1} / {MemTotalGb:F1} GB";
     /// <summary>Memory used as a 0..100 percentage for the progress bar.</summary>
     public double MemoryPercent => MemTotalGb > 0 ? MemUsedGb / MemTotalGb * 100.0 : 0;
@@ -68,6 +73,7 @@ public sealed partial class OverviewViewModel : ObservableObject
     {
         const double giga = 1024.0 * 1024.0 * 1024.0;
         CpuPercent = snap.CpuPercent;
+        GpuPercent = snap.GpuPercent;
         MemUsedGb = snap.MemUsed / giga;
         MemTotalGb = snap.MemTotal / giga;
         CommitUsedGb = snap.CommitUsed / giga;

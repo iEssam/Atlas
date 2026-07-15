@@ -52,6 +52,12 @@ public sealed partial class SensorsViewModel : ObservableObject
 
     public ObservableCollection<ThermalSensorItem> Sensors { get; } = new();
 
+    // ---- GPU vendor sensor coverage --------------------------------------
+    [ObservableProperty] private bool _gpuAbsent;
+    [ObservableProperty] private bool _gpuPresent;
+    [ObservableProperty] private string _gpuNote = string.Empty;
+    public ObservableCollection<GpuSensorItem> GpuSensors { get; } = new();
+
     // ---- Startup history (boots) card -------------------------------------
     [ObservableProperty] private bool _bootsUnsupported;
     [ObservableProperty] private bool _bootsAbsent;
@@ -81,6 +87,7 @@ public sealed partial class SensorsViewModel : ObservableObject
             await Task.WhenAll(
                 LoadBatteryAsync(channel, ct),
                 LoadThermalAsync(channel, ct),
+                LoadGpuAsync(channel, ct),
                 LoadBootsAsync(channel, ct)).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
@@ -210,6 +217,51 @@ public sealed partial class SensorsViewModel : ObservableObject
         ThermalNote = note;
     }
 
+    private async Task LoadGpuAsync(AtlasChannel channel, CancellationToken ct)
+    {
+        try
+        {
+            var reply = await channel.GetSnapshotAsync(0, ct).ConfigureAwait(false);
+            if (ct.IsCancellationRequested) return;
+            Post(() =>
+            {
+                GpuSensors.Clear();
+                foreach (var a in reply.GpuAdapters)
+                {
+                    var readings = new[]
+                    {
+                        a.HasTemperatureC ? $"{a.TemperatureC:F1} °C" : "temperature unavailable",
+                        a.HasPowerW ? $"{a.PowerW:F1} W" : "power unavailable",
+                        a.HasCoreClockMhz ? $"{a.CoreClockMhz} MHz core" : "clock unavailable",
+                        a.HasFanRpm ? $"{a.FanRpm} RPM" : "fan unavailable",
+                        a.HasThermalThrottling ? (a.ThermalThrottling ? "thermal throttle reported" : "no thermal throttle") : "throttle state unavailable",
+                    };
+                    var source = string.IsNullOrWhiteSpace(a.SensorSource)
+                        ? MonitorFormatter.UnavailableReason(a.SensorUnavailableReason, "No supported vendor sensor runtime was found.")
+                        : $"Source: {a.SensorSource}";
+                    GpuSensors.Add(new GpuSensorItem(
+                        string.IsNullOrWhiteSpace(a.Name) ? "GPU" : a.Name,
+                        string.Join("  •  ", readings), source));
+                }
+                GpuPresent = GpuSensors.Count > 0;
+                GpuAbsent = !GpuPresent;
+                GpuNote = GpuAbsent
+                    ? MonitorFormatter.UnavailableReason(reply.GpuUnavailableReason, "Windows did not expose GPU adapters for this session.")
+                    : string.Empty;
+            });
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Post(() =>
+            {
+                GpuSensors.Clear();
+                GpuPresent = false;
+                GpuAbsent = true;
+                GpuNote = $"GPU sensor coverage could not be read: {ex.Message}";
+            });
+        }
+    }
+
     private async Task LoadBootsAsync(AtlasChannel channel, CancellationToken ct)
     {
         RpcOutcome<ListBootsReply> outcome;
@@ -287,6 +339,20 @@ public sealed class ThermalSensorItem
         Name = name;
         TemperatureText = temperatureText;
         SourceText = sourceText;
+    }
+}
+
+public sealed class GpuSensorItem
+{
+    public string Name { get; }
+    public string ReadingsText { get; }
+    public string CoverageText { get; }
+
+    public GpuSensorItem(string name, string readingsText, string coverageText)
+    {
+        Name = name;
+        ReadingsText = readingsText;
+        CoverageText = coverageText;
     }
 }
 

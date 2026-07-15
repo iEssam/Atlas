@@ -65,6 +65,8 @@ public sealed partial class RuleEditDialog : ContentDialog
             RuleTrigger.OnAcPower => 1,
             RuleTrigger.OnDcPower => 2,
             RuleTrigger.OnFullscreen => 3,
+            RuleTrigger.OnGpuLoad => 4,
+            RuleTrigger.OnGpuThermalThrottle => 5,
             _ => 0,
         };
 
@@ -94,8 +96,11 @@ public sealed partial class RuleEditDialog : ContentDialog
         EcoSwitch.IsOn = action.EcoQos;
         PrecedenceBox.Value = rule.Precedence;
         EnabledSwitch.IsOn = rule.Enabled;
+        GpuThresholdBox.Value = (rule.GpuThresholdPermille == 0 ? 800 : rule.GpuThresholdPermille) / 10.0;
+        GpuDurationBox.Value = rule.GpuDurationSeconds == 0 ? 5 : rule.GpuDurationSeconds;
 
         UpdateCustomMaskVisibility();
+        UpdateGpuThresholdVisibility();
     }
 
     private void AffinityBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -109,11 +114,25 @@ public sealed partial class RuleEditDialog : ContentDialog
             : Microsoft.UI.Xaml.Visibility.Collapsed;
     }
 
+    private void TriggerBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        => UpdateGpuThresholdVisibility();
+
+    private void UpdateGpuThresholdVisibility()
+    {
+        if (GpuThresholdPanel is null) return;
+        var tag = (TriggerBox.SelectedItem as ComboBoxItem)?.Tag as string;
+        GpuThresholdPanel.Visibility = tag == "gpu"
+            ? Microsoft.UI.Xaml.Visibility.Visible
+            : Microsoft.UI.Xaml.Visibility.Collapsed;
+    }
+
     private RuleTrigger SelectedTrigger() => ((TriggerBox.SelectedItem as ComboBoxItem)?.Tag as string) switch
     {
         "ac" => RuleTrigger.OnAcPower,
         "dc" => RuleTrigger.OnDcPower,
         "fullscreen" => RuleTrigger.OnFullscreen,
+        "gpu" => RuleTrigger.OnGpuLoad,
+        "gpu-thermal" => RuleTrigger.OnGpuThermalThrottle,
         _ => RuleTrigger.WhileRunning,
     };
 
@@ -163,6 +182,8 @@ public sealed partial class RuleEditDialog : ContentDialog
             Trigger = SelectedTrigger(),
             Precedence = (int)PrecedenceBox.Value,
             CreatedMs = _createdMs,
+            GpuThresholdPermille = (uint)Math.Round(GpuThresholdBox.Value * 10),
+            GpuDurationSeconds = (uint)Math.Round(GpuDurationBox.Value),
             Action = new RuleAction
             {
                 Priority = SelectedPriority(),

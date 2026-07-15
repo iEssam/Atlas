@@ -96,6 +96,8 @@ public sealed partial class InspectorViewModel : ObservableObject
     [ObservableProperty] private string _overviewProductName = "—";
     [ObservableProperty] private string _overviewStartTime = "—";
     [ObservableProperty] private string _overviewCounts = "—";
+    [ObservableProperty] private string _overviewGpuUsage = "No measured GPU use";
+    [ObservableProperty] private string _overviewGpuMemory = "0 MB";
 
     /// <summary>Loads the Overview tab once (no-op if already loaded).</summary>
     public Task EnsureOverviewAsync()
@@ -119,6 +121,13 @@ public sealed partial class InspectorViewModel : ObservableObject
         {
             using var channel = AtlasChannel.Connect(_who);
             var outcome = await channel.GetProcessDetailAsync(_pid, _createTime100ns).ConfigureAwait(false);
+            ProcessRow? liveGpu = null;
+            if (outcome.Supported && outcome.Value.Available)
+            {
+                var snapshot = await channel.GetSnapshotAsync(0).ConfigureAwait(false);
+                liveGpu = snapshot.Processes.FirstOrDefault(p =>
+                    p.Pid == _pid && (_createTime100ns == 0 || p.CreateTime100Ns == _createTime100ns));
+            }
 
             Post(() =>
             {
@@ -142,6 +151,7 @@ public sealed partial class InspectorViewModel : ObservableObject
                 }
 
                 ApplyDetail(reply.Detail);
+                ApplyGpu(liveGpu);
                 OverviewHasData = true;
             });
         }
@@ -180,6 +190,18 @@ public sealed partial class InspectorViewModel : ObservableObject
 
         OverviewIsLimited = d.Limited;
         OverviewLimitedNote = R2Formatter.LimitedCoverageNote(d.Limited);
+    }
+
+    private void ApplyGpu(ProcessRow? p)
+    {
+        if (p is null)
+        {
+            OverviewGpuUsage = "No current GPU sample for this process";
+            OverviewGpuMemory = "No current GPU memory sample";
+            return;
+        }
+        OverviewGpuUsage = $"{p.GpuPermille / 10.0:F1} % (busiest engine)";
+        OverviewGpuMemory = $"{p.GpuDedicatedBytes / 1048576.0:F0} MB dedicated  •  {p.GpuSharedBytes / 1048576.0:F0} MB shared";
     }
 
     // ======================================================================

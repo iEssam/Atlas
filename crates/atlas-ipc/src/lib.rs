@@ -48,6 +48,7 @@ pub use v0::{
     CreateBookmarkRequest, DiagnoseReply, DiagnoseRequest, Diagnosis, EventRow, EvidenceItem,
     ExecuteActionReply, ExecuteActionRequest, FindResourceOwnersReply, FindResourceOwnersRequest,
     GenerateReportReply, GenerateReportRequest, GetBatteryStatusReply, GetBatteryStatusRequest,
+    GpuAdapterTelemetry, GpuEngineClass, GpuEngineTelemetry,
     GetThermalReply, GetThermalRequest, HandleRow, Incident, IncidentKind, L4Protocol,
     ListBookmarksReply, ListBookmarksRequest, ListBootsReply, ListBootsRequest,
     ListConnectionsReply, ListConnectionsRequest, ListEventsReply, ListEventsRequest,
@@ -121,6 +122,11 @@ pub const PLUGIN_TOKEN_METADATA_KEY: &str = "atlas-plugin-token";
 /// serve process snapshots. Always present in M4; sensor/ETW flags follow in
 /// later milestones (degraded-mode propagation, tech-stack §5).
 pub const CAP_PROCESS_SNAPSHOTS: &str = "process_snapshots";
+pub const CAP_GPU_CORE_TELEMETRY: &str = "gpu_core_telemetry";
+pub const CAP_GPU_PROCESS_MEMORY: &str = "gpu_process_memory";
+pub const CAP_GPU_VENDOR_SENSORS: &str = "gpu_vendor_sensors";
+pub const CAP_GPU_CRASH_MONITORING: &str = "gpu_crash_monitoring";
+pub const CAP_GPU_RULE_TRIGGERS: &str = "gpu_rule_triggers";
 
 /// M6: the service answers historical range/event/search/bookmark queries from
 /// the local store (AtlasQuery's read surface).

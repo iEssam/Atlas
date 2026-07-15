@@ -39,12 +39,24 @@
                 <TextBlock Text="WHEN TO APPLY" Style="{StaticResource AtlasSectionLabelStyle}" />
                 <ComboBox x:Name="TriggerBox"
                           AutomationProperties.Name="When to apply the rule"
-                          HorizontalAlignment="Stretch" SelectedIndex="0">
+                          HorizontalAlignment="Stretch" SelectedIndex="0"
+                          SelectionChanged="TriggerBox_SelectionChanged">
                     <ComboBoxItem Content="While running" Tag="while" />
                     <ComboBoxItem Content="On AC power" Tag="ac" />
                     <ComboBoxItem Content="On battery" Tag="dc" />
                     <ComboBoxItem Content="In fullscreen apps" Tag="fullscreen" />
+                    <ComboBoxItem Content="After sustained GPU load" Tag="gpu" />
+                    <ComboBoxItem Content="During reported GPU thermal throttling" Tag="gpu-thermal" />
                 </ComboBox>
+                <Grid x:Name="GpuThresholdPanel" Visibility="Collapsed" ColumnSpacing="12">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                    <NumberBox x:Name="GpuThresholdBox" Header="GPU load (%)" Value="80"
+                               Minimum="1" Maximum="100" SmallChange="5" SpinButtonPlacementMode="Inline"
+                               AutomationProperties.Name="GPU load threshold percent" />
+                    <NumberBox x:Name="GpuDurationBox" Grid.Column="1" Header="Sustain for (seconds)" Value="5"
+                               Minimum="1" Maximum="300" SmallChange="1" SpinButtonPlacementMode="Inline"
+                               AutomationProperties.Name="GPU load duration seconds" />
+                </Grid>
             </StackPanel>
 
             <!-- Priority -->

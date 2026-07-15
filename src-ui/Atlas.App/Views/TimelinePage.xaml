@@ -22,6 +22,7 @@
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
 
             <StackPanel Grid.Column="0" Spacing="4">
@@ -30,13 +31,18 @@
                     <TextBlock Text="Timeline" Style="{StaticResource AtlasPageHeadingStyle}" />
                     <TextBlock VerticalAlignment="Bottom" Margin="0,0,0,3"
                                Style="{StaticResource AtlasMonoMutedStyle}"
-                               Text="System CPU" />
+                               Text="{x:Bind ViewModel.SelectedMetric.Label, Mode=OneWay}" />
                 </StackPanel>
                 <TextBlock Style="{StaticResource AtlasPageDescriptionStyle}"
                            Text="System-CPU history (min/max band + average) over the selected window, with process events and bookmarks." />
             </StackPanel>
 
-            <ComboBox Grid.Column="1"
+            <ComboBox Grid.Column="1" Header="Metric" MinWidth="150"
+                      AutomationProperties.Name="Timeline metric"
+                      ItemsSource="{x:Bind ViewModel.Metrics}"
+                      SelectedItem="{x:Bind ViewModel.SelectedMetric, Mode=TwoWay}" />
+
+            <ComboBox Grid.Column="2"
                       x:Name="WindowPicker"
                       Header="Window"
                       AutomationProperties.Name="Time window"
@@ -45,7 +51,7 @@
                       ItemsSource="{x:Bind ViewModel.Windows}"
                       SelectedItem="{x:Bind ViewModel.SelectedWindow, Mode=TwoWay}" />
 
-            <Button Grid.Column="2"
+            <Button Grid.Column="3"
                     Style="{StaticResource AtlasGhostButtonStyle}"
                     VerticalAlignment="Bottom"
                     AutomationProperties.Name="Refresh timeline"
@@ -56,7 +62,7 @@
                 </StackPanel>
             </Button>
 
-            <Button Grid.Column="3"
+            <Button Grid.Column="4"
                     Style="{StaticResource AtlasGhostButtonStyle}"
                     VerticalAlignment="Bottom"
                     AutomationProperties.Name="Bookmark now"

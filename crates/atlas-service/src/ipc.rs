@@ -37,7 +37,8 @@ use atlas_ipc::{
     CreateBookmarkRequest, CreatePrivacyAlertRuleReply, CreatePrivacyAlertRuleRequest,
     DeletePrivacyAlertRuleReply, DeletePrivacyAlertRuleRequest, DiagnoseReply, DiagnoseRequest,
     EventRow, FindResourceOwnersReply, FindResourceOwnersRequest, FiredAlert, GenerateReportReply,
-    GenerateReportRequest, GetBatteryStatusReply, GetBatteryStatusRequest,
+    GenerateReportRequest, GetBatteryStatusReply, GetBatteryStatusRequest, GpuAdapterTelemetry,
+    GpuEngineClass, GpuEngineTelemetry,
     GetSecurityMetadataReply, GetSecurityMetadataRequest, GetThermalReply, GetThermalRequest,
     HandleRow, Incident, L4Protocol, ListBookmarksReply, ListBookmarksRequest, ListBootsReply,
     ListBootsRequest, ListConnectionsReply, ListConnectionsRequest, ListCrashesReply,
@@ -60,7 +61,8 @@ use atlas_ipc::{
     ThermalSensor as ProtoThermalSensor, ThreadRow, TimeRange, TokenPrivilege,
     UpdatePrivacyAlertRuleReply, UpdatePrivacyAlertRuleRequest, CAP_BATTERY_STATUS,
     CAP_BOOT_ANALYSIS, CAP_CRASH_ANALYSIS, CAP_DIAGNOSTICS, CAP_DYNAMIC_PROTECTION,
-    CAP_FTS5_SEARCH, CAP_HISTORY_QUERIES, CAP_INCIDENT_DETECTION, CAP_NETWORK_INSPECTOR,
+    CAP_FTS5_SEARCH, CAP_GPU_CORE_TELEMETRY, CAP_GPU_PROCESS_MEMORY, CAP_GPU_RULE_TRIGGERS,
+    CAP_HISTORY_QUERIES, CAP_INCIDENT_DETECTION, CAP_NETWORK_INSPECTOR,
     CAP_PLUGINS, CAP_PRIVACY_ALERTS, CAP_PRIVACY_EVENTS, CAP_PROCESS_INSPECTOR,
     CAP_PROCESS_SNAPSHOTS, CAP_PROFILES, CAP_REPORTS, CAP_RESOURCE_OWNERSHIP, CAP_RULES_ENGINE,
     CAP_SAFE_ACTIONS, CAP_SCHEDULED_TASKS, CAP_SECURITY_METADATA, CAP_SERVICES_INVENTORY,
@@ -140,6 +142,9 @@ fn to_reply(set: &SampleSet) -> SnapshotReply {
                 thread_count: p.thread_count,
                 app_group,
                 role,
+                gpu_permille: p.gpu_permille,
+                gpu_dedicated_bytes: p.gpu_dedicated_bytes,
+                gpu_shared_bytes: p.gpu_shared_bytes,
             }
         })
         .collect();
@@ -155,8 +160,46 @@ fn to_reply(set: &SampleSet) -> SnapshotReply {
             process_count: s.process_count,
             thread_count: s.thread_count,
             handle_count: s.handle_count,
+            gpu_permille: s.gpu_permille,
+            gpu_dedicated_used: s.gpu_dedicated_used,
+            gpu_dedicated_budget: s.gpu_dedicated_budget,
+            gpu_shared_used: s.gpu_shared_used,
+            gpu_shared_budget: s.gpu_shared_budget,
         }),
         processes,
+        gpu_adapters: set.gpu.adapters.iter().map(|a| GpuAdapterTelemetry {
+            adapter_key: a.luid.stable_key(),
+            name: a.name.clone(),
+            driver_version: a.driver_version.clone(),
+            active_display: a.active_display,
+            utilization_permille: a.utilization_permille,
+            dedicated_used: a.dedicated_used,
+            dedicated_budget: a.dedicated_budget,
+            shared_used: a.shared_used,
+            shared_budget: a.shared_budget,
+            engines: a.engines.iter().map(|e| GpuEngineTelemetry {
+                engine_class: match e.class {
+                    atlas_collectors::GpuEngineClass::ThreeD => GpuEngineClass::GpuEngine3d as i32,
+                    atlas_collectors::GpuEngineClass::Compute => GpuEngineClass::GpuEngineCompute as i32,
+                    atlas_collectors::GpuEngineClass::Copy => GpuEngineClass::GpuEngineCopy as i32,
+                    atlas_collectors::GpuEngineClass::VideoEncode => GpuEngineClass::GpuEngineVideoEncode as i32,
+                    atlas_collectors::GpuEngineClass::VideoDecode => GpuEngineClass::GpuEngineVideoDecode as i32,
+                    atlas_collectors::GpuEngineClass::Other => GpuEngineClass::GpuEngineOther as i32,
+                },
+                utilization_permille: e.utilization_permille,
+            }).collect(),
+            temperature_c: a.temperature_c,
+            power_w: a.power_w,
+            core_clock_mhz: a.core_clock_mhz,
+            memory_clock_mhz: a.memory_clock_mhz,
+            fan_rpm: a.fan_rpm,
+            thermal_throttling: a.thermal_throttling,
+            sensor_source: a.sensor_source.clone(),
+            sensor_unavailable_reason: a.sensor_unavailable_reason.clone(),
+            vendor_id: a.vendor_id,
+            device_id: a.device_id,
+        }).collect(),
+        gpu_unavailable_reason: set.gpu.unavailable_reason.clone(),
     }
 }
 
@@ -406,10 +449,13 @@ fn publish_ring(writer: &RingWriter, reply: &SnapshotReply) {
         .map(|p| RowInput {
             pid: p.pid,
             cpu_permille: p.cpu_permille,
+            gpu_permille: p.gpu_permille,
             working_set: p.working_set,
             private_bytes: p.private_bytes,
             read_bps: p.read_bps,
             write_bps: p.write_bps,
+            gpu_dedicated_bytes: p.gpu_dedicated_bytes,
+            gpu_shared_bytes: p.gpu_shared_bytes,
             name: &p.image_name,
         })
         .collect();
@@ -420,10 +466,15 @@ fn publish_ring(writer: &RingWriter, reply: &SnapshotReply) {
         process_count: s.map(|g| g.process_count).unwrap_or(0),
         thread_count: s.map(|g| g.thread_count).unwrap_or(0),
         handle_count: s.map(|g| g.handle_count).unwrap_or(0),
+        gpu_permille: s.map(|g| g.gpu_permille).unwrap_or(0),
         mem_used: s.map(|g| g.mem_used).unwrap_or(0),
         mem_total: s.map(|g| g.mem_total).unwrap_or(0),
         commit_used: s.map(|g| g.commit_used).unwrap_or(0),
         commit_limit: s.map(|g| g.commit_limit).unwrap_or(0),
+        gpu_dedicated_used: s.map(|g| g.gpu_dedicated_used).unwrap_or(0),
+        gpu_dedicated_budget: s.map(|g| g.gpu_dedicated_budget).unwrap_or(0),
+        gpu_shared_used: s.map(|g| g.gpu_shared_used).unwrap_or(0),
+        gpu_shared_budget: s.map(|g| g.gpu_shared_budget).unwrap_or(0),
         rows: &rows,
     });
 }
@@ -470,6 +521,13 @@ impl AtlasQuery for QueryService {
             // backed persistence + audit; the applier runs on the sampler thread.
             flags.push(CAP_RULES_ENGINE.to_string());
             flags.push(CAP_PROFILES.to_string());
+            flags.push(CAP_GPU_RULE_TRIGGERS.to_string());
+            if self.slot.read().ok().and_then(|s| s.as_ref().cloned())
+                .map(|s| !s.gpu_adapters.is_empty()).unwrap_or(false)
+            {
+                flags.push(CAP_GPU_CORE_TELEMETRY.to_string());
+                flags.push(CAP_GPU_PROCESS_MEMORY.to_string());
+            }
             // R3: dynamic responsiveness protection (the watchdog runs on the
             // sampler tick, store-backed config, disabled by default).
             flags.push(CAP_DYNAMIC_PROTECTION.to_string());
@@ -2001,10 +2059,27 @@ fn map_metric(kind: i32) -> Option<Metric> {
         MetricKind::PrivateBytes => Metric::PrivateBytes,
         MetricKind::ReadBps => Metric::ReadBps,
         MetricKind::WriteBps => Metric::WriteBps,
+        MetricKind::GpuPermille => Metric::GpuPermille,
+        MetricKind::GpuDedicatedBytes => Metric::GpuDedicatedBytes,
+        MetricKind::GpuSharedBytes => Metric::GpuSharedBytes,
         MetricKind::SysCpuPermille => Metric::SysCpuPermille,
         MetricKind::SysMemUsed => Metric::SysMemUsed,
         MetricKind::SysCommitUsed => Metric::SysCommitUsed,
         MetricKind::SysProcessCount => Metric::SysProcessCount,
+        MetricKind::SysGpuPermille => Metric::SysGpuPermille,
+        MetricKind::SysGpuDedicatedUsed => Metric::SysGpuDedicatedUsed,
+        MetricKind::SysGpuSharedUsed => Metric::SysGpuSharedUsed,
+        MetricKind::SysGpuMemoryUsed => Metric::SysGpuMemoryUsed,
+        MetricKind::SysGpuMemoryBudget => Metric::SysGpuMemoryBudget,
+        MetricKind::GpuAdapterPermille => Metric::GpuAdapterPermille,
+        MetricKind::GpuAdapterDedicatedUsed => Metric::GpuAdapterDedicatedUsed,
+        MetricKind::GpuAdapterSharedUsed => Metric::GpuAdapterSharedUsed,
+        MetricKind::GpuAdapterTemperatureC => Metric::GpuAdapterTemperatureC,
+        MetricKind::GpuAdapterPowerW => Metric::GpuAdapterPowerW,
+        MetricKind::GpuAdapterCoreClockMhz => Metric::GpuAdapterCoreClockMhz,
+        MetricKind::GpuAdapterMemoryClockMhz => Metric::GpuAdapterMemoryClockMhz,
+        MetricKind::GpuAdapterFanRpm => Metric::GpuAdapterFanRpm,
+        MetricKind::GpuAdapterThrottling => Metric::GpuAdapterThrottling,
     })
 }
 
@@ -2042,6 +2117,7 @@ mod tests {
             thread_count: 0,
             app_group: String::new(),
             role: 0,
+            ..Default::default()
         }
     }
 
@@ -2049,6 +2125,7 @@ mod tests {
         SnapshotReply {
             system: None,
             processes: rows,
+            ..Default::default()
         }
     }
 
@@ -2133,6 +2210,9 @@ mod tests {
                 write_bps: 0,
                 handle_count: 0,
                 thread_count: 0,
+                gpu_permille: 0,
+                gpu_dedicated_bytes: 0,
+                gpu_shared_bytes: 0,
             }
         }
         let set = SampleSet {
@@ -2146,6 +2226,11 @@ mod tests {
                 process_count: 0,
                 thread_count: 0,
                 handle_count: 0,
+                gpu_permille: 0,
+                gpu_dedicated_used: 0,
+                gpu_dedicated_budget: 0,
+                gpu_shared_used: 0,
+                gpu_shared_budget: 0,
             },
             processes: vec![
                 sample(100, 50, "chrome.exe"),
@@ -2154,6 +2239,7 @@ mod tests {
             ],
             started: vec![],
             exited: vec![],
+            gpu: Default::default(),
         };
         let reply = to_reply(&set);
         let main = reply.processes.iter().find(|p| p.pid == 100).unwrap();

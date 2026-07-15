@@ -70,6 +70,8 @@ public static class RulesFormatter
         RuleTrigger.OnAcPower => "on AC power",
         RuleTrigger.OnDcPower => "on battery",
         RuleTrigger.OnFullscreen => "in fullscreen apps",
+        RuleTrigger.OnGpuLoad => "after sustained GPU load",
+        RuleTrigger.OnGpuThermalThrottle => "during GPU thermal throttling",
         _ => "while running",
     };
 

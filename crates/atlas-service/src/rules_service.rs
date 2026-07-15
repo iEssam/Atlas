@@ -111,6 +111,8 @@ fn rule_to_row(r: &Rule) -> RuleRow {
         eco_qos: a.eco_qos,
         precedence: r.precedence,
         created_ms: r.created_ms,
+        gpu_threshold_permille: r.gpu_threshold_permille.clamp(10, 1000),
+        gpu_duration_seconds: r.gpu_duration_seconds.clamp(1, 300),
     }
 }
 
@@ -130,6 +132,8 @@ fn row_to_rule(row: &RuleRow) -> Rule {
         }),
         precedence: row.precedence,
         created_ms: row.created_ms,
+        gpu_threshold_permille: row.gpu_threshold_permille,
+        gpu_duration_seconds: row.gpu_duration_seconds,
     }
 }
 

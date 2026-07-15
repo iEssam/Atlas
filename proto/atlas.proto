@@ -35,6 +35,10 @@ message ProcessRow {
   // parent chain). Empty = ungrouped.
   string app_group = 13;
   ProcessRole role = 14;
+  // GPU usage is the busiest engine for this process, not a sum of engines.
+  uint32 gpu_permille = 15;
+  uint64 gpu_dedicated_bytes = 16;
+  uint64 gpu_shared_bytes = 17;
 }
 
 enum ProcessRole {
@@ -57,6 +61,48 @@ message SystemGauges {
   uint32 process_count = 7;
   uint32 thread_count = 8;
   uint32 handle_count = 9;
+  uint32 gpu_permille = 10;
+  uint64 gpu_dedicated_used = 11;
+  uint64 gpu_dedicated_budget = 12;
+  uint64 gpu_shared_used = 13;
+  uint64 gpu_shared_budget = 14;
+}
+
+enum GpuEngineClass {
+  GPU_ENGINE_OTHER = 0;
+  GPU_ENGINE_3D = 1;
+  GPU_ENGINE_COMPUTE = 2;
+  GPU_ENGINE_COPY = 3;
+  GPU_ENGINE_VIDEO_ENCODE = 4;
+  GPU_ENGINE_VIDEO_DECODE = 5;
+}
+
+message GpuEngineTelemetry {
+  GpuEngineClass engine_class = 1;
+  uint32 utilization_permille = 2;
+}
+
+message GpuAdapterTelemetry {
+  string adapter_key = 1;
+  string name = 2;
+  string driver_version = 3;
+  bool active_display = 4;
+  uint32 utilization_permille = 5;
+  uint64 dedicated_used = 6;
+  uint64 dedicated_budget = 7;
+  uint64 shared_used = 8;
+  uint64 shared_budget = 9;
+  repeated GpuEngineTelemetry engines = 10;
+  optional double temperature_c = 11;
+  optional double power_w = 12;
+  optional uint32 core_clock_mhz = 13;
+  optional uint32 memory_clock_mhz = 14;
+  optional uint32 fan_rpm = 15;
+  optional bool thermal_throttling = 16;
+  string sensor_source = 17;
+  string sensor_unavailable_reason = 18;
+  uint32 vendor_id = 19;
+  uint32 device_id = 20;
 }
 
 message SnapshotRequest {
@@ -67,6 +113,8 @@ message SnapshotRequest {
 message SnapshotReply {
   SystemGauges system = 1;
   repeated ProcessRow processes = 2;
+  repeated GpuAdapterTelemetry gpu_adapters = 3;
+  string gpu_unavailable_reason = 4;
 }
 
 // ---------------------------------------------------------------------------
@@ -89,10 +137,27 @@ enum MetricKind {
   PRIVATE_BYTES = 3;
   READ_BPS = 4;
   WRITE_BPS = 5;
+  GPU_PERMILLE = 6;
+  GPU_DEDICATED_BYTES = 7;
+  GPU_SHARED_BYTES = 8;
   SYS_CPU_PERMILLE = 20;
   SYS_MEM_USED = 21;
   SYS_COMMIT_USED = 22;
   SYS_PROCESS_COUNT = 23;
+  SYS_GPU_PERMILLE = 24;
+  SYS_GPU_DEDICATED_USED = 25;
+  SYS_GPU_SHARED_USED = 26;
+  SYS_GPU_MEMORY_USED = 27;
+  SYS_GPU_MEMORY_BUDGET = 28;
+  GPU_ADAPTER_PERMILLE = 40;
+  GPU_ADAPTER_DEDICATED_USED = 41;
+  GPU_ADAPTER_SHARED_USED = 42;
+  GPU_ADAPTER_TEMPERATURE_C = 43;
+  GPU_ADAPTER_POWER_W = 44;
+  GPU_ADAPTER_CORE_CLOCK_MHZ = 45;
+  GPU_ADAPTER_MEMORY_CLOCK_MHZ = 46;
+  GPU_ADAPTER_FAN_RPM = 47;
+  GPU_ADAPTER_THROTTLING = 48;
 }
 
 message QueryRangeRequest {
@@ -331,6 +396,9 @@ enum IncidentKind {
   CPU_SATURATION = 1;
   MEMORY_PRESSURE = 2;
   DISK_LATENCY = 3;
+  GPU_SATURATION = 4;
+  GPU_MEMORY_EXHAUSTION = 5;
+  GPU_THERMAL_THROTTLING = 6;
 }
 
 enum Severity {
@@ -651,6 +719,7 @@ enum CrashKind {
   BUGCHECK = 3;
   SERVICE_FAILURE = 4;
   UNEXPECTED_SHUTDOWN = 5;
+  GPU_DRIVER_RESET = 6;
 }
 
 message CrashRecord {
@@ -1115,6 +1184,10 @@ enum RuleTrigger {
   ON_DC_POWER = 3;
   // ...only while a matching process is the foreground/fullscreen app.
   ON_FULLSCREEN = 4;
+  // Matching process sustained the configured GPU load.
+  ON_GPU_LOAD = 5;
+  // The adapter used by the matching process reports hardware throttling.
+  ON_GPU_THERMAL_THROTTLE = 6;
 }
 
 enum PriorityClass {
@@ -1158,6 +1231,9 @@ message Rule {
   // Higher precedence wins when rules conflict on the same process.
   int32 precedence = 7;
   int64 created_ms = 8;
+  // Used by ON_GPU_LOAD. UI defaults: 800 permille for 5 seconds.
+  uint32 gpu_threshold_permille = 9;
+  uint32 gpu_duration_seconds = 10;
 }
 
 message ListRulesRequest {}

@@ -266,16 +266,20 @@ public sealed class LiveMetricsService
                 createTime100ns: 0, // the ring carries pid only
                 r.Name,
                 r.CpuPermille / 10.0,
+                r.GpuPermille / 10.0,
                 r.WorkingSet,
                 r.PrivateBytes,
                 threadCount: 0, // not carried in the ring rows
-                handleCount: 0));
+                handleCount: 0,
+                r.GpuDedicatedBytes, r.GpuSharedBytes));
         }
         return new MetricsSnapshot(
             MetricsSource.Ring,
             s.CpuPermille / 10.0,
+            s.GpuPermille / 10.0,
             s.MemUsed, s.MemTotal, s.CommitUsed, s.CommitLimit,
             s.ProcessCount, s.ThreadCount, s.HandleCount,
+            s.GpuDedicatedUsed, s.GpuDedicatedBudget, s.GpuSharedUsed, s.GpuSharedBudget,
             rows);
     }
 
@@ -289,15 +293,18 @@ public sealed class LiveMetricsService
                 p.CreateTime100Ns,
                 p.ImageName,
                 p.CpuPermille / 10.0,
+                p.GpuPermille / 10.0,
                 p.WorkingSet,
                 p.PrivateBytes,
                 p.ThreadCount,
-                p.HandleCount));
+                p.HandleCount,
+                p.GpuDedicatedBytes, p.GpuSharedBytes));
         }
         var sys = reply.System;
         return new MetricsSnapshot(
             MetricsSource.Stream,
             sys?.CpuPermille / 10.0 ?? 0,
+            sys?.GpuPermille / 10.0 ?? 0,
             sys?.MemUsed ?? 0,
             sys?.MemTotal ?? 0,
             sys?.CommitUsed ?? 0,
@@ -305,6 +312,10 @@ public sealed class LiveMetricsService
             sys?.ProcessCount ?? 0,
             sys?.ThreadCount ?? 0,
             sys?.HandleCount ?? 0,
+            sys?.GpuDedicatedUsed ?? 0,
+            sys?.GpuDedicatedBudget ?? 0,
+            sys?.GpuSharedUsed ?? 0,
+            sys?.GpuSharedBudget ?? 0,
             rows);
     }
 

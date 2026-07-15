@@ -20,6 +20,7 @@ public sealed partial class LiveActivityPage : Page
     public string CapabilitiesText =>
         $"service v{ViewModel.ServiceVersion}  •  capabilities: {ViewModel.CapabilityFlags}";
     public string CpuText => $"{ViewModel.SystemCpuPercent:F1} %";
+    public string GpuText => $"{ViewModel.SystemGpuPercent:F1} %";
     public string MemText => $"{ViewModel.MemUsedGb:F1} / {ViewModel.MemTotalGb:F1} GB";
 
     public LiveActivityPage()
@@ -38,6 +39,7 @@ public sealed partial class LiveActivityPage : Page
             if (e.PropertyName is nameof(ViewModel.ServiceVersion)
                 or nameof(ViewModel.CapabilityFlags)
                 or nameof(ViewModel.SystemCpuPercent)
+                or nameof(ViewModel.SystemGpuPercent)
                 or nameof(ViewModel.MemUsedGb)
                 or nameof(ViewModel.MemTotalGb))
             {

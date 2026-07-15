@@ -694,7 +694,7 @@ struct RuleArgs {
     /// Enable EcoQoS (efficiency mode) on matching processes.
     #[arg(long)]
     eco: bool,
-    /// Trigger: while-running | ac | dc | fullscreen (default while-running).
+    /// Trigger: while-running | ac | dc | fullscreen | gpu-load | gpu-thermal.
     #[arg(long)]
     trigger: Option<String>,
     /// Precedence — higher wins on conflict (default 0).
@@ -1150,6 +1150,9 @@ struct ProcMetrics {
     private_bytes: u64,
     read_bps: u64,
     write_bps: u64,
+    gpu_permille: u32,
+    gpu_dedicated_bytes: u64,
+    gpu_shared_bytes: u64,
 }
 
 impl ProcMetrics {
@@ -1160,6 +1163,9 @@ impl ProcMetrics {
             private_bytes: p.private_bytes,
             read_bps: p.read_bps,
             write_bps: p.write_bps,
+            gpu_permille: p.gpu_permille,
+            gpu_dedicated_bytes: p.gpu_dedicated_bytes,
+            gpu_shared_bytes: p.gpu_shared_bytes,
         }
     }
 }
@@ -1177,6 +1183,11 @@ struct SysMetrics {
     process_count: u32,
     thread_count: u32,
     handle_count: u32,
+    gpu_permille: u32,
+    gpu_dedicated_used: u64,
+    gpu_shared_used: u64,
+    gpu_memory_budget: u64,
+    gpu_throttling: Option<bool>,
 }
 
 /// One tick's worth of raw samples handed to the writer: the timestamp, the
@@ -1186,6 +1197,7 @@ struct TickSamples {
     ts_ms: i64,
     sys: SysMetrics,
     procs: Vec<(ProcIdentity, ProcMetrics)>,
+    gpu_adapters: Vec<atlas_collectors::GpuAdapterSample>,
 }
 
 /// Time-weighted accumulator for Atlas's own overhead over a flush window
@@ -1689,6 +1701,15 @@ fn capture_tick(set: &SampleSet) -> TickSamples {
         process_count: set.system.process_count,
         thread_count: set.system.thread_count,
         handle_count: set.system.handle_count,
+        gpu_permille: set.system.gpu_permille,
+        gpu_dedicated_used: set.system.gpu_dedicated_used,
+        gpu_shared_used: set.system.gpu_shared_used,
+        gpu_memory_budget: set.system.gpu_dedicated_budget.saturating_add(set.system.gpu_shared_budget),
+        gpu_throttling: if set.gpu.adapters.iter().any(|a| a.thermal_throttling == Some(true)) {
+            Some(true)
+        } else if set.gpu.adapters.iter().any(|a| a.thermal_throttling == Some(false)) {
+            Some(false)
+        } else { None },
     };
     let procs = set
         .processes
@@ -1708,6 +1729,7 @@ fn capture_tick(set: &SampleSet) -> TickSamples {
         ts_ms: set.ts_ms,
         sys,
         procs,
+        gpu_adapters: set.gpu.adapters.clone(),
     }
 }
 
@@ -1797,6 +1819,14 @@ impl BlockWriter {
             ts_ms,
             sys.handle_count as f64,
         );
+        let _ = self.heads.append(SeriesKey::system(Metric::SysGpuPermille), ts_ms, sys.gpu_permille as f64);
+        let _ = self.heads.append(SeriesKey::system(Metric::SysGpuDedicatedUsed), ts_ms, sys.gpu_dedicated_used as f64);
+        let _ = self.heads.append(SeriesKey::system(Metric::SysGpuSharedUsed), ts_ms, sys.gpu_shared_used as f64);
+        let _ = self.heads.append(SeriesKey::system(Metric::SysGpuMemoryUsed), ts_ms, sys.gpu_dedicated_used.saturating_add(sys.gpu_shared_used) as f64);
+        let _ = self.heads.append(SeriesKey::system(Metric::SysGpuMemoryBudget), ts_ms, sys.gpu_memory_budget as f64);
+        if let Some(v) = sys.gpu_throttling {
+            let _ = self.heads.append(SeriesKey::system(Metric::SysGpuThrottling), ts_ms, if v { 1.0 } else { 0.0 });
+        }
     }
 
     /// Appends one process's five metric values under its resolved `scope`.
@@ -1826,7 +1856,23 @@ impl BlockWriter {
             ts_ms,
             m.write_bps as f64,
         );
+        let _ = self.heads.append(SeriesKey::new(Metric::GpuPermille, scope), ts_ms, m.gpu_permille as f64);
+        let _ = self.heads.append(SeriesKey::new(Metric::GpuDedicatedBytes, scope), ts_ms, m.gpu_dedicated_bytes as f64);
+        let _ = self.heads.append(SeriesKey::new(Metric::GpuSharedBytes, scope), ts_ms, m.gpu_shared_bytes as f64);
         self.scope_last_seen.insert(scope, ts_ms);
+    }
+
+    fn append_gpu_adapter(&mut self, ts_ms: i64, scope: i64, a: &atlas_collectors::GpuAdapterSample) {
+        let mut add = |metric, value| { let _ = self.heads.append(SeriesKey::new(metric, scope), ts_ms, value); };
+        add(Metric::GpuAdapterPermille, a.utilization_permille as f64);
+        add(Metric::GpuAdapterDedicatedUsed, a.dedicated_used as f64);
+        add(Metric::GpuAdapterSharedUsed, a.shared_used as f64);
+        if let Some(v) = a.temperature_c { add(Metric::GpuAdapterTemperatureC, v); }
+        if let Some(v) = a.power_w { add(Metric::GpuAdapterPowerW, v); }
+        if let Some(v) = a.core_clock_mhz { add(Metric::GpuAdapterCoreClockMhz, v as f64); }
+        if let Some(v) = a.memory_clock_mhz { add(Metric::GpuAdapterMemoryClockMhz, v as f64); }
+        if let Some(v) = a.fan_rpm { add(Metric::GpuAdapterFanRpm, v as f64); }
+        if let Some(v) = a.thermal_throttling { add(Metric::GpuAdapterThrottling, if v { 1.0 } else { 0.0 }); }
     }
 
     /// Seals heads that hit the point/age cap.
@@ -1912,6 +1958,13 @@ fn writer_thread(
                 latest_mem_total = tick.sys.mem_total;
             }
             bw.append_sys(tick.ts_ms, &tick.sys);
+            for adapter in &tick.gpu_adapters {
+                let scope = store.upsert_gpu_adapter(
+                    &adapter.luid.stable_key(), &adapter.name, &adapter.driver_version,
+                    adapter.active_display, tick.ts_ms,
+                )?;
+                bw.append_gpu_adapter(tick.ts_ms, scope, adapter);
+            }
             for (identity, metrics) in &tick.procs {
                 let key = ProcKey {
                     pid: identity.pid,
@@ -4692,8 +4745,10 @@ fn parse_trigger(s: &str) -> Result<i32> {
         "ac" | "ac-power" | "on-ac" => T::OnAcPower,
         "dc" | "dc-power" | "on-dc" | "battery" => T::OnDcPower,
         "fullscreen" | "foreground" => T::OnFullscreen,
+        "gpu-load" | "gpu" => T::OnGpuLoad,
+        "gpu-thermal" | "gpu-throttle" => T::OnGpuThermalThrottle,
         other => {
-            anyhow::bail!("unknown trigger '{other}' (while-running|ac|dc|fullscreen)")
+            anyhow::bail!("unknown trigger '{other}' (while-running|ac|dc|fullscreen|gpu-load|gpu-thermal)")
         }
     };
     Ok(v as i32)
@@ -4770,6 +4825,8 @@ fn build_rule_row(args: &RuleArgs, enabled: bool) -> Result<atlas_store::RuleRow
         eco_qos: args.eco,
         precedence: args.precedence,
         created_ms: 0,
+        gpu_threshold_permille: 800,
+        gpu_duration_seconds: 5,
     })
 }
 
@@ -4781,6 +4838,8 @@ fn describe_rule(r: &atlas_store::RuleRow) -> String {
         rules::Trigger::OnAcPower => "on-AC",
         rules::Trigger::OnDcPower => "on-DC",
         rules::Trigger::OnFullscreen => "fullscreen",
+        rules::Trigger::OnGpuLoad => "gpu-load",
+        rules::Trigger::OnGpuThermalThrottle => "gpu-thermal-throttle",
     };
     let prio = rules::Priority::from_disc(r.priority_class).label();
     let aff = rules::Affinity::from_row(r.affinity_mode, r.affinity_mask).label();
@@ -5814,6 +5873,11 @@ mod tests {
             process_count: 200,
             thread_count: 2000,
             handle_count: 40000,
+            gpu_permille: 0,
+            gpu_dedicated_used: 0,
+            gpu_shared_used: 0,
+            gpu_memory_budget: 0,
+            gpu_throttling: None,
         }
     }
 
@@ -5824,6 +5888,9 @@ mod tests {
             private_bytes: 80 << 20,
             read_bps: 0,
             write_bps: 0,
+            gpu_permille: 0,
+            gpu_dedicated_bytes: 0,
+            gpu_shared_bytes: 0,
         }
     }
 
@@ -5857,7 +5924,7 @@ mod tests {
         assert!((raw_only - tiered).abs() < 1e-6);
     }
 
-    /// A head that reaches the point cap seals into exactly the six system
+    /// A head that reaches the point cap seals every system series
     /// series (one block each) and clears.
     #[test]
     fn block_writer_seals_sys_series_on_point_cap() {
@@ -5866,13 +5933,13 @@ mod tests {
             bw.append_sys(1000 + i * 1000, &sys_metrics());
         }
         let blocks = bw.drain_sealed();
-        // Six Sys* series, each sealed once at the cap.
-        assert_eq!(blocks.len(), 6);
+        // CPU/memory/count and GPU series, each sealed once at the cap.
+        assert_eq!(blocks.len(), 11);
         assert!(blocks.iter().all(|b| b.points == SEAL_MAX_POINTS));
         assert!(blocks.iter().all(|b| b.key.scope == SYSTEM_SCOPE));
     }
 
-    /// Draining a process scope on exit flushes its five series and forgets it,
+    /// Draining a process scope on exit flushes its eight series and forgets it,
     /// so the cardinality guard no longer tracks it.
     #[test]
     fn block_writer_drains_scope_on_exit() {
@@ -5880,7 +5947,7 @@ mod tests {
         bw.append_proc(1000, 42, &proc_metrics(500));
         bw.append_proc(2000, 42, &proc_metrics(400));
         let blocks = bw.drain_scope(42);
-        assert_eq!(blocks.len(), 5, "five per-process series");
+        assert_eq!(blocks.len(), 8, "eight per-process series including GPU");
         assert!(blocks.iter().all(|b| b.key.scope == 42 && b.points == 2));
         assert!(!bw.scope_last_seen.contains_key(&42));
     }
@@ -5897,8 +5964,8 @@ mod tests {
         bw.append_proc(now, 2, &proc_metrics(20));
 
         let evicted = bw.evict_idle(now);
-        // Only scope 1's five series are shed.
-        assert_eq!(evicted.len(), 5);
+        // Only scope 1's eight series are shed.
+        assert_eq!(evicted.len(), 8);
         assert!(evicted.iter().all(|b| b.key.scope == 1));
         assert!(!bw.scope_last_seen.contains_key(&1));
         assert!(bw.scope_last_seen.contains_key(&2), "active scope kept");

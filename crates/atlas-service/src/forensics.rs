@@ -348,6 +348,20 @@ impl CrashScanner {
                 peak / 1_000_000_000.0
             ));
         }
+        if c.kind == atlas_collectors::crashes::crash_kind::GPU_DRIVER_RESET {
+            if let Some(peak) = self.peak(Metric::SysGpuPermille, win_start, c.ts_ms) {
+                ctx.push(format!(
+                    "peak GPU activity {:.0}% in the 5 min before this reset (correlation, not proof)",
+                    peak / 10.0
+                ));
+            }
+            if let Some(peak) = self.peak(Metric::SysGpuMemoryUsed, win_start, c.ts_ms) {
+                ctx.push(format!(
+                    "peak measured graphics memory {:.1} GB in the 5 min before this reset (correlation, not proof)",
+                    peak / 1_000_000_000.0
+                ));
+            }
+        }
 
         // System changes in the 24 h before the crash.
         let changes = self.recent_changes(c.ts_ms);

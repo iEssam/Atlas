@@ -466,6 +466,21 @@ CREATE TABLE IF NOT EXISTS plugin_launch_nonce (
 );
 "#;
 
+// Additive v14 GPU adapter identity registry. Numeric telemetry remains in the
+// existing Gorilla block store; adapter-scoped metrics use this row id as scope.
+const SCHEMA_V14_GPU: &str = r#"
+CREATE TABLE IF NOT EXISTS gpu_adapter (
+    id              INTEGER PRIMARY KEY,
+    adapter_key     TEXT NOT NULL UNIQUE,
+    name            TEXT NOT NULL,
+    driver_version  TEXT NOT NULL,
+    active_display  INTEGER NOT NULL,
+    first_seen_ms   INTEGER NOT NULL,
+    last_seen_ms    INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_gpu_adapter_last_seen ON gpu_adapter(last_seen_ms);
+"#;
+
 /// Whether `table` already has a column named `column`, via `PRAGMA table_info`.
 /// Used to make the v3 `ADD COLUMN` migration idempotent (SQLite lacks
 /// `ADD COLUMN IF NOT EXISTS`).
@@ -488,6 +503,17 @@ pub struct ProcIdentity {
     pub parent_pid: u32,
     pub session_id: u32,
     pub image_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct GpuAdapterRow {
+    pub id: i64,
+    pub adapter_key: String,
+    pub name: String,
+    pub driver_version: String,
+    pub active_display: bool,
+    pub first_seen_ms: i64,
+    pub last_seen_ms: i64,
 }
 
 /// One row per flush window recording Atlas's own overhead (PRD §12.2).
@@ -720,6 +746,8 @@ pub struct RuleRow {
     pub eco_qos: bool,
     pub precedence: i32,
     pub created_ms: i64,
+    pub gpu_threshold_permille: u32,
+    pub gpu_duration_seconds: u32,
 }
 
 /// One persisted profile: a named, activatable bundle of rule ids plus an
@@ -853,6 +881,47 @@ impl Store {
         Ok(store)
     }
 
+    /// Registers or refreshes a GPU adapter and returns the stable row id used
+    /// as the scope for adapter-specific time series.
+    pub fn upsert_gpu_adapter(
+        &self,
+        adapter_key: &str,
+        name: &str,
+        driver_version: &str,
+        active_display: bool,
+        seen_ms: i64,
+    ) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO gpu_adapter
+                 (adapter_key, name, driver_version, active_display, first_seen_ms, last_seen_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?5)
+             ON CONFLICT(adapter_key) DO UPDATE SET
+                 name = excluded.name,
+                 driver_version = excluded.driver_version,
+                 active_display = excluded.active_display,
+                 last_seen_ms = excluded.last_seen_ms",
+            params![adapter_key, name, driver_version, active_display as i64, seen_ms],
+        )?;
+        Ok(self.conn.query_row(
+            "SELECT id FROM gpu_adapter WHERE adapter_key = ?1",
+            params![adapter_key],
+            |row| row.get(0),
+        )?)
+    }
+
+    pub fn list_gpu_adapters(&self) -> Result<Vec<GpuAdapterRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, adapter_key, name, driver_version, active_display, first_seen_ms, last_seen_ms
+             FROM gpu_adapter ORDER BY active_display DESC, id ASC",
+        )?;
+        let rows = stmt.query_map([], |row| Ok(GpuAdapterRow {
+            id: row.get(0)?, adapter_key: row.get(1)?, name: row.get(2)?,
+            driver_version: row.get(3)?, active_display: row.get::<_, i64>(4)? != 0,
+            first_seen_ms: row.get(5)?, last_seen_ms: row.get(6)?,
+        }))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
     fn migrate(&self) -> Result<()> {
         let version: i64 = self
             .conn
@@ -923,6 +992,20 @@ impl Store {
         if version < 13 {
             self.conn.execute_batch(SCHEMA_V13_PLUGIN)?;
             self.conn.execute_batch("PRAGMA user_version = 13;")?;
+        }
+        if version < 14 {
+            self.conn.execute_batch(SCHEMA_V14_GPU)?;
+            if !column_exists(&self.conn, "rule", "gpu_threshold_permille")? {
+                self.conn.execute_batch(
+                    "ALTER TABLE rule ADD COLUMN gpu_threshold_permille INTEGER NOT NULL DEFAULT 800;",
+                )?;
+            }
+            if !column_exists(&self.conn, "rule", "gpu_duration_seconds")? {
+                self.conn.execute_batch(
+                    "ALTER TABLE rule ADD COLUMN gpu_duration_seconds INTEGER NOT NULL DEFAULT 5;",
+                )?;
+            }
+            self.conn.execute_batch("PRAGMA user_version = 14;")?;
         }
         // FTS5 objects are built (idempotently, IF NOT EXISTS) on every open
         // once the module is confirmed present, independent of user_version: a
@@ -2358,8 +2441,9 @@ impl Store {
         self.conn.execute(
             "INSERT INTO rule
                  (name, enabled, match_image, trigger, priority_class,
-                  affinity_mode, affinity_mask, eco_qos, precedence, created_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                  affinity_mode, affinity_mask, eco_qos, precedence, created_ms,
+                  gpu_threshold_permille, gpu_duration_seconds)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 r.name,
                 r.enabled as i64,
@@ -2371,6 +2455,8 @@ impl Store {
                 r.eco_qos as i64,
                 r.precedence,
                 created,
+                r.gpu_threshold_permille as i64,
+                r.gpu_duration_seconds as i64,
             ],
         )?;
         Ok(self.conn.last_insert_rowid())
@@ -2389,12 +2475,14 @@ impl Store {
             eco_qos: row.get::<_, i64>(8)? != 0,
             precedence: row.get::<_, i64>(9)? as i32,
             created_ms: row.get(10)?,
+            gpu_threshold_permille: row.get::<_, i64>(11)? as u32,
+            gpu_duration_seconds: row.get::<_, i64>(12)? as u32,
         })
     }
 
     const RULE_COLS: &'static str =
         "id, name, enabled, match_image, trigger, priority_class, affinity_mode, \
-         affinity_mask, eco_qos, precedence, created_ms";
+         affinity_mask, eco_qos, precedence, created_ms, gpu_threshold_permille, gpu_duration_seconds";
 
     /// Fetches one rule by id.
     pub fn get_rule(&self, id: i64) -> Result<Option<RuleRow>> {
@@ -2439,7 +2527,8 @@ impl Store {
             "UPDATE rule SET
                  name = ?2, enabled = ?3, match_image = ?4, trigger = ?5,
                  priority_class = ?6, affinity_mode = ?7, affinity_mask = ?8,
-                 eco_qos = ?9, precedence = ?10
+                 eco_qos = ?9, precedence = ?10,
+                 gpu_threshold_permille = ?11, gpu_duration_seconds = ?12
              WHERE id = ?1",
             params![
                 r.id,
@@ -2452,6 +2541,8 @@ impl Store {
                 r.affinity_mask as i64,
                 r.eco_qos as i64,
                 r.precedence,
+                r.gpu_threshold_permille as i64,
+                r.gpu_duration_seconds as i64,
             ],
         )?;
         Ok(n > 0)
@@ -3304,7 +3395,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 13, "migration walks v1 up to the current schema");
+        assert_eq!(version, 14, "migration walks v1 up to the current schema");
 
         store
             .write_self_sample(&SelfSampleRow {
@@ -3380,7 +3471,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 13, "migration walks a v2 db to the current schema");
+        assert_eq!(version, 14, "migration walks a v2 db to the current schema");
         assert!(column_exists(&store.conn, "process_instance", "exit_status").unwrap());
 
         // Pre-existing row survived and has a NULL exit_status.
@@ -3490,13 +3581,13 @@ mod tests {
     }
 
     #[test]
-    fn fresh_database_is_v13() {
+    fn fresh_database_is_v14() {
         let store = Store::open_in_memory().unwrap();
         let version: i64 = store
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 13);
+        assert_eq!(version, 14);
     }
 
     #[test]
@@ -3563,6 +3654,8 @@ mod tests {
             eco_qos: true,
             precedence: 10,
             created_ms: 0,
+            gpu_threshold_permille: 800,
+            gpu_duration_seconds: 5,
         }
     }
 

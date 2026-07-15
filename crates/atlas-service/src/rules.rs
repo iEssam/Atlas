@@ -31,6 +31,8 @@ pub enum Trigger {
     OnAcPower,
     OnDcPower,
     OnFullscreen,
+    OnGpuLoad,
+    OnGpuThermalThrottle,
 }
 
 impl Trigger {
@@ -39,6 +41,8 @@ impl Trigger {
             2 => Trigger::OnAcPower,
             3 => Trigger::OnDcPower,
             4 => Trigger::OnFullscreen,
+            5 => Trigger::OnGpuLoad,
+            6 => Trigger::OnGpuThermalThrottle,
             _ => Trigger::WhileRunning,
         }
     }
@@ -127,6 +131,8 @@ pub struct ResolvableRule {
     pub affinity: Affinity,
     pub eco_qos: bool,
     pub precedence: i32,
+    pub gpu_threshold_permille: u32,
+    pub gpu_duration_seconds: u32,
 }
 
 impl ResolvableRule {
@@ -142,6 +148,8 @@ impl ResolvableRule {
             affinity: Affinity::from_row(r.affinity_mode, r.affinity_mask),
             eco_qos: r.eco_qos,
             precedence: r.precedence,
+            gpu_threshold_permille: r.gpu_threshold_permille.clamp(10, 1000),
+            gpu_duration_seconds: r.gpu_duration_seconds.clamp(1, 300),
         }
     }
 
@@ -159,6 +167,8 @@ impl ResolvableRule {
             Trigger::OnAcPower => env.on_ac,
             Trigger::OnDcPower => !env.on_ac,
             Trigger::OnFullscreen => false, // decided per-process by the caller
+            Trigger::OnGpuLoad => false, // decided per-process by the caller
+            Trigger::OnGpuThermalThrottle => env.gpu_thermal_throttling,
         }
     }
 }
@@ -170,6 +180,7 @@ pub struct Env {
     pub on_ac: bool,
     /// Pid owning the foreground window (the ON_FULLSCREEN trigger).
     pub foreground_pid: u32,
+    pub gpu_thermal_throttling: bool,
 }
 
 /// One process, as the resolver sees it.
@@ -179,6 +190,7 @@ pub struct ProcInput<'a> {
     pub image: &'a str,
     /// Precomputed by the caller: protected-critical / session-0 / pid≤4.
     pub protected: bool,
+    pub gpu_permille: u32,
 }
 
 /// The effective policy for one process after resolving all matching rules.
@@ -224,6 +236,7 @@ fn rule_applies(rule: &ResolvableRule, proc: &ProcInput, env: &Env) -> bool {
     }
     match rule.trigger {
         Trigger::OnFullscreen => env.foreground_pid != 0 && proc.pid == env.foreground_pid,
+        Trigger::OnGpuLoad => proc.gpu_permille >= rule.gpu_threshold_permille,
         _ => rule.trigger_active(env),
     }
 }
@@ -349,7 +362,7 @@ pub mod engine {
     };
     use atlas_store::{AuditRow, DynProtRow};
 
-    use super::{resolve, Affinity, EffectivePolicy, Env, Priority, ProcInput, ResolvableRule};
+    use super::{resolve, Affinity, EffectivePolicy, Env, Priority, ProcInput, ResolvableRule, Trigger};
     use crate::broker::is_protected_process;
     use crate::dynamic_protection::{is_candidate, restore_reason, DynConfig, RestoreReason};
     use crate::ipc::SharedStore;
@@ -533,6 +546,8 @@ pub mod engine {
         dyn_ledger: Mutex<HashMap<ProcKey, DynEntry>>,
         /// Per-process CPU-streak bookkeeping (threshold hysteresis).
         dyn_streaks: Mutex<HashMap<ProcKey, Streak>>,
+        /// First timestamp at/above each explicit GPU-load rule threshold.
+        gpu_rule_streaks: Mutex<HashMap<(i64, ProcKey), i64>>,
     }
 
     impl RulesEngine {
@@ -554,15 +569,17 @@ pub mod engine {
                 dyn_config: Mutex::new(dyn_config),
                 dyn_ledger: Mutex::new(HashMap::new()),
                 dyn_streaks: Mutex::new(HashMap::new()),
+                gpu_rule_streaks: Mutex::new(HashMap::new()),
             }
         }
 
         /// Reads the current trigger environment (AC/DC + foreground pid). An
         /// unknown power state (a desktop with no battery) is treated as AC.
-        fn read_env() -> Env {
+        fn read_env(set: &SampleSet) -> Env {
             Env {
                 on_ac: power_is_ac().unwrap_or(true),
                 foreground_pid: foreground_pid(),
+                gpu_thermal_throttling: set.gpu.adapters.iter().any(|a| a.thermal_throttling == Some(true)),
             }
         }
 
@@ -625,7 +642,7 @@ pub mod engine {
         /// "original" to restore to.
         pub fn apply_tick(&self, set: &SampleSet) {
             let rules = self.load_rules();
-            let env = Self::read_env();
+            let env = Self::read_env(set);
             let cfg = self.dyn_config_snapshot();
             let now = now_ms();
 
@@ -637,6 +654,7 @@ pub mod engine {
             // 1. Resolve every process's effective policy (pure — applies nothing
             //    yet) and gather the facts both appliers need.
             let mut obs: Vec<Obs> = Vec::with_capacity(set.processes.len());
+            let mut gpu_streaks = match self.gpu_rule_streaks.lock() { Ok(v) => v, Err(_) => return };
             for p in &set.processes {
                 let key = p.key;
                 let protected = is_protected_process(&p.image_name, key.pid, p.session_id);
@@ -644,8 +662,19 @@ pub mod engine {
                     pid: key.pid,
                     image: &p.image_name,
                     protected,
+                    gpu_permille: p.gpu_permille,
                 };
-                let policy = resolve(&rules, &proc, &env);
+                let eligible: Vec<_> = rules.iter().filter(|rule| {
+                    if rule.trigger != Trigger::OnGpuLoad { return true; }
+                    let streak_key = (rule.id, key);
+                    if p.gpu_permille < rule.gpu_threshold_permille {
+                        gpu_streaks.remove(&streak_key);
+                        return false;
+                    }
+                    let start = *gpu_streaks.entry(streak_key).or_insert(set.ts_ms);
+                    set.ts_ms.saturating_sub(start) >= rule.gpu_duration_seconds as i64 * 1000
+                }).cloned().collect();
+                let policy = resolve(&eligible, &proc, &env);
                 let governed = !policy.blocked && !policy.is_empty();
                 let foreground = env.foreground_pid != 0 && key.pid == env.foreground_pid;
                 obs.push(Obs {
@@ -660,6 +689,8 @@ pub mod engine {
             }
 
             let live: std::collections::HashSet<ProcKey> = obs.iter().map(|o| o.key).collect();
+            gpu_streaks.retain(|(_, key), _| live.contains(key));
+            drop(gpu_streaks);
 
             // 2. Dynamic watchdog: pre-restore (hand governed/expired processes
             //    back to their true originals) BEFORE the rules applier runs, so
@@ -1263,7 +1294,15 @@ pub mod engine {
         /// enabled rules, for conflict notes. This uses the same [`resolve`] the
         /// applier does, so the preview cannot diverge from reality.
         pub fn simulate(&self, sim: &ResolvableRule, others: &[ResolvableRule]) -> SimResult {
-            let env = Self::read_env();
+            let mut gpu_collector = atlas_collectors::GpuCollector::new();
+            let gpu = gpu_collector.sample();
+            let gpu_by_pid: HashMap<u32, u32> = gpu.processes.iter()
+                .map(|p| (p.pid, p.utilization_permille)).collect();
+            let env = Env {
+                on_ac: power_is_ac().unwrap_or(true),
+                foreground_pid: foreground_pid(),
+                gpu_thermal_throttling: gpu.adapters.iter().any(|a| a.thermal_throttling == Some(true)),
+            };
             // Resolve using only the simulated rule so the "new" column reflects
             // exactly what this rule would do (conflicts are reported separately).
             let one = [sim.clone()];
@@ -1278,6 +1317,7 @@ pub mod engine {
                     pid: p.pid,
                     image: &p.image_name,
                     protected,
+                    gpu_permille: gpu_by_pid.get(&p.pid).copied().unwrap_or(0),
                 };
                 // Only surface processes this rule actually matches.
                 if !sim.matches_image(&p.image_name) {
@@ -1421,6 +1461,8 @@ mod tests {
             affinity,
             eco_qos: eco,
             precedence,
+            gpu_threshold_permille: 800,
+            gpu_duration_seconds: 5,
         }
     }
 
@@ -1429,12 +1471,14 @@ mod tests {
             pid,
             image,
             protected: false,
+            gpu_permille: 0,
         }
     }
 
     const AC: Env = Env {
         on_ac: true,
         foreground_pid: 0,
+        gpu_thermal_throttling: false,
     };
 
     #[test]
@@ -1573,10 +1617,12 @@ mod tests {
         let on_ac = Env {
             on_ac: true,
             foreground_pid: 0,
+            gpu_thermal_throttling: false,
         };
         let on_dc = Env {
             on_ac: false,
             foreground_pid: 0,
+            gpu_thermal_throttling: false,
         };
         let p1 = resolve(
             &[ac_rule.clone(), dc_rule.clone()],
@@ -1602,6 +1648,7 @@ mod tests {
         let env_fg = Env {
             on_ac: true,
             foreground_pid: 500,
+            gpu_thermal_throttling: false,
         };
         // The foreground process matches → active.
         let fg = resolve(std::slice::from_ref(&fs), &proc(500, "game.exe"), &env_fg);

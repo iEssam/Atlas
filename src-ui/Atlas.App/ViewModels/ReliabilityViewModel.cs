@@ -53,6 +53,7 @@ public sealed partial class ReliabilityViewModel : ObservableObject
         new CrashFilter("Bugchecks", new[] { CrashKind.Bugcheck }),
         new CrashFilter("Service failures", new[] { CrashKind.ServiceFailure }),
         new CrashFilter("Shutdowns", new[] { CrashKind.UnexpectedShutdown }),
+        new CrashFilter("GPU resets", new[] { CrashKind.GpuDriverReset }),
     };
 
     [ObservableProperty] private ReliabilityWindow _selectedWindow;

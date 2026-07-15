@@ -38,6 +38,7 @@ fn fake_rows() -> Vec<ProcessRow> {
             thread_count: 5,
             app_group: format!("app:proc{i}#{}", 100 + i),
             role: 1, // MAIN
+            ..Default::default()
         })
         .collect()
 }
@@ -74,8 +75,10 @@ impl AtlasQuery for FakeQuery {
                 process_count: processes.len() as u32,
                 thread_count: 0,
                 handle_count: 0,
+                ..Default::default()
             }),
             processes,
+            ..Default::default()
         }))
     }
 
@@ -91,6 +94,7 @@ impl AtlasQuery for FakeQuery {
             .send(Ok(SnapshotReply {
                 system: None,
                 processes: fake_rows(),
+                ..Default::default()
             }))
             .await;
         Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(
@@ -716,6 +720,8 @@ fn fake_rule(id: i64, image: &str) -> atlas_ipc::Rule {
         }),
         precedence: 10,
         created_ms: 1_700_000_000_000,
+        gpu_threshold_permille: 800,
+        gpu_duration_seconds: 5,
     }
 }
 

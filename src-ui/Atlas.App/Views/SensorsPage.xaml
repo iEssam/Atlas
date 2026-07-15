@@ -14,6 +14,7 @@
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
             <!-- ===== Page heading + refresh ===== -->
@@ -161,8 +162,39 @@
                 </StackPanel>
             </Border>
 
-            <!-- ===== Startup history (boots) section ===== -->
+            <!-- GPU vendor sensor coverage. Missing readings remain explicit. -->
             <Border Grid.Row="3" Style="{StaticResource AtlasPanelStyle}">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="GPU SENSOR COVERAGE" Style="{StaticResource AtlasSectionLabelStyle}" />
+                    <TextBlock Text="{x:Bind ViewModel.GpuNote, Mode=OneWay}"
+                               Style="{StaticResource AtlasMonoMutedStyle}"
+                               TextWrapping="Wrap"
+                               Visibility="{x:Bind ViewModel.GpuAbsent, Mode=OneWay}" />
+                    <ItemsControl ItemsSource="{x:Bind ViewModel.GpuSensors, Mode=OneWay}"
+                                  Visibility="{x:Bind ViewModel.GpuPresent, Mode=OneWay}"
+                                  AutomationProperties.Name="GPU sensor coverage by adapter">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:GpuSensorItem">
+                                <Grid Padding="0,7" RowSpacing="3">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Text="{x:Bind Name}" Style="{StaticResource AtlasMonoStyle}" />
+                                    <TextBlock Grid.Row="1" Text="{x:Bind ReadingsText}"
+                                               TextWrapping="Wrap" Style="{StaticResource AtlasMonoMutedStyle}" />
+                                    <TextBlock Grid.Row="2" Text="{x:Bind CoverageText}"
+                                               TextWrapping="Wrap" Style="{StaticResource AtlasPageDescriptionStyle}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- ===== Startup history (boots) section ===== -->
+            <Border Grid.Row="4" Style="{StaticResource AtlasPanelStyle}">
                 <StackPanel Spacing="12">
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <FontIcon Glyph="&#xE7E8;" FontSize="13"

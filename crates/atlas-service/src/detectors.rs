@@ -25,6 +25,9 @@ pub const KIND_CPU_SATURATION: i32 = 1;
 pub const KIND_MEMORY_PRESSURE: i32 = 2;
 /// Reserved (proto `DISK_LATENCY`); not detected — see module docs.
 pub const KIND_DISK_LATENCY: i32 = 3;
+pub const KIND_GPU_SATURATION: i32 = 4;
+pub const KIND_GPU_MEMORY_EXHAUSTION: i32 = 5;
+pub const KIND_GPU_THERMAL_THROTTLING: i32 = 6;
 
 /// Severity discriminants, matching the proto `Severity`.
 pub const SEV_INFO: i32 = 1;
@@ -39,6 +42,9 @@ pub const CPU_MIN_DURATION_MS: i64 = 10_000;
 pub const MEM_PRESSURE_PCT: f64 = 90.0;
 /// A memory pressure must be sustained at least this long to be an incident.
 pub const MEM_MIN_DURATION_MS: i64 = 10_000;
+pub const GPU_SATURATION_PCT: f64 = 85.0;
+pub const GPU_MEMORY_PCT: f64 = 90.0;
+pub const GPU_MIN_DURATION_MS: i64 = 10_000;
 
 /// Samples more than this far apart never belong to the same incident: a gap
 /// this large is missing data (a writer stall / monitoring off), and merging
@@ -161,6 +167,46 @@ pub fn run_detection_pass(
             )?;
             count += 1;
         }
+    }
+
+    let gpu = load_series(store, Metric::SysGpuPermille, from_ms, to_ms, 0.1)?;
+    for run in detect(&gpu, GPU_SATURATION_PCT, GPU_MIN_DURATION_MS, MAX_GAP_MS) {
+        store.upsert_incident(
+            KIND_GPU_SATURATION, run.start_ms, end_opt(run.end_ms),
+            cpu_severity(run.peak), run.peak,
+            &format!("GPU saturation ({}): the busiest graphics engine held at or above {:.0}% (peak {:.0}%).",
+                if run.end_ms == 0 { "ongoing" } else { "resolved" }, GPU_SATURATION_PCT, run.peak),
+        )?;
+        count += 1;
+    }
+
+    let used = load_series(store, Metric::SysGpuMemoryUsed, from_ms, to_ms, 1.0)?;
+    let budgets: std::collections::HashMap<i64, f64> =
+        load_series(store, Metric::SysGpuMemoryBudget, from_ms, to_ms, 1.0)?.into_iter().collect();
+    let memory_pct: Vec<_> = used.into_iter().filter_map(|(ts, value)| {
+        let budget = budgets.get(&ts).copied().unwrap_or(0.0);
+        (budget > 0.0).then_some((ts, value / budget * 100.0))
+    }).collect();
+    for run in detect(&memory_pct, GPU_MEMORY_PCT, GPU_MIN_DURATION_MS, MAX_GAP_MS) {
+        store.upsert_incident(
+            KIND_GPU_MEMORY_EXHAUSTION, run.start_ms, end_opt(run.end_ms),
+            mem_severity(run.peak), run.peak,
+            &format!("GPU memory pressure ({}): measured graphics memory held at or above {:.0}% of the reported budget (peak {:.0}%).",
+                if run.end_ms == 0 { "ongoing" } else { "resolved" }, GPU_MEMORY_PCT, run.peak),
+        )?;
+        count += 1;
+    }
+
+    // This series exists only when a vendor provider explicitly reports a
+    // throttle state; no temperature threshold is guessed.
+    let throttling = load_series(store, Metric::SysGpuThrottling, from_ms, to_ms, 1.0)?;
+    for run in detect(&throttling, 0.5, 0, MAX_GAP_MS) {
+        store.upsert_incident(
+            KIND_GPU_THERMAL_THROTTLING, run.start_ms, end_opt(run.end_ms), SEV_WARNING, 1.0,
+            &format!("GPU thermal throttling {}: a hardware sensor provider reported an active throttle state.",
+                if run.end_ms == 0 { "is ongoing" } else { "was reported" }),
+        )?;
+        count += 1;
     }
     Ok(count)
 }

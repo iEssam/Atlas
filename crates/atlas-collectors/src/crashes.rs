@@ -32,6 +32,7 @@ pub mod crash_kind {
     pub const BUGCHECK: i32 = 3;
     pub const SERVICE_FAILURE: i32 = 4;
     pub const UNEXPECTED_SHUTDOWN: i32 = 5;
+    pub const GPU_DRIVER_RESET: i32 = 6;
 }
 
 /// One raw crash/reliability event read from the logs (pre-correlation). Maps to
@@ -83,6 +84,9 @@ const XPATH_BUGCHECK: &str =
 /// Kernel-Power 41 — the system rebooted without a clean shutdown.
 const XPATH_KERNEL_POWER: &str =
     "*[System[(Provider[@Name='Microsoft-Windows-Kernel-Power']) and (EventID=41)]]";
+/// Display 4101: Windows recovered a graphics driver after a timeout/reset.
+const XPATH_DISPLAY_RESET: &str =
+    "*[System[(Provider[@Name='Display']) and (EventID=4101)]]";
 
 /// A sensible default cap when the caller passes `max == 0`.
 const DEFAULT_MAX: usize = 200;
@@ -98,13 +102,14 @@ pub fn read_crashes(since_ms: i64, max: usize) -> CrashScan {
     let cap = if max == 0 { DEFAULT_MAX } else { max };
 
     // (channel, xpath, mapper). Application channel first, then System.
-    let sources: [CrashSource; 6] = [
+    let sources: [CrashSource; 7] = [
         (CH_APPLICATION, XPATH_APP_ERROR, map_app_error),
         (CH_APPLICATION, XPATH_APP_HANG, map_app_hang),
         (CH_APPLICATION, XPATH_WER, map_wer),
         (CH_SYSTEM, XPATH_SCM, map_scm),
         (CH_SYSTEM, XPATH_BUGCHECK, map_bugcheck),
         (CH_SYSTEM, XPATH_KERNEL_POWER, map_kernel_power),
+        (CH_SYSTEM, XPATH_DISPLAY_RESET, map_gpu_reset),
     ];
 
     let mut all: Vec<RawCrash> = Vec::new();
@@ -255,6 +260,14 @@ fn map_app_hang(xml: &str) -> Option<RawCrash> {
 /// the event/bucket name for the subject; keep the bucket as the fault.
 fn map_wer(xml: &str) -> Option<RawCrash> {
     let ts_ms = event_ts(xml)?;
+    let event_name = named_data(xml, "EventName").unwrap_or_default();
+    let live_kernel_code = ["P1", "Parameter1", "ProblemSignatures"]
+        .iter()
+        .find_map(|name| named_data(xml, name))
+        .or_else(|| nth_data(xml, 4))
+        .unwrap_or_default();
+    let is_gpu_live_kernel = event_name.eq_ignore_ascii_case("LiveKernelEvent")
+        && matches!(live_kernel_code.trim_start_matches("0x"), "117" | "141");
     let subject = named_data(xml, "AppName")
         .or_else(|| named_data(xml, "EventName"))
         .or_else(|| named_data(xml, "Bucket"))
@@ -264,10 +277,18 @@ fn map_wer(xml: &str) -> Option<RawCrash> {
         .or_else(|| named_data(xml, "EventName"))
         .unwrap_or_default();
     Some(RawCrash {
-        kind: crash_kind::APP_CRASH,
+        kind: if is_gpu_live_kernel {
+            crash_kind::GPU_DRIVER_RESET
+        } else {
+            crash_kind::APP_CRASH
+        },
         ts_ms,
         subject,
-        fault,
+        fault: if is_gpu_live_kernel {
+            format!("LiveKernelEvent {live_kernel_code} (graphics timeout/reset evidence)")
+        } else {
+            fault
+        },
         exception_code: String::new(),
     })
 }
@@ -312,6 +333,16 @@ fn map_kernel_power(xml: &str) -> Option<RawCrash> {
         ts_ms,
         subject: "Unexpected shutdown".to_string(),
         fault,
+        exception_code: String::new(),
+    })
+}
+
+fn map_gpu_reset(xml: &str) -> Option<RawCrash> {
+    Some(RawCrash {
+        kind: crash_kind::GPU_DRIVER_RESET,
+        ts_ms: event_ts(xml)?,
+        subject: named_data(xml, "param1").unwrap_or_else(|| "Graphics driver".to_string()),
+        fault: "Windows detected a graphics timeout and recovered the display driver".to_string(),
         exception_code: String::new(),
     })
 }
@@ -603,6 +634,20 @@ mod tests {
             fault: String::new(),
             exception_code: String::new(),
         }
+    }
+
+    #[test]
+    fn wer_live_kernel_gpu_timeout_is_classified_as_gpu_reset() {
+        let xml = r#"<Event><System><TimeCreated SystemTime='2026-07-15T10:20:30.000Z'/></System><EventData><Data Name='EventName'>LiveKernelEvent</Data><Data Name='P1'>141</Data><Data Name='Bucket'>LKD_0x141_Tdr</Data></EventData></Event>"#;
+        let mapped = map_wer(xml).expect("mapped WER event");
+        assert_eq!(mapped.kind, crash_kind::GPU_DRIVER_RESET);
+        assert!(mapped.fault.contains("evidence"));
+    }
+
+    #[test]
+    fn ordinary_wer_event_remains_an_application_crash() {
+        let xml = r#"<Event><System><TimeCreated SystemTime='2026-07-15T10:20:30Z'/></System><EventData><Data Name='EventName'>APPCRASH</Data><Data Name='AppName'>demo.exe</Data></EventData></Event>"#;
+        assert_eq!(map_wer(xml).unwrap().kind, crash_kind::APP_CRASH);
     }
 
     #[test]

@@ -51,6 +51,10 @@
                                Style="{StaticResource AtlasMetricValueStyle}" FontSize="18" />
                 </StackPanel>
                 <StackPanel Spacing="4">
+                    <TextBlock Text="SYSTEM GPU" Style="{StaticResource AtlasSectionLabelStyle}" />
+                    <TextBlock Text="{x:Bind GpuText, Mode=OneWay}" Style="{StaticResource AtlasMetricValueStyle}" FontSize="18" />
+                </StackPanel>
+                <StackPanel Spacing="4">
                     <TextBlock Text="PROCESSES" Style="{StaticResource AtlasSectionLabelStyle}" />
                     <TextBlock Text="{x:Bind ViewModel.ProcessCount, Mode=OneWay}"
                                Style="{StaticResource AtlasMetricValueStyle}" FontSize="18" />
@@ -82,7 +86,9 @@
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="220" />
                     <ColumnDefinition Width="80" />
-                    <ColumnDefinition Width="90" />
+                <ColumnDefinition Width="90" />
+                <ColumnDefinition Width="80" />
+                <ColumnDefinition Width="90" />
                     <ColumnDefinition Width="110" />
                     <ColumnDefinition Width="110" />
                     <ColumnDefinition Width="80" />
@@ -91,10 +97,12 @@
                 <TextBlock Grid.Column="0" Text="NAME" Style="{StaticResource AtlasColumnHeaderStyle}" />
                 <TextBlock Grid.Column="1" Text="PID" Style="{StaticResource AtlasColumnHeaderStyle}" HorizontalTextAlignment="Right" />
                 <TextBlock Grid.Column="2" Text="CPU %" Style="{StaticResource AtlasColumnHeaderStyle}" HorizontalTextAlignment="Right" />
-                <TextBlock Grid.Column="3" Text="WS MB" Style="{StaticResource AtlasColumnHeaderStyle}" HorizontalTextAlignment="Right" />
-                <TextBlock Grid.Column="4" Text="PRIVATE MB" Style="{StaticResource AtlasColumnHeaderStyle}" HorizontalTextAlignment="Right" />
-                <TextBlock Grid.Column="5" Text="THREADS" Style="{StaticResource AtlasColumnHeaderStyle}" HorizontalTextAlignment="Right" />
-                <TextBlock Grid.Column="6" Text="HANDLES" Style="{StaticResource AtlasColumnHeaderStyle}" HorizontalTextAlignment="Right" />
+                <TextBlock Grid.Column="3" Text="GPU %" Style="{StaticResource AtlasColumnHeaderStyle}" HorizontalTextAlignment="Right" />
+                <TextBlock Grid.Column="4" Text="GPU MB" Style="{StaticResource AtlasColumnHeaderStyle}" HorizontalTextAlignment="Right" />
+                <TextBlock Grid.Column="5" Text="WS MB" Style="{StaticResource AtlasColumnHeaderStyle}" HorizontalTextAlignment="Right" />
+                <TextBlock Grid.Column="6" Text="PRIVATE MB" Style="{StaticResource AtlasColumnHeaderStyle}" HorizontalTextAlignment="Right" />
+                <TextBlock Grid.Column="7" Text="THREADS" Style="{StaticResource AtlasColumnHeaderStyle}" HorizontalTextAlignment="Right" />
+                <TextBlock Grid.Column="8" Text="HANDLES" Style="{StaticResource AtlasColumnHeaderStyle}" HorizontalTextAlignment="Right" />
             </Grid>
 
             <!-- Virtualized rows -->
@@ -137,6 +145,8 @@
                                 <ColumnDefinition Width="220" />
                                 <ColumnDefinition Width="80" />
                                 <ColumnDefinition Width="90" />
+                                <ColumnDefinition Width="80" />
+                                <ColumnDefinition Width="90" />
                                 <ColumnDefinition Width="110" />
                                 <ColumnDefinition Width="110" />
                                 <ColumnDefinition Width="80" />
@@ -155,17 +165,25 @@
                                        HorizontalTextAlignment="Right" />
                             <TextBlock Grid.Column="3" VerticalAlignment="Center"
                                        Style="{StaticResource AtlasMonoStyle}"
-                                       Text="{x:Bind WorkingSetText, Mode=OneWay}"
+                                       Text="{x:Bind GpuText, Mode=OneWay}"
                                        HorizontalTextAlignment="Right" />
                             <TextBlock Grid.Column="4" VerticalAlignment="Center"
+                                       Style="{StaticResource AtlasMonoStyle}"
+                                       Text="{x:Bind GpuMemoryText, Mode=OneWay}"
+                                       HorizontalTextAlignment="Right" />
+                            <TextBlock Grid.Column="5" VerticalAlignment="Center"
+                                       Style="{StaticResource AtlasMonoStyle}"
+                                       Text="{x:Bind WorkingSetText, Mode=OneWay}"
+                                       HorizontalTextAlignment="Right" />
+                            <TextBlock Grid.Column="6" VerticalAlignment="Center"
                                        Style="{StaticResource AtlasMonoMutedStyle}"
                                        Text="{x:Bind PrivateText, Mode=OneWay}"
                                        HorizontalTextAlignment="Right" />
-                            <TextBlock Grid.Column="5" VerticalAlignment="Center"
+                            <TextBlock Grid.Column="7" VerticalAlignment="Center"
                                        Style="{StaticResource AtlasMonoMutedStyle}"
                                        Text="{x:Bind ThreadCount, Mode=OneWay}"
                                        HorizontalTextAlignment="Right" />
-                            <TextBlock Grid.Column="6" VerticalAlignment="Center"
+                            <TextBlock Grid.Column="8" VerticalAlignment="Center"
                                        Style="{StaticResource AtlasMonoMutedStyle}"
                                        Text="{x:Bind HandleCount, Mode=OneWay}"
                                        HorizontalTextAlignment="Right" />

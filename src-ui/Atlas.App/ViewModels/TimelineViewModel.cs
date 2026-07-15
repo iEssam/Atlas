@@ -30,8 +30,14 @@ public sealed partial class TimelineViewModel : ObservableObject
         new TimelineWindow("Last 10 minutes", TimeSpan.FromMinutes(10)),
         new TimelineWindow("Last 1 hour", TimeSpan.FromHours(1)),
     };
+    public IReadOnlyList<TimelineMetric> Metrics { get; } = new[]
+    {
+        new TimelineMetric("System CPU", MetricKind.SysCpuPermille),
+        new TimelineMetric("System GPU", MetricKind.SysGpuPermille),
+    };
 
     [ObservableProperty] private TimelineWindow _selectedWindow;
+    [ObservableProperty] private TimelineMetric _selectedMetric;
     [ObservableProperty] private bool _isLoading;
 
     /// <summary>True when the last query showed the server can't serve history.</summary>
@@ -59,9 +65,11 @@ public sealed partial class TimelineViewModel : ObservableObject
         _dispatcher = dispatcher;
         _who = who;
         _selectedWindow = Windows[0];
+        _selectedMetric = Metrics[0];
     }
 
     partial void OnSelectedWindowChanged(TimelineWindow value) => _ = RefreshAsync();
+    partial void OnSelectedMetricChanged(TimelineMetric value) => _ = RefreshAsync();
 
     /// <summary>Loads (or reloads) the selected window's history.</summary>
     public async Task RefreshAsync()
@@ -87,7 +95,7 @@ public sealed partial class TimelineViewModel : ObservableObject
             // ~1 bucket per 2px of a ~900px chart; server clamps to its cap.
             const uint targetBuckets = 450;
             var cpu = await channel
-                .QueryRangeAsync(MetricKind.SysCpuPermille, 0, from, now, targetBuckets, ct)
+                .QueryRangeAsync(SelectedMetric.Kind, 0, from, now, targetBuckets, ct)
                 .ConfigureAwait(false);
 
             if (ct.IsCancellationRequested)
@@ -227,6 +235,11 @@ public sealed partial class TimelineViewModel : ObservableObject
     }
 
     private void Post(Action action) => _dispatcher.TryEnqueue(() => action());
+}
+
+public sealed record TimelineMetric(string Label, MetricKind Kind)
+{
+    public override string ToString() => Label;
 }
 
 /// <summary>A selectable timeline window.</summary>

@@ -28,6 +28,14 @@ public sealed partial class ProcessRowViewModel : ObservableObject
     private double _cpuPercent;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(GpuText))]
+    private double _gpuPercent;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(GpuMemoryText))]
+    private double _gpuMemoryMb;
+
+    [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(WorkingSetText))]
     private double _workingSetMb;
 
@@ -39,6 +47,8 @@ public sealed partial class ProcessRowViewModel : ObservableObject
     [ObservableProperty] private uint _handleCount;
 
     public string CpuText => CpuPercent.ToString("F1", Inv);
+    public string GpuText => GpuPercent.ToString("F1", Inv);
+    public string GpuMemoryText => GpuMemoryMb.ToString("F0", Inv);
     public string WorkingSetText => WorkingSetMb.ToString("F1", Inv);
     public string PrivateText => PrivateMb.ToString("F1", Inv);
 
@@ -57,6 +67,8 @@ public sealed partial class ProcessRowViewModel : ObservableObject
     {
         ImageName = row.ImageName;
         CpuPercent = row.CpuPercent;
+        GpuPercent = row.GpuPercent;
+        GpuMemoryMb = (row.GpuDedicatedBytes + row.GpuSharedBytes) / (1024.0 * 1024.0);
         WorkingSetMb = row.WorkingSet / (1024.0 * 1024.0);
         PrivateMb = row.PrivateBytes / (1024.0 * 1024.0);
         ThreadCount = row.ThreadCount;

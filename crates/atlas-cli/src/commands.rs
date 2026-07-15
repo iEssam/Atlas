@@ -988,6 +988,7 @@ mod tests {
                 process_count: 250,
                 thread_count: 3400,
                 handle_count: 120_000,
+                ..Default::default()
             }),
             processes: vec![
                 ProcessRow {
@@ -1005,6 +1006,7 @@ mod tests {
                     thread_count: 45,
                     app_group: "chrome".into(),
                     role: 0,
+                    ..Default::default()
                 },
                 ProcessRow {
                     pid: 4,
@@ -1021,8 +1023,10 @@ mod tests {
                     thread_count: 200,
                     app_group: String::new(),
                     role: 0,
+                    ..Default::default()
                 },
             ],
+            ..Default::default()
         }
     }
 

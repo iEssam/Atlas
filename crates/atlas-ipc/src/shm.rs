@@ -62,7 +62,7 @@ pub const RING_MAGIC: u32 = 0x414C_5352; // "ALSR" (AtLas Shared Ring), LE.
 /// Layout version. **Bump this whenever [`RingHeader`] or [`RingRow`] changes**
 /// so a stale reader mapping an incompatible section rejects it instead of
 /// misinterpreting bytes.
-pub const LAYOUT_VERSION: u32 = 1;
+pub const LAYOUT_VERSION: u32 = 2;
 /// Fixed number of process rows carried in the ring. Top-N live rows only
 /// (tech-stack §5.1); the full set stays behind the gRPC snapshot.
 pub const RING_ROWS: usize = 64;
@@ -76,10 +76,14 @@ pub const RING_NAME_LEN: usize = 32;
 pub struct RingRow {
     pub pid: u32,
     pub cpu_permille: u32,
+    pub gpu_permille: u32,
+    pub _pad_gpu: u32,
     pub working_set: u64,
     pub private_bytes: u64,
     pub read_bps: u64,
     pub write_bps: u64,
+    pub gpu_dedicated_bytes: u64,
+    pub gpu_shared_bytes: u64,
     /// Image name as UTF-16, NUL-padded, truncated to [`RING_NAME_LEN`] units.
     pub name: [u16; RING_NAME_LEN],
 }
@@ -89,10 +93,14 @@ impl RingRow {
         Self {
             pid: 0,
             cpu_permille: 0,
+            gpu_permille: 0,
+            _pad_gpu: 0,
             working_set: 0,
             private_bytes: 0,
             read_bps: 0,
             write_bps: 0,
+            gpu_dedicated_bytes: 0,
+            gpu_shared_bytes: 0,
             name: [0; RING_NAME_LEN],
         }
     }
@@ -126,10 +134,16 @@ pub struct RingHeader {
     pub process_count: u32,
     pub thread_count: u32,
     pub handle_count: u32,
+    pub gpu_permille: u32,
+    _pad_gpu: u32,
     pub mem_used: u64,
     pub mem_total: u64,
     pub commit_used: u64,
     pub commit_limit: u64,
+    pub gpu_dedicated_used: u64,
+    pub gpu_dedicated_budget: u64,
+    pub gpu_shared_used: u64,
+    pub gpu_shared_budget: u64,
     /// Number of valid rows in the row array (0..=RING_ROWS).
     pub row_count: u32,
     _pad2: u32,
@@ -156,10 +170,15 @@ pub struct RingSnapshot {
     pub process_count: u32,
     pub thread_count: u32,
     pub handle_count: u32,
+    pub gpu_permille: u32,
     pub mem_used: u64,
     pub mem_total: u64,
     pub commit_used: u64,
     pub commit_limit: u64,
+    pub gpu_dedicated_used: u64,
+    pub gpu_dedicated_budget: u64,
+    pub gpu_shared_used: u64,
+    pub gpu_shared_budget: u64,
     /// Valid rows, already truncated to `row_count`.
     pub rows: Vec<RowSnapshot>,
 }
@@ -169,10 +188,13 @@ pub struct RingSnapshot {
 pub struct RowSnapshot {
     pub pid: u32,
     pub cpu_permille: u32,
+    pub gpu_permille: u32,
     pub working_set: u64,
     pub private_bytes: u64,
     pub read_bps: u64,
     pub write_bps: u64,
+    pub gpu_dedicated_bytes: u64,
+    pub gpu_shared_bytes: u64,
     pub name: String,
 }
 
@@ -185,10 +207,15 @@ pub struct RingUpdate<'a> {
     pub process_count: u32,
     pub thread_count: u32,
     pub handle_count: u32,
+    pub gpu_permille: u32,
     pub mem_used: u64,
     pub mem_total: u64,
     pub commit_used: u64,
     pub commit_limit: u64,
+    pub gpu_dedicated_used: u64,
+    pub gpu_dedicated_budget: u64,
+    pub gpu_shared_used: u64,
+    pub gpu_shared_budget: u64,
     pub rows: &'a [RowInput<'a>],
 }
 
@@ -196,10 +223,13 @@ pub struct RingUpdate<'a> {
 pub struct RowInput<'a> {
     pub pid: u32,
     pub cpu_permille: u32,
+    pub gpu_permille: u32,
     pub working_set: u64,
     pub private_bytes: u64,
     pub read_bps: u64,
     pub write_bps: u64,
+    pub gpu_dedicated_bytes: u64,
+    pub gpu_shared_bytes: u64,
     pub name: &'a str,
 }
 
@@ -372,10 +402,15 @@ impl RingWriter {
             h.process_count = update.process_count;
             h.thread_count = update.thread_count;
             h.handle_count = update.handle_count;
+            h.gpu_permille = update.gpu_permille;
             h.mem_used = update.mem_used;
             h.mem_total = update.mem_total;
             h.commit_used = update.commit_used;
             h.commit_limit = update.commit_limit;
+            h.gpu_dedicated_used = update.gpu_dedicated_used;
+            h.gpu_dedicated_budget = update.gpu_dedicated_budget;
+            h.gpu_shared_used = update.gpu_shared_used;
+            h.gpu_shared_budget = update.gpu_shared_budget;
 
             let n = update.rows.len().min(RING_ROWS);
             h.row_count = n as u32;
@@ -384,10 +419,13 @@ impl RingWriter {
             for (dst, src) in rows.iter_mut().zip(update.rows.iter()).take(n) {
                 dst.pid = src.pid;
                 dst.cpu_permille = src.cpu_permille;
+                dst.gpu_permille = src.gpu_permille;
                 dst.working_set = src.working_set;
                 dst.private_bytes = src.private_bytes;
                 dst.read_bps = src.read_bps;
                 dst.write_bps = src.write_bps;
+                dst.gpu_dedicated_bytes = src.gpu_dedicated_bytes;
+                dst.gpu_shared_bytes = src.gpu_shared_bytes;
                 encode_name(src.name, &mut dst.name);
             }
             // Zero the unused tail so a shrinking row_count leaves no stale pids
@@ -545,10 +583,13 @@ impl RingReader {
             rows.push(RowSnapshot {
                 pid: r.pid,
                 cpu_permille: r.cpu_permille,
+                gpu_permille: r.gpu_permille,
                 working_set: r.working_set,
                 private_bytes: r.private_bytes,
                 read_bps: r.read_bps,
                 write_bps: r.write_bps,
+                gpu_dedicated_bytes: r.gpu_dedicated_bytes,
+                gpu_shared_bytes: r.gpu_shared_bytes,
                 name: r.name_string(),
             });
         }
@@ -558,10 +599,15 @@ impl RingReader {
             process_count: h.process_count,
             thread_count: h.thread_count,
             handle_count: h.handle_count,
+            gpu_permille: h.gpu_permille,
             mem_used: h.mem_used,
             mem_total: h.mem_total,
             commit_used: h.commit_used,
             commit_limit: h.commit_limit,
+            gpu_dedicated_used: h.gpu_dedicated_used,
+            gpu_dedicated_budget: h.gpu_dedicated_budget,
+            gpu_shared_used: h.gpu_shared_used,
+            gpu_shared_budget: h.gpu_shared_budget,
             rows,
         }
     }
@@ -601,10 +647,15 @@ mod tests {
             process_count: 100,
             thread_count: 2000,
             handle_count: 40000,
+            gpu_permille: 420,
             mem_used: 8 << 30,
             mem_total: 16 << 30,
             commit_used: 9 << 30,
             commit_limit: 20 << 30,
+            gpu_dedicated_used: 2 << 30,
+            gpu_dedicated_budget: 8 << 30,
+            gpu_shared_used: 1 << 30,
+            gpu_shared_budget: 8 << 30,
             rows,
         }
     }
@@ -617,19 +668,25 @@ mod tests {
             RowInput {
                 pid: 4,
                 cpu_permille: 250,
+                gpu_permille: 500,
                 working_set: 1 << 20,
                 private_bytes: 2 << 20,
                 read_bps: 1000,
                 write_bps: 2000,
+                gpu_dedicated_bytes: 512 << 20,
+                gpu_shared_bytes: 64 << 20,
                 name: "system.exe",
             },
             RowInput {
                 pid: 1234,
                 cpu_permille: 125,
+                gpu_permille: 0,
                 working_set: 3 << 20,
                 private_bytes: 4 << 20,
                 read_bps: 0,
                 write_bps: 0,
+                gpu_dedicated_bytes: 0,
+                gpu_shared_bytes: 0,
                 name: "notepad.exe",
             },
         ];
@@ -671,10 +728,13 @@ mod tests {
         let rows = [RowInput {
             pid: 1,
             cpu_permille: 0,
+            gpu_permille: 0,
             working_set: 0,
             private_bytes: 0,
             read_bps: 0,
             write_bps: 0,
+            gpu_dedicated_bytes: 0,
+            gpu_shared_bytes: 0,
             name: long,
         }];
         writer.publish(&update(1, 0, &rows));
@@ -701,10 +761,13 @@ mod tests {
             .map(|i| RowInput {
                 pid: i + 1,
                 cpu_permille: 0,
+                gpu_permille: 0,
                 working_set: 0,
                 private_bytes: 0,
                 read_bps: 0,
                 write_bps: 0,
+                gpu_dedicated_bytes: 0,
+                gpu_shared_bytes: 0,
                 name: "p.exe",
             })
             .collect();
@@ -712,10 +775,13 @@ mod tests {
         let one = [RowInput {
             pid: 99,
             cpu_permille: 0,
+            gpu_permille: 0,
             working_set: 0,
             private_bytes: 0,
             read_bps: 0,
             write_bps: 0,
+            gpu_dedicated_bytes: 0,
+            gpu_shared_bytes: 0,
             name: "one.exe",
         }];
         writer.publish(&update(2, 0, &one));
@@ -747,10 +813,13 @@ mod tests {
                     .map(|i| RowInput {
                         pid: c.wrapping_add(i),
                         cpu_permille: c,
+                        gpu_permille: c,
                         working_set: (c as u64) * 1000 + i as u64,
                         private_bytes: (c as u64) * 7,
                         read_bps: c as u64,
                         write_bps: c as u64,
+                        gpu_dedicated_bytes: c as u64,
+                        gpu_shared_bytes: c as u64,
                         name: "x.exe",
                     })
                     .collect();
