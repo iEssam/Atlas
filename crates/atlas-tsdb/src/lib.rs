@@ -14,9 +14,14 @@ use std::collections::VecDeque;
 
 mod bits;
 pub mod block;
+pub mod rollup;
 pub mod series;
 
 pub use block::{BlockBuilder, BlockError, BlockHeader, BlockReader};
+pub use rollup::{
+    encode_rollup, encoded_rollup_block, rollup_buckets, rollup_raw, tier_bucket_ms, RollupBucket,
+    RollupReader, T1_BUCKET_SECS, T2_BUCKET_SECS, TIER_RAW, TIER_T1, TIER_T2,
+};
 pub use series::{EncodedBlock, HeadBlocks, Metric, SeriesKey, SYSTEM_SCOPE};
 
 /// Fixed-capacity ring of (timestamp_ms, value) points for one series.

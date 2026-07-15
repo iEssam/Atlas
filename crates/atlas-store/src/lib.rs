@@ -11,7 +11,10 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use atlas_tsdb::{EncodedBlock, Metric, SeriesKey};
+use atlas_tsdb::{
+    encoded_rollup_block, rollup_buckets, rollup_raw, tier_bucket_ms, EncodedBlock, Metric,
+    RollupBucket, RollupReader, SeriesKey, TIER_RAW, TIER_T1, TIER_T2,
+};
 use rusqlite::{params, Connection, OptionalExtension};
 
 // DEPRECATED as of schema v4 (M-TSDB): `proc_sample` and `sys_sample` are no
@@ -401,6 +404,21 @@ INSERT OR IGNORE INTO dynamic_protection
     VALUES (1, 0, 800, 30, 300);
 "#;
 
+// Additive v12 migration (docs/phases.md Phase 3 / R3, PRD §9.3.1/§13.5):
+// extended retention tiers. Sample blocks gain a `tier` dimension — 0 = raw
+// (ATB1, 1 s), 1 = T1 (10 s roll-up), 2 = T2 (60 s roll-up) — so the same
+// `sample_block` table holds every tier and the compaction job demotes aged raw
+// blocks into coarser roll-up blocks (tech-stack §4.2). Existing rows default to
+// tier 0 (raw), so an upgraded database's samples are all correctly the raw
+// tier. The column is added with a guarded ALTER (SQLite lacks `ADD COLUMN IF
+// NOT EXISTS`); the composite index lets tier-scoped range queries prune on the
+// index. Roll-up blocks store the `ARU1` container (atlas-tsdb::rollup) as their
+// opaque `payload`; the store never parses it (same contract as raw blocks).
+const SCHEMA_V12_TIER_INDEX: &str = r#"
+CREATE INDEX IF NOT EXISTS ix_sample_block_tier
+    ON sample_block(metric, scope, tier, start_ms);
+"#;
+
 /// Whether `table` already has a column named `column`, via `PRAGMA table_info`.
 /// Used to make the v3 `ADD COLUMN` migration idempotent (SQLite lacks
 /// `ADD COLUMN IF NOT EXISTS`).
@@ -480,6 +498,32 @@ pub struct DecodedBlock {
     pub start_ms: i64,
     pub end_ms: i64,
     pub points: Vec<(i64, f64)>,
+}
+
+/// One stored roll-up block (tier 1/2) returned from a range query, with its
+/// decoded coarse buckets (R3 tiers). The store validates and decodes the
+/// `ARU1` payload via `atlas-tsdb`, so callers get [`RollupBucket`]s directly.
+#[derive(Debug, Clone)]
+pub struct DecodedRollup {
+    pub key: SeriesKey,
+    pub tier: u8,
+    pub start_ms: i64,
+    pub end_ms: i64,
+    pub buckets: Vec<RollupBucket>,
+}
+
+/// Outcome of one [`Store::rollup_tier`] compaction pass (R3): how many finer
+/// blocks were consumed and demoted, how many coarser blocks were produced, and
+/// how many were left untouched because they overlapped a pinned incident/
+/// bookmark window.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RollupSummary {
+    pub from_tier: u8,
+    pub to_tier: u8,
+    pub consumed_blocks: u64,
+    pub produced_blocks: u64,
+    pub pinned_skipped: u64,
+    pub samples_rolled: u64,
 }
 
 /// One decimation bucket returned by [`Store::query_range`] (M6). Carries the
@@ -797,6 +841,17 @@ impl Store {
             self.conn.execute_batch(SCHEMA_V11_DYNPROT)?;
             self.conn.execute_batch("PRAGMA user_version = 11;")?;
         }
+        if version < 12 {
+            // Add the tier dimension to sample_block (default 0 = raw), then the
+            // tier-scoped composite index. Guarded so a re-run is a no-op.
+            if !column_exists(&self.conn, "sample_block", "tier")? {
+                self.conn.execute_batch(
+                    "ALTER TABLE sample_block ADD COLUMN tier INTEGER NOT NULL DEFAULT 0;",
+                )?;
+            }
+            self.conn.execute_batch(SCHEMA_V12_TIER_INDEX)?;
+            self.conn.execute_batch("PRAGMA user_version = 12;")?;
+        }
         // FTS5 objects are built (idempotently, IF NOT EXISTS) on every open
         // once the module is confirmed present, independent of user_version: a
         // v5 database created on a no-FTS5 build must gain the indexes the first
@@ -940,14 +995,18 @@ impl Store {
         self.write_batch(blocks, &[])
     }
 
-    /// Reads sample blocks for `metric` overlapping the `[from_ms, to_ms]`
-    /// window, decoding each payload to points via atlas-tsdb. `scope_filter`
-    /// restricts to one series scope when `Some` (a process row id, or 0 for
-    /// system); `None` returns every scope for the metric.
+    /// Reads **raw (tier 0)** sample blocks for `metric` overlapping the
+    /// `[from_ms, to_ms]` window, decoding each `ATB1` payload to points via
+    /// atlas-tsdb. `scope_filter` restricts to one series scope when `Some` (a
+    /// process row id, or 0 for system); `None` returns every scope for the
+    /// metric.
     ///
-    /// Overlap uses the denormalised `start_ms`/`end_ms` header columns so the
-    /// index does the pruning; a corrupt block surfaces as an error (never a
-    /// panic) and aborts the read — corruption is not silently skipped.
+    /// Only the raw tier is read here — roll-up tiers hold the `ARU1` container,
+    /// not point streams, and are read via [`Store::read_rollup_blocks`]; the
+    /// cross-tier query path is [`Store::query_range`]. Overlap uses the
+    /// denormalised `start_ms`/`end_ms` header columns so the index does the
+    /// pruning; a corrupt block surfaces as an error (never a panic) and aborts
+    /// the read — corruption is not silently skipped.
     pub fn read_blocks(
         &self,
         metric: Metric,
@@ -977,7 +1036,8 @@ impl Store {
             Some(scope) => {
                 let mut stmt = self.conn.prepare_cached(
                     "SELECT scope, start_ms, end_ms, payload FROM sample_block
-                     WHERE metric = ?1 AND scope = ?2 AND start_ms <= ?4 AND end_ms >= ?3
+                     WHERE metric = ?1 AND scope = ?2 AND tier = 0
+                       AND start_ms <= ?4 AND end_ms >= ?3
                      ORDER BY start_ms",
                 )?;
                 let rows = stmt.query_map(params![metric_id, scope, from_ms, to_ms], |r| {
@@ -996,7 +1056,7 @@ impl Store {
             None => {
                 let mut stmt = self.conn.prepare_cached(
                     "SELECT scope, start_ms, end_ms, payload FROM sample_block
-                     WHERE metric = ?1 AND start_ms <= ?3 AND end_ms >= ?2
+                     WHERE metric = ?1 AND tier = 0 AND start_ms <= ?3 AND end_ms >= ?2
                      ORDER BY scope, start_ms",
                 )?;
                 let rows = stmt.query_map(params![metric_id, from_ms, to_ms], |r| {
@@ -1016,8 +1076,85 @@ impl Store {
         Ok(out)
     }
 
+    /// Reads roll-up blocks of `tier` (1 = T1, 2 = T2) for `metric` overlapping
+    /// `[from_ms, to_ms]`, decoding each `ARU1` payload to coarse buckets via
+    /// atlas-tsdb. `scope_filter` restricts to one scope when `Some`. A corrupt
+    /// block surfaces as an error (never a panic) and aborts the read.
+    pub fn read_rollup_blocks(
+        &self,
+        metric: Metric,
+        scope_filter: Option<i64>,
+        tier: u8,
+        from_ms: i64,
+        to_ms: i64,
+    ) -> Result<Vec<DecodedRollup>> {
+        let metric_id = metric.as_u16() as i64;
+        let mut out = Vec::new();
+        let mut push = |scope: i64, start_ms: i64, end_ms: i64, payload: Vec<u8>| -> Result<()> {
+            let reader = RollupReader::parse(&payload).map_err(|e| {
+                anyhow::anyhow!("decoding rollup block (tier {tier}, scope {scope}): {e}")
+            })?;
+            out.push(DecodedRollup {
+                key: SeriesKey::new(metric, scope),
+                tier,
+                start_ms,
+                end_ms,
+                buckets: reader.into_buckets(),
+            });
+            Ok(())
+        };
+
+        match scope_filter {
+            Some(scope) => {
+                let mut stmt = self.conn.prepare_cached(
+                    "SELECT scope, start_ms, end_ms, payload FROM sample_block
+                     WHERE metric = ?1 AND scope = ?2 AND tier = ?5
+                       AND start_ms <= ?4 AND end_ms >= ?3
+                     ORDER BY start_ms",
+                )?;
+                let rows = stmt.query_map(
+                    params![metric_id, scope, from_ms, to_ms, tier as i64],
+                    |r| {
+                        Ok((
+                            r.get::<_, i64>(0)?,
+                            r.get::<_, i64>(1)?,
+                            r.get::<_, i64>(2)?,
+                            r.get::<_, Vec<u8>>(3)?,
+                        ))
+                    },
+                )?;
+                for row in rows {
+                    let (scope, start_ms, end_ms, payload) = row?;
+                    push(scope, start_ms, end_ms, payload)?;
+                }
+            }
+            None => {
+                let mut stmt = self.conn.prepare_cached(
+                    "SELECT scope, start_ms, end_ms, payload FROM sample_block
+                     WHERE metric = ?1 AND tier = ?4 AND start_ms <= ?3 AND end_ms >= ?2
+                     ORDER BY scope, start_ms",
+                )?;
+                let rows =
+                    stmt.query_map(params![metric_id, from_ms, to_ms, tier as i64], |r| {
+                        Ok((
+                            r.get::<_, i64>(0)?,
+                            r.get::<_, i64>(1)?,
+                            r.get::<_, i64>(2)?,
+                            r.get::<_, Vec<u8>>(3)?,
+                        ))
+                    })?;
+                for row in rows {
+                    let (scope, start_ms, end_ms, payload) = row?;
+                    push(scope, start_ms, end_ms, payload)?;
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// Total bytes of encoded sample-block payloads on record (SUM of
-    /// LENGTH(payload)). Surfaces storage footprint without a SQLite client.
+    /// LENGTH(payload)), across all tiers. Surfaces storage footprint without a
+    /// SQLite client.
     pub fn sample_storage_bytes(&self) -> Result<u64> {
         let bytes: i64 = self.conn.query_row(
             "SELECT COALESCE(SUM(LENGTH(payload)), 0) FROM sample_block",
@@ -1025,6 +1162,52 @@ impl Store {
             |r| r.get(0),
         )?;
         Ok(bytes as u64)
+    }
+
+    /// Encoded payload bytes broken down by tier: `[raw, T1, T2]` (R3). Pairs
+    /// with [`Store::block_counts_by_tier`] so the overhead/storage harness can
+    /// show the tiered footprint composition.
+    pub fn sample_storage_bytes_by_tier(&self) -> Result<[u64; 3]> {
+        let mut out = [0u64; 3];
+        let mut stmt = self.conn.prepare(
+            "SELECT tier, COALESCE(SUM(LENGTH(payload)), 0) FROM sample_block GROUP BY tier",
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))?;
+        for row in rows {
+            let (tier, bytes) = row?;
+            if (0..=2).contains(&tier) {
+                out[tier as usize] = bytes as u64;
+            }
+        }
+        Ok(out)
+    }
+
+    /// Number of distinct `(metric, scope)` series with any stored block. Used
+    /// by the storage harness to scale a per-series footprint estimate to a
+    /// concrete total.
+    pub fn distinct_series_count(&self) -> Result<u64> {
+        let n: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM (SELECT DISTINCT metric, scope FROM sample_block)",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok(n as u64)
+    }
+
+    /// Block-row counts broken down by tier: `[raw, T1, T2]` (R3).
+    pub fn block_counts_by_tier(&self) -> Result<[u64; 3]> {
+        let mut out = [0u64; 3];
+        let mut stmt = self
+            .conn
+            .prepare("SELECT tier, COUNT(*) FROM sample_block GROUP BY tier")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))?;
+        for row in rows {
+            let (tier, n) = row?;
+            if (0..=2).contains(&tier) {
+                out[tier as usize] = n as u64;
+            }
+        }
+        Ok(out)
     }
 
     /// Total number of samples across all stored blocks (SUM of `points`).
@@ -1082,16 +1265,61 @@ impl Store {
         Ok((p, s))
     }
 
-    /// Deletes sample blocks that end before the cutoff (M-TSDB retention). A
-    /// block is dropped only once its whole span is past retention, so a block
-    /// straddling the cutoff is kept until it ages out entirely. Returns rows
-    /// removed.
+    /// Deletes **raw (tier 0)** sample blocks that end before the cutoff (M-TSDB
+    /// retention). A block is dropped only once its whole span is past
+    /// retention, so a block straddling the cutoff is kept until it ages out
+    /// entirely. Roll-up tiers are swept separately by
+    /// [`Store::apply_block_retention_tier`] at their own (longer) retentions so
+    /// this never touches demoted history. Pin-unaware — the compaction path
+    /// uses the pin-aware tiered variant; this remains for the simple shutdown
+    /// sweep and back-compat. Returns rows removed.
     pub fn apply_block_retention(&self, cutoff_ms: i64) -> Result<usize> {
         let n = self.conn.execute(
-            "DELETE FROM sample_block WHERE end_ms < ?1",
+            "DELETE FROM sample_block WHERE tier = 0 AND end_ms < ?1",
             params![cutoff_ms],
         )?;
         Ok(n)
+    }
+
+    /// Per-tier retention sweep that **never deletes a block overlapping a pinned
+    /// incident/bookmark window** (R3). Deletes `tier` blocks fully older than
+    /// `cutoff_ms` except those overlapping any `pins` interval (from
+    /// [`Store::pinned_windows`]). Returns rows removed. Deletes are by rowid so
+    /// pinned blocks are individually spared.
+    pub fn apply_block_retention_tier(
+        &self,
+        tier: u8,
+        cutoff_ms: i64,
+        pins: &[(i64, i64)],
+    ) -> Result<usize> {
+        let candidates: Vec<(i64, i64, i64)> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT rowid, start_ms, end_ms FROM sample_block
+                 WHERE tier = ?1 AND end_ms < ?2",
+            )?;
+            let rows = stmt.query_map(params![tier as i64, cutoff_ms], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, i64>(2)?,
+                ))
+            })?;
+            let mut v = Vec::new();
+            for row in rows {
+                v.push(row?);
+            }
+            v
+        };
+        let mut removed = 0usize;
+        for (rowid, start, end) in candidates {
+            if pins.iter().any(|&(ps, pe)| start <= pe && end >= ps) {
+                continue; // pinned — keep at full resolution
+            }
+            removed += self
+                .conn
+                .execute("DELETE FROM sample_block WHERE rowid = ?1", params![rowid])?;
+        }
+        Ok(removed)
     }
 
     /// Records Atlas's own overhead for one flush window (PRD §12.2).
@@ -1722,42 +1950,83 @@ impl Store {
         let span = (to_ms - from_ms) as u128;
         let width = (span / n_buckets as u128).max(1) as i64;
 
-        // One accumulator per bucket index; None until a point lands there.
+        // One accumulator per bucket index; None until a sample lands there.
+        // `sum`/`count` combine raw points (v, weight 1) and roll-up buckets
+        // (avg × count, weight count) so the reported avg is always a genuine
+        // sample-weighted mean regardless of which tier served the sub-range.
         struct Acc {
             start_ms: i64,
             min: f64,
             max: f64,
             sum: f64,
-            count: u32,
+            count: u64,
         }
         let mut acc: Vec<Option<Acc>> = (0..n_buckets).map(|_| None).collect();
 
+        // Fold one aggregate contribution (min,max,sum,count) at time `ts` into
+        // its query bucket.
+        let fold = |acc: &mut Vec<Option<Acc>>, ts: i64, mn: f64, mx: f64, sum: f64, cnt: u64| {
+            if ts < from_ms || ts >= to_ms {
+                return;
+            }
+            let idx = ((((ts - from_ms) as u128) * n_buckets as u128) / span) as usize;
+            let idx = idx.min(n_buckets - 1);
+            match &mut acc[idx] {
+                Some(a) => {
+                    a.min = a.min.min(mn);
+                    a.max = a.max.max(mx);
+                    a.sum += sum;
+                    a.count += cnt;
+                }
+                slot @ None => {
+                    *slot = Some(Acc {
+                        start_ms: from_ms + idx as i64 * width,
+                        min: mn,
+                        max: mx,
+                        sum,
+                        count: cnt,
+                    });
+                }
+            }
+        };
+
+        // Finest tier wins per sub-range: read the raw (tier 0) tier first and
+        // remember the time spans it served; then fill only the *gaps* with T1,
+        // then T2. Because the compaction job deletes raw blocks in the same
+        // transaction that produces their roll-up, the tiers are time-disjoint
+        // by construction — but selecting finest-first makes the query correct
+        // (no gap, no double-count) even at a transient boundary or around a
+        // pinned window where a finer tier was deliberately retained.
+        let mut covered: Vec<(i64, i64)> = Vec::new();
+
         for blk in self.read_blocks(metric, Some(scope), from_ms, to_ms)? {
             for &(ts, v) in &blk.points {
-                // Half-open [from, to): the upper bound is exclusive so a bucket
-                // boundary point is not double-counted.
-                if ts < from_ms || ts >= to_ms {
-                    continue;
-                }
-                let idx = ((((ts - from_ms) as u128) * n_buckets as u128) / span) as usize;
-                let idx = idx.min(n_buckets - 1);
-                match &mut acc[idx] {
-                    Some(a) => {
-                        a.min = a.min.min(v);
-                        a.max = a.max.max(v);
-                        a.sum += v;
-                        a.count += 1;
+                fold(&mut acc, ts, v, v, v, 1);
+            }
+            merge_span(&mut covered, blk.start_ms, blk.end_ms);
+        }
+
+        for tier in [TIER_T1, TIER_T2] {
+            let rolls = self.read_rollup_blocks(metric, Some(scope), tier, from_ms, to_ms)?;
+            for r in &rolls {
+                for b in &r.buckets {
+                    // Skip any roll-up bucket whose time a finer tier already
+                    // served — the finest tier present wins.
+                    if span_covers(&covered, b.start_ms) {
+                        continue;
                     }
-                    slot @ None => {
-                        *slot = Some(Acc {
-                            start_ms: from_ms + idx as i64 * width,
-                            min: v,
-                            max: v,
-                            sum: v,
-                            count: 1,
-                        });
-                    }
+                    fold(
+                        &mut acc,
+                        b.start_ms,
+                        b.min,
+                        b.max,
+                        b.avg * b.count as f64,
+                        b.count as u64,
+                    );
                 }
+            }
+            for r in &rolls {
+                merge_span(&mut covered, r.start_ms, r.end_ms);
             }
         }
 
@@ -1768,10 +2037,186 @@ impl Store {
                 start_ms: a.start_ms,
                 min: a.min,
                 max: a.max,
-                avg: a.sum / a.count as f64,
-                samples: a.count,
+                avg: if a.count > 0 {
+                    a.sum / a.count as f64
+                } else {
+                    a.min
+                },
+                samples: a.count.min(u32::MAX as u64) as u32,
             })
             .collect())
+    }
+
+    /// Pinned incident/bookmark windows, each widened by `margin_ms` on both
+    /// sides (R3 tier pinning, tech-stack §4.2: "bookmarked incident windows are
+    /// pinned and never downsampled"). A block overlapping any of these is never
+    /// demoted or deleted by [`Store::rollup_tier`] /
+    /// [`Store::apply_block_retention_tier`], so an incident keeps full 1 s
+    /// resolution indefinitely. Bookmarks are point-in-time (widened to a
+    /// window); incidents span `[start, end]` (ongoing → up to now).
+    pub fn pinned_windows(&self, margin_ms: i64) -> Result<Vec<(i64, i64)>> {
+        let m = margin_ms.max(0);
+        let mut out = Vec::new();
+        {
+            let mut stmt = self.conn.prepare("SELECT ts_ms FROM bookmark")?;
+            let rows = stmt.query_map([], |r| r.get::<_, i64>(0))?;
+            for ts in rows {
+                let ts = ts?;
+                out.push((ts - m, ts + m));
+            }
+        }
+        {
+            let now = now_ms();
+            let mut stmt = self.conn.prepare("SELECT start_ms, end_ms FROM incident")?;
+            let rows = stmt.query_map([], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, Option<i64>>(1)?))
+            })?;
+            for row in rows {
+                let (start, end) = row?;
+                out.push((start - m, end.unwrap_or(now) + m));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Rolls up **fully-aged** finer blocks of `from_tier` (0 → T1, or 1 → T2)
+    /// into the next coarser tier, transactionally (R3, PRD §9.3.1/§13.5).
+    ///
+    /// For each series it gathers every `from_tier` block whose whole span is
+    /// older than `older_than_ms` and does **not** overlap a pinned incident/
+    /// bookmark window (widened by `pin_margin_ms`), decodes them, produces
+    /// coarse buckets (min/max preserve peaks — see [`atlas_tsdb::rollup`]),
+    /// writes one coarse block at `from_tier + 1`, and deletes the consumed
+    /// finer blocks. **The whole pass is one transaction**, so a crash never
+    /// leaves data half-demoted: either the coarse block exists and the finer
+    /// ones are gone, or nothing changed.
+    ///
+    /// Incremental correctness: if a coarse bucket ends up split across two runs
+    /// (finer blocks straddling the aging cutoff landed in different passes), the
+    /// two partial coarse buckets carry disjoint sample subsets and the query
+    /// layer folds them back losslessly (min/max/count/weighted-avg are
+    /// associative), so nothing is double-counted.
+    pub fn rollup_tier(
+        &mut self,
+        from_tier: u8,
+        older_than_ms: i64,
+        pin_margin_ms: i64,
+    ) -> Result<RollupSummary> {
+        let to_tier = from_tier + 1;
+        let bucket_ms = tier_bucket_ms(to_tier).ok_or_else(|| {
+            anyhow::anyhow!("rollup_tier: tier {from_tier} has no coarser roll-up target")
+        })?;
+        let bucket_secs = bucket_ms / 1000;
+        let pins = self.pinned_windows(pin_margin_ms)?;
+
+        // Gather aged finer blocks up front (ordered by series then time) so the
+        // SELECT statement is dropped before we mutate inside the transaction.
+        // Tuple: (metric, scope, rowid, start_ms, end_ms, payload).
+        let rows: Vec<(i64, i64, i64, i64, i64, Vec<u8>)> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT metric, scope, rowid, start_ms, end_ms, payload FROM sample_block
+                 WHERE tier = ?1 AND end_ms < ?2
+                 ORDER BY metric, scope, start_ms",
+            )?;
+            let mapped = stmt.query_map(params![from_tier as i64, older_than_ms], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, i64>(3)?,
+                    r.get::<_, i64>(4)?,
+                    r.get::<_, Vec<u8>>(5)?,
+                ))
+            })?;
+            let mut v = Vec::new();
+            for row in mapped {
+                v.push(row?);
+            }
+            v
+        };
+
+        let mut summary = RollupSummary {
+            from_tier,
+            to_tier,
+            ..Default::default()
+        };
+
+        let tx = self.conn.transaction()?;
+        {
+            let mut insert = tx.prepare(
+                "INSERT INTO sample_block (metric, scope, start_ms, end_ms, points, payload, tier)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            )?;
+            let mut delete = tx.prepare("DELETE FROM sample_block WHERE rowid = ?1")?;
+
+            // Walk grouped runs of equal (metric, scope).
+            let mut i = 0usize;
+            while i < rows.len() {
+                let (metric_id, scope, _, _, _, _) = rows[i];
+                let mut j = i;
+                // Accumulate consumed rowids + decoded finer data for this series.
+                let mut consumed_rowids: Vec<i64> = Vec::new();
+                let mut raw_points: Vec<(i64, f64)> = Vec::new();
+                let mut finer_buckets: Vec<RollupBucket> = Vec::new();
+                while j < rows.len() && rows[j].0 == metric_id && rows[j].1 == scope {
+                    let (_, _, rowid, bstart, bend, ref payload) = rows[j];
+                    // Skip (retain) blocks overlapping a pinned window.
+                    if pins.iter().any(|&(ps, pe)| bstart <= pe && bend >= ps) {
+                        summary.pinned_skipped += 1;
+                        j += 1;
+                        continue;
+                    }
+                    consumed_rowids.push(rowid);
+                    if from_tier == TIER_RAW {
+                        let pts = atlas_tsdb::BlockReader::parse(payload)
+                            .map_err(|e| anyhow::anyhow!("rollup decode raw: {e}"))?
+                            .points()
+                            .map_err(|e| anyhow::anyhow!("rollup decode raw points: {e}"))?;
+                        raw_points.extend(pts);
+                    } else {
+                        let bks = RollupReader::parse(payload)
+                            .map_err(|e| anyhow::anyhow!("rollup decode T{from_tier}: {e}"))?
+                            .into_buckets();
+                        finer_buckets.extend(bks);
+                    }
+                    j += 1;
+                }
+
+                if !consumed_rowids.is_empty() {
+                    let metric = Metric::from_u16(metric_id as u16).ok_or_else(|| {
+                        anyhow::anyhow!("rollup_tier: unknown metric discriminant {metric_id}")
+                    })?;
+                    let key = SeriesKey::new(metric, scope);
+                    let coarse = if from_tier == TIER_RAW {
+                        summary.samples_rolled += raw_points.len() as u64;
+                        rollup_raw(&raw_points, bucket_ms)
+                    } else {
+                        summary.samples_rolled +=
+                            finer_buckets.iter().map(|b| b.count as u64).sum::<u64>();
+                        rollup_buckets(&finer_buckets, bucket_ms)
+                    };
+                    if let Some(blk) = encoded_rollup_block(key, &coarse, bucket_secs) {
+                        insert.execute(params![
+                            blk.key.metric.as_u16() as i64,
+                            blk.key.scope,
+                            blk.start_ms,
+                            blk.end_ms,
+                            blk.points as i64,
+                            blk.payload,
+                            to_tier as i64,
+                        ])?;
+                        summary.produced_blocks += 1;
+                    }
+                    for rowid in &consumed_rowids {
+                        delete.execute(params![rowid])?;
+                        summary.consumed_blocks += 1;
+                    }
+                }
+                i = j;
+            }
+        }
+        tx.commit()?;
+        Ok(summary)
     }
 
     // -----------------------------------------------------------------------
@@ -2462,6 +2907,34 @@ fn like_pattern(q: &str) -> String {
     format!("%{escaped}%")
 }
 
+/// Whether `t` falls inside any of the merged `[start, end]` intervals. Used by
+/// the cross-tier query to skip a roll-up bucket whose time a finer tier already
+/// served (finest-tier-wins). Linear over `intervals`, which stays tiny because
+/// [`merge_span`] coalesces contiguous block spans.
+fn span_covers(intervals: &[(i64, i64)], t: i64) -> bool {
+    intervals.iter().any(|&(s, e)| t >= s && t <= e)
+}
+
+/// Adds `[start, end]` to the merged interval set, coalescing with any interval
+/// it touches (within a 1 s tolerance, so back-to-back sample blocks collapse to
+/// one span). Keeps the covered set to a handful of entries even across a long
+/// window of contiguous raw blocks.
+fn merge_span(intervals: &mut Vec<(i64, i64)>, start: i64, end: i64) {
+    let tol = 1000;
+    let (mut lo, mut hi) = (start, end);
+    let mut merged = Vec::with_capacity(intervals.len() + 1);
+    for &(s, e) in intervals.iter() {
+        if e + tol < lo || s - tol > hi {
+            merged.push((s, e));
+        } else {
+            lo = lo.min(s);
+            hi = hi.max(e);
+        }
+    }
+    merged.push((lo, hi));
+    *intervals = merged;
+}
+
 /// Wall-clock Unix-epoch milliseconds. Small local helper so the store can
 /// stamp `created_ms`/audit timestamps without a dependency on the service.
 fn now_ms() -> i64 {
@@ -2612,7 +3085,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 11, "migration walks v1 up to the current schema");
+        assert_eq!(version, 12, "migration walks v1 up to the current schema");
 
         store
             .write_self_sample(&SelfSampleRow {
@@ -2688,7 +3161,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 11, "migration walks a v2 db to the current schema");
+        assert_eq!(version, 12, "migration walks a v2 db to the current schema");
         assert!(column_exists(&store.conn, "process_instance", "exit_status").unwrap());
 
         // Pre-existing row survived and has a NULL exit_status.
@@ -2798,13 +3271,13 @@ mod tests {
     }
 
     #[test]
-    fn fresh_database_is_v11() {
+    fn fresh_database_is_v12() {
         let store = Store::open_in_memory().unwrap();
         let version: i64 = store
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 11);
+        assert_eq!(version, 12);
     }
 
     fn sample_rule(name: &str, image: &str) -> RuleRow {
@@ -3454,5 +3927,186 @@ mod tests {
         };
         store.set_dynamic_protection(&want2).unwrap();
         assert_eq!(store.get_dynamic_protection().unwrap(), want2);
+    }
+
+    // -- R3 extended retention tiers (schema v12) ------------------------------
+
+    /// Builds a raw 1 s CPU series for `scope` over `[t0, t0 + secs)` with a
+    /// single spike at `spike_at` seconds, sealed into one block.
+    fn raw_series_with_spike(
+        scope: i64,
+        t0: i64,
+        secs: i64,
+        base: f64,
+        spike_at: i64,
+        spike: f64,
+    ) -> EncodedBlock {
+        let mut hb = atlas_tsdb::HeadBlocks::new();
+        let key = SeriesKey::new(Metric::CpuPermille, scope);
+        for i in 0..secs {
+            let v = if i == spike_at { spike } else { base };
+            assert!(hb.append(key, t0 + i * 1000, v));
+        }
+        hb.drain_all().pop().expect("one block")
+    }
+
+    #[test]
+    fn rollup_tier_demotes_raw_to_t1_preserving_peaks() {
+        let mut store = Store::open_in_memory().unwrap();
+        let id = store.upsert_process(&identity(10), 1_000).unwrap();
+        // 60 s of raw @ 1 s with a lone spike of 950 at t=37 s.
+        let blk = raw_series_with_spike(id, 0, 60, 100.0, 37, 950.0);
+        store.write_blocks(&[blk]).unwrap();
+        assert_eq!(store.block_counts_by_tier().unwrap(), [1, 0, 0]);
+
+        // Roll up everything older than 120 s (all of it) into T1.
+        let summary = store.rollup_tier(TIER_RAW, 120_000, 0).unwrap();
+        assert_eq!(summary.consumed_blocks, 1);
+        assert_eq!(summary.produced_blocks, 1);
+        assert_eq!(summary.samples_rolled, 60);
+
+        // Raw is gone; T1 exists.
+        let counts = store.block_counts_by_tier().unwrap();
+        assert_eq!(counts[TIER_RAW as usize], 0, "raw consumed");
+        assert_eq!(counts[TIER_T1 as usize], 1, "one T1 block produced");
+
+        // The spike survives as a T1 bucket max.
+        let t1 = store
+            .read_rollup_blocks(Metric::CpuPermille, Some(id), TIER_T1, 0, 120_000)
+            .unwrap();
+        let max = t1
+            .iter()
+            .flat_map(|r| r.buckets.iter())
+            .map(|b| b.max)
+            .fold(0.0f64, f64::max);
+        assert_eq!(max, 950.0, "peak preserved through the roll-up");
+    }
+
+    #[test]
+    fn rollup_is_transactional_and_lossless_end_to_end() {
+        // T0 → T1 → T2, then query the whole span: the peak and sample count
+        // must be preserved at every tier.
+        let mut store = Store::open_in_memory().unwrap();
+        let id = store.upsert_process(&identity(11), 1_000).unwrap();
+        let blk = raw_series_with_spike(id, 0, 120, 50.0, 90, 777.0);
+        store.write_blocks(&[blk]).unwrap();
+
+        store.rollup_tier(TIER_RAW, 200_000, 0).unwrap();
+        assert_eq!(store.block_counts_by_tier().unwrap()[TIER_T1 as usize], 1);
+        store.rollup_tier(TIER_T1, 200_000, 0).unwrap();
+        let counts = store.block_counts_by_tier().unwrap();
+        assert_eq!(counts, [0, 0, 1], "everything demoted to T2");
+
+        // Query across the full span: the T2 tier serves it, peak intact.
+        let rows = store
+            .query_range(Metric::CpuPermille, id, 0, 130_000, 200)
+            .unwrap();
+        assert!(!rows.is_empty());
+        let qmax = rows.iter().map(|b| b.max).fold(0.0f64, f64::max);
+        assert_eq!(qmax, 777.0, "peak visible in the cross-tier query");
+        let total: u32 = rows.iter().map(|b| b.samples).sum();
+        assert_eq!(
+            total, 120,
+            "all 120 raw samples accounted for, none doubled"
+        );
+    }
+
+    #[test]
+    fn query_spanning_t0_t1_boundary_is_continuous_no_double_count() {
+        let mut store = Store::open_in_memory().unwrap();
+        let id = store.upsert_process(&identity(12), 1_000).unwrap();
+        // Old half [0,60) s and recent half [60,120) s, both raw initially.
+        let old = raw_series_with_spike(id, 0, 60, 20.0, 10, 400.0);
+        let recent = raw_series_with_spike(id, 60_000, 60, 30.0, 50, 500.0);
+        store.write_blocks(&[old, recent]).unwrap();
+
+        // Roll up only the old half (older than 60 s) into T1; the recent half
+        // stays raw. Now the series straddles the T0/T1 boundary at 60 s.
+        let s = store.rollup_tier(TIER_RAW, 60_000, 0).unwrap();
+        assert_eq!(s.produced_blocks, 1);
+        let counts = store.block_counts_by_tier().unwrap();
+        assert_eq!(counts[TIER_RAW as usize], 1, "recent raw half remains");
+        assert_eq!(counts[TIER_T1 as usize], 1, "old half demoted to T1");
+
+        // A query across the whole 120 s must be continuous and count every
+        // sample exactly once (60 rolled-up + 60 raw = 120).
+        let rows = store
+            .query_range(Metric::CpuPermille, id, 0, 120_000, 240)
+            .unwrap();
+        let total: u32 = rows.iter().map(|b| b.samples).sum();
+        assert_eq!(total, 120, "no gap, no double-count across the boundary");
+        // Both peaks survive (old spike from T1, recent spike from raw).
+        let qmax = rows.iter().map(|b| b.max).fold(0.0f64, f64::max);
+        assert_eq!(qmax, 500.0);
+        assert!(rows.iter().any(|b| b.max == 400.0), "old-half peak present");
+    }
+
+    #[test]
+    fn rollup_and_retention_pin_bookmarked_windows() {
+        let mut store = Store::open_in_memory().unwrap();
+        let id = store.upsert_process(&identity(13), 1_000).unwrap();
+        // Two separate raw blocks: one around t=30 s, one around t=300 s.
+        let near_bookmark = raw_series_with_spike(id, 25_000, 20, 10.0, 5, 900.0);
+        let elsewhere = raw_series_with_spike(id, 300_000, 20, 10.0, 5, 20.0);
+        store.write_blocks(&[near_bookmark, elsewhere]).unwrap();
+
+        // Pin an incident window around t=30 s.
+        store.create_bookmark(30_000, "incident").unwrap();
+
+        // Roll up everything older than 1000 s with a 10 s pin margin: the
+        // bookmarked block is spared; the other is demoted.
+        let summary = store.rollup_tier(TIER_RAW, 1_000_000, 10_000).unwrap();
+        assert_eq!(summary.pinned_skipped, 1, "bookmarked block not demoted");
+        assert_eq!(
+            summary.consumed_blocks, 1,
+            "only the un-pinned block rolled"
+        );
+        let counts = store.block_counts_by_tier().unwrap();
+        assert_eq!(
+            counts[TIER_RAW as usize], 1,
+            "pinned raw block still present"
+        );
+        assert_eq!(counts[TIER_T1 as usize], 1);
+
+        // Retention must also spare the pinned raw block.
+        let pins = store.pinned_windows(10_000).unwrap();
+        let removed = store
+            .apply_block_retention_tier(TIER_RAW, 1_000_000, &pins)
+            .unwrap();
+        assert_eq!(removed, 0, "pinned block survives retention");
+        assert_eq!(
+            store.block_counts_by_tier().unwrap()[TIER_RAW as usize],
+            1,
+            "pinned raw kept at full resolution"
+        );
+    }
+
+    #[test]
+    fn per_tier_storage_stats_add_up() {
+        let mut store = Store::open_in_memory().unwrap();
+        let id = store.upsert_process(&identity(14), 1_000).unwrap();
+        let blk = raw_series_with_spike(id, 0, 60, 100.0, 30, 500.0);
+        store.write_blocks(&[blk]).unwrap();
+        store.rollup_tier(TIER_RAW, 120_000, 0).unwrap();
+
+        let bytes = store.sample_storage_bytes_by_tier().unwrap();
+        assert_eq!(bytes[TIER_RAW as usize], 0, "raw consumed");
+        assert!(bytes[TIER_T1 as usize] > 0, "T1 has payload bytes");
+        // The by-tier breakdown sums to the grand total.
+        let total: u64 = bytes.iter().sum();
+        assert_eq!(total, store.sample_storage_bytes().unwrap());
+    }
+
+    #[test]
+    fn rollup_noop_when_nothing_aged() {
+        let mut store = Store::open_in_memory().unwrap();
+        let id = store.upsert_process(&identity(15), 1_000).unwrap();
+        let blk = raw_series_with_spike(id, 500_000, 30, 100.0, 10, 300.0);
+        store.write_blocks(&[blk]).unwrap();
+        // Cutoff before the data → nothing aged, nothing changes.
+        let summary = store.rollup_tier(TIER_RAW, 100_000, 0).unwrap();
+        assert_eq!(summary.consumed_blocks, 0);
+        assert_eq!(summary.produced_blocks, 0);
+        assert_eq!(store.block_counts_by_tier().unwrap(), [1, 0, 0]);
     }
 }
