@@ -231,7 +231,7 @@ fn collect_services() -> Vec<SvcEntry> {
             binary_path: e.binary_path,
         })
         .collect();
-    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out.sort_by_key(|a| a.name.to_lowercase());
     out
 }
 
@@ -267,7 +267,7 @@ fn collect_tasks() -> Vec<TaskItem> {
             enabled: t.enabled,
         })
         .collect();
-    out.sort_by(|a, b| a.path.to_lowercase().cmp(&b.path.to_lowercase()));
+    out.sort_by_key(|a| a.path.to_lowercase());
     out
 }
 
@@ -285,7 +285,7 @@ fn collect_power_plan() -> String {
         if dll.is_null() {
             return String::new();
         }
-        let proc = GetProcAddress(dll, b"PowerGetActiveScheme\0".as_ptr());
+        let proc = GetProcAddress(dll, c"PowerGetActiveScheme".as_ptr().cast());
         if proc.is_null() {
             FreeLibrary(dll);
             return String::new();

@@ -87,6 +87,9 @@ const XPATH_KERNEL_POWER: &str =
 /// A sensible default cap when the caller passes `max == 0`.
 const DEFAULT_MAX: usize = 200;
 
+/// One reliability-event source: (channel, XPath filter, event→`RawCrash` mapper).
+type CrashSource = (&'static str, &'static str, fn(&str) -> Option<RawCrash>);
+
 /// Reads crash/reliability events at or after `since_ms`, newest first, up to
 /// `max` total (0 = a default of 200). See the module docs for the source list.
 /// Returns `available = false` with an honest reason only when *both* primary
@@ -95,7 +98,7 @@ pub fn read_crashes(since_ms: i64, max: usize) -> CrashScan {
     let cap = if max == 0 { DEFAULT_MAX } else { max };
 
     // (channel, xpath, mapper). Application channel first, then System.
-    let sources: [(&str, &str, fn(&str) -> Option<RawCrash>); 6] = [
+    let sources: [CrashSource; 6] = [
         (CH_APPLICATION, XPATH_APP_ERROR, map_app_error),
         (CH_APPLICATION, XPATH_APP_HANG, map_app_hang),
         (CH_APPLICATION, XPATH_WER, map_wer),
@@ -131,7 +134,7 @@ pub fn read_crashes(since_ms: i64, max: usize) -> CrashScan {
     }
 
     // Merge: newest first, then truncate to the requested total.
-    all.sort_by(|a, b| b.ts_ms.cmp(&a.ts_ms));
+    all.sort_by_key(|c| std::cmp::Reverse(c.ts_ms));
     all.truncate(cap);
 
     CrashScan {
@@ -354,7 +357,7 @@ pub fn recent_change_notes(
         .filter(|(ts, _, _)| *ts <= crash_ms && *ts >= lo)
         .collect();
     // Most recent first.
-    hits.sort_by(|a, b| b.0.cmp(&a.0));
+    hits.sort_by_key(|h| std::cmp::Reverse(h.0));
     hits.iter()
         .map(|(ts, label, subject)| {
             let gap = humanize_gap(crash_ms - *ts);

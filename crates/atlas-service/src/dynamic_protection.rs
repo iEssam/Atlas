@@ -20,6 +20,7 @@
 //!   * the current foreground process (never hurt what the user is using), OR
 //!   * already governed by an explicit rule (rules win; §precedence), OR
 //!   * already dampened (no double-dampen).
+//!
 //! Every dampening is bounded by `max_intervention_seconds` — a hard cap that
 //! guarantees no process is ever held dampened indefinitely.
 
