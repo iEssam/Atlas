@@ -20,6 +20,7 @@
             <conv:ChangeCategoryToBrushConverter x:Key="ChangeCategoryToBrush" />
             <conv:CrashCautionToBrushConverter x:Key="CrashCautionToBrush" />
             <conv:SignatureTokenToBrushConverter x:Key="SignatureTokenToBrush" />
+            <conv:SecurityTokenToBrushConverter x:Key="SecurityTokenToBrush" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>

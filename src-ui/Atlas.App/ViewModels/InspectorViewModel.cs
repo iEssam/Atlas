@@ -12,9 +12,13 @@ namespace Atlas.App.ViewModels;
 
 /// <summary>
 /// Drives the Process Inspector (R2, PRD §9.4) — the milestone centerpiece. It
-/// holds the state for four lazily-loaded tabs (Overview, Handles, Modules,
-/// Threads), each backed by one on-demand read-only RPC. Tabs load on first view
-/// and expose a per-tab refresh; nothing is fetched upfront (task brief §2).
+/// holds the state for five lazily-loaded tabs (Overview, Handles, Modules,
+/// Threads, Security), each backed by one on-demand read-only RPC. Tabs load on
+/// first view and expose a per-tab refresh; nothing is fetched upfront (task
+/// brief §2). The Security tab (R3, PRD §9.4.1/§9.4.6) adds expert detail — the
+/// signing certificate chain, file hash, token privileges/groups/capabilities,
+/// and process mitigation policies — shown factually with the same coverage
+/// honesty.
 ///
 /// <para>
 /// Coverage is surfaced <b>honestly</b> (task brief §2): when a reply sets
@@ -38,6 +42,7 @@ public sealed partial class InspectorViewModel : ObservableObject
     private bool _handlesLoaded;
     private bool _modulesLoaded;
     private bool _threadsLoaded;
+    private bool _securityLoaded;
 
     public uint Pid => _pid;
     public long CreateTime100ns => _createTime100ns;
@@ -476,6 +481,186 @@ public sealed partial class InspectorViewModel : ObservableObject
         }
     }
 
+    // ======================================================================
+    // Security tab (GetSecurityMetadata, R3 / PRD §9.4.1/§9.4.6).
+    // ======================================================================
+    //
+    // Expert security detail shown FACTUALLY: signing certificate chain, file
+    // hash, token privileges/groups/capabilities, and process mitigation
+    // policies. Coverage is surfaced honestly exactly like the other tabs — a
+    // reply's available=false shows a calm "server too old" / "process exited"
+    // state, and metadata.limited raises a calm InfoBar alongside whatever partial
+    // data came back. A held privilege, a blank field, or an unsigned binary is
+    // information, never an accusation (task brief §2).
+
+    public ObservableCollection<CertRowItem> CertChain { get; } = new();
+    public ObservableCollection<PrivilegeRowItem> Privileges { get; } = new();
+    public ObservableCollection<string> Groups { get; } = new();
+    public ObservableCollection<string> Capabilities { get; } = new();
+    public ObservableCollection<string> Mitigations { get; } = new();
+
+    [ObservableProperty] private bool _securityLoading;
+    [ObservableProperty] private bool _securityUnavailable;
+    [ObservableProperty] private string _securityUnavailableText = string.Empty;
+    [ObservableProperty] private bool _securityHasData;
+    [ObservableProperty] private bool _securityIsLimited;
+    [ObservableProperty] private string _securityLimitedNote = string.Empty;
+
+    // Signature.
+    [ObservableProperty] private string _securitySignature = "—";
+    [ObservableProperty] private string _securitySignatureToken = "unknown";
+    [ObservableProperty] private bool _securityCertChainEmpty;
+
+    // File.
+    [ObservableProperty] private string _securitySha256Grouped = "—";
+    [ObservableProperty] private string _securitySha256Raw = string.Empty;
+    [ObservableProperty] private bool _securityHasSha256;
+
+    // Token.
+    [ObservableProperty] private string _securityIntegrity = "—";
+    [ObservableProperty] private string _securityElevation = "—";
+    [ObservableProperty] private string _securityAppContainer = "—";
+    [ObservableProperty] private string _securityUserSid = "—";
+    [ObservableProperty] private bool _securityPrivilegesEmpty;
+    [ObservableProperty] private bool _securityGroupsEmpty;
+    [ObservableProperty] private bool _securityCapabilitiesEmpty;
+
+    // Mitigations.
+    [ObservableProperty] private bool _securityMitigationsEmpty;
+
+    public Task EnsureSecurityAsync()
+    {
+        if (_securityLoaded)
+        {
+            return Task.CompletedTask;
+        }
+        _securityLoaded = true;
+        return RefreshSecurityAsync();
+    }
+
+    public async Task RefreshSecurityAsync()
+    {
+        SecurityLoading = true;
+        SecurityUnavailable = false;
+        SecurityHasData = false;
+        SecurityIsLimited = false;
+        SecurityLimitedNote = string.Empty;
+
+        try
+        {
+            using var channel = AtlasChannel.Connect(_who);
+            var outcome = await channel
+                .GetSecurityMetadataAsync(_pid, _createTime100ns).ConfigureAwait(false);
+
+            Post(() =>
+            {
+                SecurityLoading = false;
+
+                if (!outcome.Supported)
+                {
+                    SecurityUnavailable = true;
+                    SecurityUnavailableText =
+                        "Security details are unavailable — the connected service is too old.";
+                    return;
+                }
+
+                var reply = outcome.Value;
+                if (!reply.Available)
+                {
+                    SecurityUnavailable = true;
+                    SecurityUnavailableText = R2Formatter.UnavailableReason(
+                        reply.UnavailableReason,
+                        "Security details couldn't be read for this process.");
+                    return;
+                }
+
+                ApplySecurity(reply.Metadata);
+                SecurityHasData = true;
+            });
+        }
+        catch (Exception ex)
+        {
+            Post(() =>
+            {
+                SecurityLoading = false;
+                SecurityUnavailable = true;
+                SecurityUnavailableText = $"Could not reach the service: {ex.Message}";
+            });
+        }
+    }
+
+    private void ApplySecurity(SecurityMetadata m)
+    {
+        // Signature (reuse the R2 trust token — unsigned is caution, not danger).
+        SecuritySignature = R2Formatter.SignatureStatusLabel(m.SignatureStatus);
+        SecuritySignatureToken = R2Formatter.SignatureTrustToken(m.SignatureStatus);
+
+        CertChain.Clear();
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        foreach (var c in m.CertChain)
+        {
+            CertChain.Add(new CertRowItem(
+                SecurityFormatter.CertNameText(c.Subject),
+                SecurityFormatter.CertNameText(c.Issuer),
+                SecurityFormatter.ThumbprintGrouped(c.ThumbprintSha1),
+                SecurityFormatter.CertValidUntil(c.NotAfterMs),
+                SecurityFormatter.CertValidityNote(c.NotBeforeMs, c.NotAfterMs, nowMs),
+                SecurityFormatter.CertValidityToken(c.NotBeforeMs, c.NotAfterMs, nowMs)));
+        }
+        SecurityCertChainEmpty = CertChain.Count == 0;
+
+        // File hash.
+        SecuritySha256Grouped = SecurityFormatter.Sha256Grouped(m.FileSha256);
+        SecuritySha256Raw = SecurityFormatter.Sha256Raw(m.FileSha256);
+        SecurityHasSha256 = SecuritySha256Raw.Length > 0;
+
+        // Token identity.
+        SecurityIntegrity = R2Formatter.IntegrityLabel(m.IntegrityLevel);
+        SecurityElevation = R2Formatter.ElevationLabel(m.Elevated);
+        SecurityAppContainer = SecurityFormatter.AppContainerLabel(m.AppContainer);
+        SecurityUserSid = R2Formatter.OrDash(m.UserSid);
+
+        Privileges.Clear();
+        foreach (var p in m.Privileges)
+        {
+            Privileges.Add(new PrivilegeRowItem(
+                SecurityFormatter.PrivilegeNameText(p.Name),
+                SecurityFormatter.PrivilegeGloss(p.Name),
+                SecurityFormatter.PrivilegeStateLabel(p.Enabled),
+                SecurityFormatter.PrivilegeStateToken(p.Enabled)));
+        }
+        SecurityPrivilegesEmpty = Privileges.Count == 0;
+
+        Groups.Clear();
+        foreach (var g in m.Groups)
+        {
+            Groups.Add(SecurityFormatter.GroupText(g));
+        }
+        SecurityGroupsEmpty = Groups.Count == 0;
+
+        Capabilities.Clear();
+        foreach (var cap in m.Capabilities)
+        {
+            Capabilities.Add(SecurityFormatter.CapabilityText(cap));
+        }
+        SecurityCapabilitiesEmpty = Capabilities.Count == 0;
+
+        // Mitigations (on-policies as chips).
+        Mitigations.Clear();
+        foreach (var mit in m.Mitigations)
+        {
+            if (!string.IsNullOrWhiteSpace(mit))
+            {
+                Mitigations.Add(SecurityFormatter.MitigationLabel(mit));
+            }
+        }
+        SecurityMitigationsEmpty = Mitigations.Count == 0;
+
+        // Honest coverage (alongside the partial data, never instead of it).
+        SecurityIsLimited = m.Limited;
+        SecurityLimitedNote = SecurityFormatter.LimitedCoverageNote(m.Limited);
+    }
+
     // ----------------------------------------------------------------------
 
     private static string FormatEpochMs(long ms)
@@ -537,6 +722,66 @@ public sealed class ModuleRowItem
         PublisherText = publisherText;
         SignedText = signedText;
         SignedToken = signedToken;
+    }
+}
+
+/// <summary>
+/// One signing-certificate row (leaf → root), pre-formatted. A validity note
+/// (expired / expiring soon / not yet valid) is stated as a calm fact; its token
+/// tops out at caution, never danger.
+/// </summary>
+public sealed class CertRowItem
+{
+    public string SubjectText { get; }
+    public string IssuerText { get; }
+    public string ThumbprintText { get; }
+    public string ValidUntilText { get; }
+    public string ValidityNote { get; }
+
+    /// <summary>Trust token ("ok"/"caution"/"expired") for the validity note color.</summary>
+    public string ValidityToken { get; }
+
+    /// <summary>True when there is a validity note to show (drives its visibility).</summary>
+    public bool HasValidityNote { get; }
+
+    public CertRowItem(
+        string subjectText, string issuerText, string thumbprintText,
+        string validUntilText, string validityNote, string validityToken)
+    {
+        SubjectText = subjectText;
+        IssuerText = issuerText;
+        ThumbprintText = thumbprintText;
+        ValidUntilText = validUntilText;
+        ValidityNote = validityNote;
+        ValidityToken = validityToken;
+        HasValidityNote = validityNote.Length > 0;
+    }
+}
+
+/// <summary>
+/// One token-privilege row (SeXxx name + friendly gloss + enabled/available
+/// state), pre-formatted. The state is neutral-informational — a held privilege
+/// is normal, so it is never colored as an alarm.
+/// </summary>
+public sealed class PrivilegeRowItem
+{
+    public string NameText { get; }
+    public string GlossText { get; }
+    public string StateText { get; }
+
+    /// <summary>State token ("enabled"/"available") for the neutral pill color.</summary>
+    public string StateToken { get; }
+
+    /// <summary>True when a friendly gloss is available (drives its visibility).</summary>
+    public bool HasGloss { get; }
+
+    public PrivilegeRowItem(string nameText, string glossText, string stateText, string stateToken)
+    {
+        NameText = nameText;
+        GlossText = glossText;
+        StateText = stateText;
+        StateToken = stateToken;
+        HasGloss = glossText.Length > 0;
     }
 }
 

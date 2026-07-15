@@ -20,6 +20,7 @@ bool probeRules = false;
 bool probePrivacyAlerts = false;
 bool probeSupportBundle = false;
 bool probePlugins = false;
+bool probeSecurity = false;
 uint probePid = 0;
 
 for (int i = 0; i < args.Length; i++)
@@ -64,6 +65,12 @@ for (int i = 0; i < args.Length; i++)
         case "--probe-plugins":
             probePlugins = true;
             break;
+        // R3 security-metadata live check: exercise GetSecurityMetadata (the
+        // Inspector's Security tab) and report how it degrades (Supported vs
+        // Unsupported→"server too old").
+        case "--probe-security":
+            probeSecurity = true;
+            break;
         case "--pid" when i + 1 < args.Length:
             if (!uint.TryParse(args[++i], out probePid))
             {
@@ -76,7 +83,8 @@ for (int i = 0; i < args.Length; i++)
             Console.WriteLine(
                 "usage: atlas-devcli [--pipe <who>] [--top <n>] [--watch] "
                 + "[--probe-r2 [--pid <pid>]] [--probe-rules] [--probe-privacy-alerts] "
-                + "[--probe-support-bundle] [--probe-plugins]");
+                + "[--probe-support-bundle] [--probe-plugins] "
+                + "[--probe-security [--pid <pid>]]");
             return 0;
         default:
             Console.Error.WriteLine($"unknown argument: {args[i]}");
@@ -107,6 +115,11 @@ if (probeSupportBundle)
 if (probePlugins)
 {
     return await ProbePluginsAsync(who);
+}
+
+if (probeSecurity)
+{
+    return await ProbeSecurityAsync(who, probePid);
 }
 
 var pipePath = AtlasPipe.FullPath(who ?? AtlasPipe.DefaultWho());
@@ -213,6 +226,61 @@ static async Task<int> ProbeR2Async(string? who, uint pid)
               + $"{owners.Value.Owners.Count} owners)"
             : $"FindResourceOwners : Unsupported — {owners.UnsupportedReason}");
 
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"error: {ex.Message}");
+        return 1;
+    }
+}
+
+// Exercises the R3 GetSecurityMetadata RPC and prints whether the server
+// supported it or degraded to Unsupported. This is the console equivalent of
+// navigating the UI Inspector's Security tab: against a server too old to serve
+// this RPC (it lands after this UI), the call should come back Unsupported (not
+// throw), which is exactly what drives the tab's graceful "unavailable — server
+// too old" state. When Supported, it also echoes the in-band coverage
+// (available / limited) and a shape summary so the honest-degradation path is
+// visible either way.
+static async Task<int> ProbeSecurityAsync(string? who, uint pid)
+{
+    try
+    {
+        using var atlas = AtlasChannel.Connect(who);
+
+        if (pid == 0)
+        {
+            var snap = await atlas.GetSnapshotAsync(1);
+            if (snap.Processes.Count > 0)
+            {
+                pid = snap.Processes[0].Pid;
+            }
+        }
+        Console.WriteLine($"Probing R3 GetSecurityMetadata against pid {pid} ...");
+        Console.WriteLine();
+
+        var sec = await atlas.GetSecurityMetadataAsync(pid, 0);
+        if (!sec.Supported)
+        {
+            Console.WriteLine($"GetSecurityMetadata : Unsupported — {sec.UnsupportedReason}");
+            return 0;
+        }
+
+        var reply = sec.Value;
+        if (!reply.Available)
+        {
+            Console.WriteLine(
+                $"GetSecurityMetadata : Supported (available=false — {reply.UnavailableReason})");
+            return 0;
+        }
+
+        var m = reply.Metadata;
+        Console.WriteLine(
+            $"GetSecurityMetadata : Supported (available=true, limited={m.Limited}, "
+            + $"signature=\"{m.SignatureStatus}\", certs={m.CertChain.Count}, "
+            + $"privileges={m.Privileges.Count}, groups={m.Groups.Count}, "
+            + $"capabilities={m.Capabilities.Count}, mitigations={m.Mitigations.Count})");
         return 0;
     }
     catch (Exception ex)

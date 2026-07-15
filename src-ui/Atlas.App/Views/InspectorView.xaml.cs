@@ -6,8 +6,9 @@ using Microsoft.UI.Xaml.Controls;
 namespace Atlas.App.Views;
 
 /// <summary>
-/// The Process Inspector content (R2, PRD §9.4) — a four-tab <see cref="TabView"/>
-/// (Overview / Handles / Modules / Threads) over <see cref="InspectorViewModel"/>.
+/// The Process Inspector content (R2, PRD §9.4) — a five-tab <see cref="TabView"/>
+/// (Overview / Handles / Modules / Threads / Security) over
+/// <see cref="InspectorViewModel"/>.
 /// Hosted inside <see cref="InspectorWindow"/>. It lives in a
 /// <see cref="UserControl"/> (a <c>FrameworkElement</c>) rather than directly in
 /// the Window so <c>x:Bind</c> converters resolve — a Window is not a
@@ -57,6 +58,9 @@ public sealed partial class InspectorView : UserControl
             case "Threads":
                 _ = ViewModel.EnsureThreadsAsync();
                 break;
+            case "Security":
+                _ = ViewModel.EnsureSecurityAsync();
+                break;
         }
     }
 
@@ -71,4 +75,20 @@ public sealed partial class InspectorView : UserControl
 
     private void OnRefreshThreads(object sender, RoutedEventArgs e) =>
         _ = ViewModel.RefreshThreadsAsync();
+
+    private void OnRefreshSecurity(object sender, RoutedEventArgs e) =>
+        _ = ViewModel.RefreshSecurityAsync();
+
+    /// <summary>Copies the full (un-grouped) SHA-256 to the clipboard.</summary>
+    private void OnCopySha256(object sender, RoutedEventArgs e)
+    {
+        var sha = ViewModel.SecuritySha256Raw;
+        if (string.IsNullOrEmpty(sha))
+        {
+            return;
+        }
+        var package = new Windows.ApplicationModel.DataTransfer.DataPackage();
+        package.SetText(sha);
+        Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(package);
+    }
 }

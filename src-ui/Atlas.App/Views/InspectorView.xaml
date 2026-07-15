@@ -499,6 +499,318 @@
                     </Grid>
                 </TabViewItem>
 
+                <!-- ============ SECURITY ============ -->
+                <TabViewItem Header="Security" IsClosable="False">
+                    <TabViewItem.IconSource>
+                        <FontIconSource Glyph="&#xE72E;" />
+                    </TabViewItem.IconSource>
+                    <Grid RowSpacing="12" Margin="0,12,0,0">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <!-- Toolbar -->
+                        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="12">
+                            <Button Click="OnRefreshSecurity"
+                                    AutomationProperties.Name="Refresh security details">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <FontIcon Glyph="&#xE72C;" FontSize="14" />
+                                    <TextBlock Text="Refresh" />
+                                </StackPanel>
+                            </Button>
+                            <ProgressRing IsActive="{x:Bind ViewModel.SecurityLoading, Mode=OneWay}"
+                                          Width="18" Height="18" VerticalAlignment="Center" />
+                        </StackPanel>
+
+                        <!-- Limited-coverage note (honest, calm) -->
+                        <InfoBar Grid.Row="1"
+                                 IsOpen="{x:Bind ViewModel.SecurityIsLimited, Mode=OneWay}"
+                                 IsClosable="False"
+                                 Severity="Informational"
+                                 Title="Partial coverage"
+                                 Message="{x:Bind ViewModel.SecurityLimitedNote, Mode=OneWay}" />
+
+                        <!-- Unavailable state -->
+                        <StackPanel Grid.Row="2" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                    Spacing="8"
+                                    Visibility="{x:Bind ViewModel.SecurityUnavailable, Mode=OneWay}">
+                            <FontIcon Glyph="&#xE7BA;" FontSize="28"
+                                      Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                      HorizontalAlignment="Center" />
+                            <TextBlock Text="{x:Bind ViewModel.SecurityUnavailableText, Mode=OneWay}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       TextWrapping="Wrap" MaxWidth="420"
+                                       HorizontalTextAlignment="Center" />
+                        </StackPanel>
+
+                        <!-- Detail -->
+                        <ScrollViewer Grid.Row="2"
+                                      Visibility="{x:Bind ViewModel.SecurityHasData, Mode=OneWay}">
+                            <StackPanel Spacing="20" MaxWidth="760" HorizontalAlignment="Left">
+
+                                <!-- ===== Signature ===== -->
+                                <StackPanel Spacing="10">
+                                    <TextBlock Text="Signature" Style="{StaticResource BodyStrongTextBlockStyle}" />
+
+                                    <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                            BorderThickness="1" CornerRadius="6" Padding="10,6"
+                                            HorizontalAlignment="Left">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <Ellipse Width="10" Height="10" VerticalAlignment="Center"
+                                                     Fill="{x:Bind ViewModel.SecuritySignatureToken, Mode=OneWay, Converter={StaticResource TrustTokenToBrush}}" />
+                                            <TextBlock Text="{x:Bind ViewModel.SecuritySignature, Mode=OneWay}" />
+                                        </StackPanel>
+                                    </Border>
+
+                                    <!-- No chain (unsigned / unavailable) -->
+                                    <TextBlock Text="No certificate chain — this file is unsigned or the chain couldn’t be read."
+                                               Style="{StaticResource CaptionTextBlockStyle}"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                               TextWrapping="Wrap"
+                                               Visibility="{x:Bind ViewModel.SecurityCertChainEmpty, Mode=OneWay}" />
+
+                                    <!-- Certificate chain (leaf → root) -->
+                                    <ItemsControl ItemsSource="{x:Bind ViewModel.CertChain, Mode=OneWay}"
+                                                  AutomationProperties.Name="Certificate chain">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="vm:CertRowItem">
+                                                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                                        BorderThickness="1" CornerRadius="6"
+                                                        Padding="12,10" Margin="0,0,0,8">
+                                                    <Grid ColumnSpacing="12" RowSpacing="4">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="90" />
+                                                            <ColumnDefinition Width="*" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <Grid.RowDefinitions>
+                                                            <RowDefinition Height="Auto" />
+                                                            <RowDefinition Height="Auto" />
+                                                            <RowDefinition Height="Auto" />
+                                                            <RowDefinition Height="Auto" />
+                                                        </Grid.RowDefinitions>
+
+                                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Subject"
+                                                                   Style="{StaticResource FieldLabelStyle}" />
+                                                        <TextBlock Grid.Row="0" Grid.Column="1" Text="{x:Bind SubjectText}"
+                                                                   TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+
+                                                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Issuer"
+                                                                   Style="{StaticResource FieldLabelStyle}" />
+                                                        <TextBlock Grid.Row="1" Grid.Column="1" Text="{x:Bind IssuerText}"
+                                                                   TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+
+                                                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Thumbprint"
+                                                                   Style="{StaticResource FieldLabelStyle}" />
+                                                        <TextBlock Grid.Row="2" Grid.Column="1" Text="{x:Bind ThumbprintText}"
+                                                                   FontFamily="Consolas" TextWrapping="Wrap"
+                                                                   IsTextSelectionEnabled="True" />
+
+                                                        <TextBlock Grid.Row="3" Grid.Column="0" Text="Validity"
+                                                                   Style="{StaticResource FieldLabelStyle}" />
+                                                        <StackPanel Grid.Row="3" Grid.Column="1" Orientation="Horizontal"
+                                                                    Spacing="8">
+                                                            <TextBlock Text="{x:Bind ValidUntilText}" VerticalAlignment="Center" />
+                                                            <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                                                                    CornerRadius="10" Padding="8,2"
+                                                                    Visibility="{x:Bind HasValidityNote}">
+                                                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                                                    <Ellipse Width="8" Height="8" VerticalAlignment="Center"
+                                                                             Fill="{x:Bind ValidityToken, Converter={StaticResource SecurityTokenToBrush}}" />
+                                                                    <TextBlock Text="{x:Bind ValidityNote}"
+                                                                               Style="{StaticResource CaptionTextBlockStyle}" />
+                                                                </StackPanel>
+                                                            </Border>
+                                                        </StackPanel>
+                                                    </Grid>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+
+                                <!-- ===== File ===== -->
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="File" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                    <Grid ColumnSpacing="16">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="150" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="SHA-256" Style="{StaticResource FieldLabelStyle}" />
+                                        <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.SecuritySha256Grouped, Mode=OneWay}"
+                                                   FontFamily="Consolas" TextWrapping="Wrap"
+                                                   IsTextSelectionEnabled="True" />
+                                        <Button Grid.Column="2" Click="OnCopySha256" VerticalAlignment="Top"
+                                                AutomationProperties.Name="Copy SHA-256 hash"
+                                                ToolTipService.ToolTip="Copy the full hash"
+                                                Visibility="{x:Bind ViewModel.SecurityHasSha256, Mode=OneWay}">
+                                            <FontIcon Glyph="&#xE8C8;" FontSize="14" />
+                                        </Button>
+                                    </Grid>
+                                </StackPanel>
+
+                                <!-- ===== Token ===== -->
+                                <StackPanel Spacing="10">
+                                    <TextBlock Text="Token" Style="{StaticResource BodyStrongTextBlockStyle}" />
+
+                                    <Grid ColumnSpacing="16" RowSpacing="8">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="150" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+
+                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Integrity" Style="{StaticResource FieldLabelStyle}" />
+                                        <TextBlock Grid.Row="0" Grid.Column="1" Text="{x:Bind ViewModel.SecurityIntegrity, Mode=OneWay}" />
+
+                                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Elevation" Style="{StaticResource FieldLabelStyle}" />
+                                        <TextBlock Grid.Row="1" Grid.Column="1" Text="{x:Bind ViewModel.SecurityElevation, Mode=OneWay}" />
+
+                                        <TextBlock Grid.Row="2" Grid.Column="0" Text="App container" Style="{StaticResource FieldLabelStyle}" />
+                                        <TextBlock Grid.Row="2" Grid.Column="1" Text="{x:Bind ViewModel.SecurityAppContainer, Mode=OneWay}" />
+
+                                        <TextBlock Grid.Row="3" Grid.Column="0" Text="User SID" Style="{StaticResource FieldLabelStyle}" />
+                                        <TextBlock Grid.Row="3" Grid.Column="1" Text="{x:Bind ViewModel.SecurityUserSid, Mode=OneWay}"
+                                                   FontFamily="Consolas" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+                                    </Grid>
+
+                                    <!-- Privileges -->
+                                    <TextBlock Text="Privileges"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                               Margin="0,4,0,0" />
+                                    <TextBlock Text="No privileges reported."
+                                               Style="{StaticResource CaptionTextBlockStyle}"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                               Visibility="{x:Bind ViewModel.SecurityPrivilegesEmpty, Mode=OneWay}" />
+                                    <ItemsControl ItemsSource="{x:Bind ViewModel.Privileges, Mode=OneWay}"
+                                                  AutomationProperties.Name="Token privileges">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="vm:PrivilegeRowItem">
+                                                <Grid ColumnSpacing="12" Padding="0,3">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="260" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="110" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Grid.Column="0" Text="{x:Bind NameText}" VerticalAlignment="Center"
+                                                               FontFamily="Consolas" TextTrimming="CharacterEllipsis"
+                                                               ToolTipService.ToolTip="{x:Bind NameText}" />
+                                                    <TextBlock Grid.Column="1" Text="{x:Bind GlossText}" VerticalAlignment="Center"
+                                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               Visibility="{x:Bind HasGloss}"
+                                                               ToolTipService.ToolTip="{x:Bind GlossText}" />
+                                                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6"
+                                                                VerticalAlignment="Center">
+                                                        <Ellipse Width="8" Height="8"
+                                                                 Fill="{x:Bind StateToken, Converter={StaticResource SecurityTokenToBrush}}" />
+                                                        <TextBlock Text="{x:Bind StateText}" />
+                                                    </StackPanel>
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+
+                                    <!-- Groups -->
+                                    <TextBlock Text="Groups"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                               Margin="0,8,0,0" />
+                                    <TextBlock Text="No groups reported."
+                                               Style="{StaticResource CaptionTextBlockStyle}"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                               Visibility="{x:Bind ViewModel.SecurityGroupsEmpty, Mode=OneWay}" />
+                                    <ItemsRepeater ItemsSource="{x:Bind ViewModel.Groups, Mode=OneWay}"
+                                                   AutomationProperties.Name="Token groups">
+                                        <ItemsRepeater.Layout>
+                                            <UniformGridLayout MinItemWidth="220" MinItemHeight="26"
+                                                               MinColumnSpacing="8" MinRowSpacing="8" />
+                                        </ItemsRepeater.Layout>
+                                        <ItemsRepeater.ItemTemplate>
+                                            <DataTemplate x:DataType="x:String">
+                                                <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                                                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                                        BorderThickness="1" CornerRadius="12" Padding="10,4">
+                                                    <TextBlock Text="{x:Bind}" Style="{StaticResource CaptionTextBlockStyle}"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               ToolTipService.ToolTip="{x:Bind}" />
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsRepeater.ItemTemplate>
+                                    </ItemsRepeater>
+
+                                    <!-- Capabilities -->
+                                    <TextBlock Text="Capabilities"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                               Margin="0,8,0,0" />
+                                    <TextBlock Text="No app-container capabilities reported."
+                                               Style="{StaticResource CaptionTextBlockStyle}"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                               Visibility="{x:Bind ViewModel.SecurityCapabilitiesEmpty, Mode=OneWay}" />
+                                    <ItemsRepeater ItemsSource="{x:Bind ViewModel.Capabilities, Mode=OneWay}"
+                                                   AutomationProperties.Name="App-container capabilities">
+                                        <ItemsRepeater.Layout>
+                                            <UniformGridLayout MinItemWidth="220" MinItemHeight="26"
+                                                               MinColumnSpacing="8" MinRowSpacing="8" />
+                                        </ItemsRepeater.Layout>
+                                        <ItemsRepeater.ItemTemplate>
+                                            <DataTemplate x:DataType="x:String">
+                                                <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                                                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                                        BorderThickness="1" CornerRadius="12" Padding="10,4">
+                                                    <TextBlock Text="{x:Bind}" Style="{StaticResource CaptionTextBlockStyle}"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               ToolTipService.ToolTip="{x:Bind}" />
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsRepeater.ItemTemplate>
+                                    </ItemsRepeater>
+                                </StackPanel>
+
+                                <!-- ===== Mitigations ===== -->
+                                <StackPanel Spacing="10">
+                                    <TextBlock Text="Mitigations" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                    <TextBlock Text="No mitigation policies reported."
+                                               Style="{StaticResource CaptionTextBlockStyle}"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                               Visibility="{x:Bind ViewModel.SecurityMitigationsEmpty, Mode=OneWay}" />
+                                    <ItemsRepeater ItemsSource="{x:Bind ViewModel.Mitigations, Mode=OneWay}"
+                                                   AutomationProperties.Name="Process mitigation policies">
+                                        <ItemsRepeater.Layout>
+                                            <UniformGridLayout MinItemWidth="180" MinItemHeight="28"
+                                                               MinColumnSpacing="8" MinRowSpacing="8" />
+                                        </ItemsRepeater.Layout>
+                                        <ItemsRepeater.ItemTemplate>
+                                            <DataTemplate x:DataType="x:String">
+                                                <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                                                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                                        BorderThickness="1" CornerRadius="12" Padding="10,4">
+                                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                                        <FontIcon Glyph="&#xE72E;" FontSize="12" VerticalAlignment="Center"
+                                                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                        <TextBlock Text="{x:Bind}" Style="{StaticResource CaptionTextBlockStyle}"
+                                                                   VerticalAlignment="Center" />
+                                                    </StackPanel>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsRepeater.ItemTemplate>
+                                    </ItemsRepeater>
+                                </StackPanel>
+
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Grid>
+                </TabViewItem>
+
             </TabView.TabItems>
         </TabView>
     </Grid>

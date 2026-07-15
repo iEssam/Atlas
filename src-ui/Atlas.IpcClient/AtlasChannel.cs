@@ -682,6 +682,34 @@ public sealed class AtlasChannel : IDisposable
     }
 
     // ----------------------------------------------------------------------
+    // R3: expert security metadata (AtlasQuery, PRD §9.4.1/§9.4.6). One
+    // on-demand, read-only RPC feeding the Inspector's Security tab — the signing
+    // certificate chain, file hash, token privileges/groups/capabilities, and
+    // process mitigation policies. Same Unimplemented→Unsupported guard so the
+    // Security tab shows a calm "server too old" state against an older service
+    // that serves this RPC as Unimplemented (the server side lands after the UI —
+    // task brief). The reply also carries its own in-band coverage flags
+    // (available / unavailable_reason, and metadata.limited) which the tab surfaces
+    // honestly — a blank field or an unsigned binary is information, never an
+    // accusation; that is orthogonal to the transport-level Unsupported.
+    // ----------------------------------------------------------------------
+
+    /// <summary>
+    /// Deep security metadata for one process, identified by <paramref name="pid"/>
+    /// and guarded against PID reuse by <paramref name="createTime100ns"/> (0 =
+    /// best-effort by pid). The reply may report <c>available = false</c> ("process
+    /// exited" / "access denied") or set <c>metadata.limited</c> (some fields needed
+    /// elevation); callers surface both honestly rather than inventing data.
+    /// </summary>
+    public Task<RpcOutcome<GetSecurityMetadataReply>> GetSecurityMetadataAsync(
+        uint pid,
+        long createTime100ns,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _client.GetSecurityMetadataAsync(
+            new GetSecurityMetadataRequest { Pid = pid, CreateTime100Ns = createTime100ns },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    // ----------------------------------------------------------------------
     // M6: safe process actions (AtlasControl) — two-phase prepare/execute.
     // ----------------------------------------------------------------------
 
