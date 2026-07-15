@@ -4,6 +4,93 @@ A Windows system intelligence and control application: one coherent replacement 
 
 > Observe → Record → Detect → Explain → Recommend → Act → Verify → Reverse
 
+**Status:** all three PRD phases (MVP / R2 / R3) are complete. First release candidate — **[v0.3.0-rc.1](https://github.com/iEssam/System-Atlas/releases/tag/v0.3.0-rc.1)** — is published with a per-machine MSI. See [docs/phases.md](docs/phases.md) for the milestone tracker.
+
+## What it does
+
+- **Collection (user-mode only, no kernel driver — see [ADR-0001](docs/adr/0001-kernel-driver-decision-gate.md)):** ETW process/image events, `NtQuerySystemInformation`, SCM/services, registry & ConsentStore watchers, Restart Manager, GPU (D3DKMT + vendor libraries), battery, ACPI thermal via WMI, and per-process security metadata (Authenticode + cert chain, token privileges, mitigation policies).
+- **Storage:** SQLite (WAL) for entities/events plus a custom Gorilla-compressed time-series store with tiered T0/T1/T2 roll-ups that preserve peaks and honor bookmark pins.
+- **Intelligence:** threshold+duration incident detection (CPU saturation, memory pressure), evidence-based diagnosis with confidence-laddered contributing factors (no LLM), and a fully redacted support bundle.
+- **Control:** a rules engine (priority / affinity / EcoQoS) with guaranteed reversibility, named rule profiles, and a dynamic responsiveness-protection watchdog that dampens a runaway process and auto-restores it.
+- **Privacy:** live camera / microphone / location usage alerts sourced from the ConsentStore.
+- **Forensics:** system-change tracking, crash correlation, and boot analysis.
+- **Extensibility (read-only):** a [read-only MCP server](crates/atlas-mcp/README.md) exposing grounded query tools to your own MCP client, and a signed, capability-scoped plugin framework (plugins are Authenticode-verified, registered disabled until explicitly enabled, and every call is scope-checked; mutations are always denied).
+
+## Architecture
+
+A **LocalSystem collection service** (Rust) hosts the collectors, store, rules engine, and diagnostics, and brokers privileged actions. A **WinUI 3 desktop app** (C#/.NET 10) is the primary surface. They communicate over **gRPC on Windows named pipes** plus a lock-free **shared-memory ring** for the live fast path. The IPC contract in [proto/atlas.proto](proto/atlas.proto) (package `atlas.v0`) is the single source of truth.
+
+## Repository layout
+
+```
+crates/
+  atlas-collectors/     user-mode Windows collectors (ETW, NT query, SCM, sensors, security metadata)
+  atlas-store/          SQLite-backed store (entities, events, incidents, plugins, rules)
+  atlas-tsdb/           Gorilla-compressed time-series store with tiered roll-ups
+  atlas-ipc/            gRPC/named-pipe + shared-memory-ring transport and generated contract
+  atlas-service/        service host + dev-console CLI (top/record/serve/diagnose/plugin/...)
+  atlas-mcp/            read-only MCP server exposing grounded query tools
+  atlas-cli/            standalone command-line client
+  atlas-plugin-example/ reference plugin proving capability-scope enforcement
+src-ui/                 C#/.NET 10 WinUI 3 desktop app + IPC client (Atlas.sln)
+installer/              per-machine WiX v5 MSI (install / upgrade / removal + crash-restart)
+proto/                  protobuf IPC contract (single source of truth)
+scripts/                elevated + WDAC-exempt validation runbooks
+docs/                   phase tracker, ADRs, release notes
+```
+
+## Development quickstart
+
+Requires stable **Rust** (MSVC toolchain, `winget install Rustlang.Rustup`) for the core, and the **.NET 10 SDK** (`winget install Microsoft.DotNet.SDK.10`) to build the WinUI app under `src-ui/`.
+
+```powershell
+# live top-style view (1 s sampling)
+cargo run -p atlas-service -- top
+
+# record aggregated samples to %LOCALAPPDATA%\SystemAtlas\dev\atlas.db
+cargo run -p atlas-service -- record --flush-secs 15
+
+# detect + explain an incident from recorded data
+cargo run -p atlas-service -- incidents --minutes 10
+cargo run -p atlas-service -- diagnose --incident 1
+
+# host the AtlasQuery contract over a named pipe for the UI/clients
+cargo run -p atlas-service -- serve
+
+# build the WinUI desktop app
+dotnet build src-ui/Atlas.sln -c Debug
+```
+
+Tests and lints (CI enforces all three on the Rust side; the C# solution has its own test projects):
+
+```powershell
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+dotnet test src-ui/Atlas.sln
+```
+
+### Dev data locations
+
+Build artifacts stay in `target/` (gitignored). The dev database defaults to `%LOCALAPPDATA%\SystemAtlas\dev\atlas.db`, deliberately outside the repo.
+
+## Installation (packaged)
+
+Per-machine MSI (elevation required; registers and starts the `SystemAtlas` service):
+
+```powershell
+msiexec /i SystemAtlas-0.3.0.0-x64.msi
+```
+
+Supports clean install, in-place major upgrade, and clean removal (`msiexec /x`). The `%ProgramData%\SystemAtlas` data directory is preserved across uninstall so a reinstall keeps history. The RC's MSI is **unsigned** — sign it before distribution (see [installer/README.md](installer/README.md)). Build it yourself with `installer/build.ps1`.
+
+## Validation
+
+Runtime paths that need elevation, hardware, or a GUI are validated by two runbooks meant to run in an elevated, WDAC-exempt session:
+
+- [scripts/elevated-validation.ps1](scripts/elevated-validation.ps1) — live ETW, service install/start/crash-restart/uninstall, incident detection + redacted bundle, and plugin capability enforcement (14 automated checks).
+- [installer/validate-install.ps1](installer/validate-install.ps1) — the full MSI clean-install → upgrade → removal lifecycle.
+
 ## Documents
 
 | Doc | Purpose |
@@ -11,50 +98,6 @@ A Windows system intelligence and control application: one coherent replacement 
 | [project.md](project.md) | Product Requirements Document (full product definition) |
 | [tech-stack.md](tech-stack.md) | Technology stack & technical design |
 | [docs/phases.md](docs/phases.md) | Implementation phases and milestone tracker |
-| [proto/atlas.proto](proto/atlas.proto) | IPC contract sketch (compiled at milestone M4) |
-
-## Repository layout
-
-```
-crates/
-  atlas-collectors/   user-mode Windows collectors (process snapshots, gauges; ETW at M3)
-  atlas-store/        SQLite-backed local store (events, entities, interim samples)
-  atlas-tsdb/         time-series store (interim in-memory head; chunked Gorilla store at M-TSDB)
-  atlas-service/      service host binary (console dev mode today; Windows service later)
-proto/                protobuf contracts (single source of truth for IPC)
-docs/                 phase tracker, ADRs
-```
-
-## Development quickstart
-
-Requires stable Rust (MSVC toolchain) — `winget install Rustlang.Rustup`.
-
-```powershell
-# live top-style view (1 s sampling, one syscall per tick)
-cargo run -p atlas-service -- top
-
-# record aggregated samples to %LOCALAPPDATA%\SystemAtlas\dev\atlas.db
-cargo run -p atlas-service -- record --flush-secs 15
-
-# query what was recorded
-cargo run -p atlas-service -- db-top --minutes 10
-
-# one-shot JSON process snapshot
-cargo run -p atlas-service -- snapshot
-```
-
-Tests and lints (CI enforces all three):
-
-```powershell
-cargo fmt --all --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-```
-
-### Dev data locations
-
-Build artifacts stay in `target/` (gitignored). The dev database defaults to `%LOCALAPPDATA%\SystemAtlas\dev\atlas.db`, deliberately outside the repo.
-
-## Status
-
-Phase 1 (MVP) in progress — see [docs/phases.md](docs/phases.md) for the live milestone tracker.
+| [docs/adr/](docs/adr/README.md) | Architecture Decision Records |
+| [docs/releases/v0.3.0-rc.1.md](docs/releases/v0.3.0-rc.1.md) | Release notes |
+| [proto/atlas.proto](proto/atlas.proto) | IPC contract (package `atlas.v0`) |
