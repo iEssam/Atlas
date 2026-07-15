@@ -1227,3 +1227,126 @@ message SetDynamicProtectionReply {
   bool ok = 1;
   string message = 2;
 }
+
+// ---------------------------------------------------------------------------
+// R3: signed plugin framework (PRD §18.3, tech-stack §4.6). Out-of-process,
+// Authenticode-signed, capability-scoped READ-ONLY extensions.
+//
+// Security model: the service verifies a plugin executable's Authenticode
+// signature before it can be enabled (unsigned is refused unless the user
+// explicitly overrides), records the signing publisher, and the user grants a
+// subset of read-only capabilities. An enabled plugin is launched with a
+// one-time launch nonce; it calls OpenPluginSession to exchange that nonce for
+// a session token scoped to its granted capabilities. A server interceptor
+// enforces that a request carrying a plugin token may only reach the granted
+// AtlasQuery read RPCs — never AtlasControl / AtlasRules / AtlasPlugins
+// management (plugins are read-only, full stop). First-party UI/CLI requests
+// carry no plugin token and keep full read access. Off by default; every
+// register / grant / enable / session-open / rejected-call is audited.
+// ---------------------------------------------------------------------------
+
+enum PluginSignature {
+  PLUGIN_SIGNATURE_UNSPECIFIED = 0;
+  // Authenticode signature valid (embedded or catalog).
+  PLUGIN_SIGNED = 1;
+  // No valid signature — refused unless the user explicitly overrides.
+  PLUGIN_UNSIGNED = 2;
+  // Verification could not complete.
+  PLUGIN_SIG_UNKNOWN = 3;
+}
+
+// A read-only slice of the AtlasQuery surface a plugin may be granted. Grouped
+// by concern so grants stay comprehensible; the interceptor maps each RPC to
+// its group.
+enum PluginCapability {
+  PLUGIN_CAPABILITY_UNSPECIFIED = 0;
+  PLUGIN_CAP_SNAPSHOT = 1;    // GetSnapshot / StreamSnapshots
+  PLUGIN_CAP_HISTORY = 2;     // QueryRange / ListEvents / ListBookmarks
+  PLUGIN_CAP_SEARCH = 3;      // Search
+  PLUGIN_CAP_INCIDENTS = 4;   // ListIncidents / Diagnose
+  PLUGIN_CAP_INVENTORY = 5;   // ListServices / ListStartup / ListScheduledTasks
+  PLUGIN_CAP_NETWORK = 6;     // ListConnections / ListListeningPorts
+  PLUGIN_CAP_FORENSICS = 7;   // ListSystemChanges / ListCrashes
+}
+
+message Plugin {
+  int64 id = 1;
+  string name = 2;
+  string version = 3;
+  // From the signing certificate subject when signed; empty otherwise.
+  string publisher = 4;
+  string exe_path = 5;
+  PluginSignature signature = 6;
+  bool enabled = 7;
+  repeated PluginCapability granted = 8;
+  int64 registered_ms = 9;
+  string description = 10;
+}
+
+message ListPluginsRequest {}
+message ListPluginsReply { repeated Plugin plugins = 1; }
+
+message RegisterPluginRequest {
+  string exe_path = 1;
+  // Capabilities to grant initially (the user edits later).
+  repeated PluginCapability requested = 2;
+  // Explicit, unsafe opt-in to register an unsigned plugin. Default false →
+  // an unsigned executable is refused.
+  bool allow_unsigned = 3;
+}
+
+message RegisterPluginReply {
+  bool ok = 1;
+  // e.g. "refused: executable is not signed".
+  string message = 2;
+  Plugin plugin = 3;
+}
+
+message SetPluginEnabledRequest {
+  int64 id = 1;
+  bool enabled = 2;
+}
+message SetPluginEnabledReply {
+  bool ok = 1;
+  string message = 2;
+}
+
+message GrantPluginCapabilitiesRequest {
+  int64 id = 1;
+  repeated PluginCapability granted = 2;
+}
+message GrantPluginCapabilitiesReply {
+  bool ok = 1;
+}
+
+message RemovePluginRequest {
+  int64 id = 1;
+}
+message RemovePluginReply {
+  bool ok = 1;
+}
+
+message OpenPluginSessionRequest {
+  int64 plugin_id = 1;
+  // The one-time nonce the service handed the launched plugin process; proves
+  // it is the registered, enabled, signature-verified plugin.
+  string launch_nonce = 2;
+}
+
+message OpenPluginSessionReply {
+  bool ok = 1;
+  string message = 2;
+  // Presented in gRPC metadata ("atlas-plugin-token") on AtlasQuery calls; the
+  // interceptor rejects any call outside the granted capabilities.
+  string session_token = 3;
+  repeated PluginCapability granted = 4;
+}
+
+service AtlasPlugins {
+  rpc ListPlugins(ListPluginsRequest) returns (ListPluginsReply);
+  rpc RegisterPlugin(RegisterPluginRequest) returns (RegisterPluginReply);
+  rpc SetPluginEnabled(SetPluginEnabledRequest) returns (SetPluginEnabledReply);
+  rpc GrantPluginCapabilities(GrantPluginCapabilitiesRequest) returns (GrantPluginCapabilitiesReply);
+  rpc RemovePlugin(RemovePluginRequest) returns (RemovePluginReply);
+  rpc OpenPluginSession(OpenPluginSessionRequest) returns (OpenPluginSessionReply);
+}
