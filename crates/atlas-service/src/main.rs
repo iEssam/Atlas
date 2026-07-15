@@ -22,6 +22,7 @@ mod rules;
 mod rules_service;
 mod service_ctl;
 mod soak;
+mod support_bundle;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -417,6 +418,42 @@ enum Cmd {
         /// Replace command-line arguments with <CMD-ARGS>.
         #[arg(long)]
         redact_command_lines: bool,
+    },
+    /// Assemble a redacted remote support bundle (R3, PRD §9.18): one self-
+    /// contained diagnostic document (health, incidents+diagnoses, changes,
+    /// crashes, inventories, own overhead) in html | json | text.
+    ///
+    /// Every textual field runs through the shared redactor before formatting,
+    /// so a bundle never leaks more than a single report. This is the backend
+    /// verification path — no `serve` needed.
+    SupportBundle {
+        #[arg(long)]
+        db: Option<PathBuf>,
+        /// Output format: html | json | text.
+        #[arg(long, default_value = "html")]
+        format: String,
+        /// Window to summarize (incidents/changes/crashes), in minutes.
+        #[arg(long, default_value_t = 4320)]
+        minutes: u64,
+        /// Comma-separated sections (empty = all): device, health, incidents,
+        /// changes, crashes, services, startup, self-metrics.
+        #[arg(long)]
+        sections: Option<String>,
+        /// Write to this file instead of stdout.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Replace file paths with <PATH>.
+        #[arg(long)]
+        redact_paths: bool,
+        /// Replace the current user name with <USER>.
+        #[arg(long)]
+        redact_users: bool,
+        /// Replace the computer name with <HOST>.
+        #[arg(long)]
+        redact_host: bool,
+        /// Replace command-line arguments with <CMD-ARGS>.
+        #[arg(long)]
+        redact_cmdlines: bool,
     },
     /// Manage the Windows service host (M9): install | uninstall | run | status.
     ///
@@ -913,6 +950,29 @@ fn run() -> Result<()> {
                 redact_computer_name: redact_computer,
                 redact_paths,
                 redact_command_lines,
+            },
+        ),
+        Cmd::SupportBundle {
+            db,
+            format,
+            minutes,
+            sections,
+            out,
+            redact_paths,
+            redact_users,
+            redact_host,
+            redact_cmdlines,
+        } => cmd_support_bundle(
+            db.unwrap_or_else(default_db_path),
+            &format,
+            minutes,
+            sections.as_deref().unwrap_or(""),
+            out,
+            atlas_ipc::RedactionOptions {
+                redact_user_names: redact_users,
+                redact_computer_name: redact_host,
+                redact_paths,
+                redact_command_lines: redact_cmdlines,
             },
         ),
     }
@@ -5130,6 +5190,240 @@ fn cmd_report(
         None => print!("{content}"),
     }
     Ok(())
+}
+
+/// Parses a support-bundle format token (html | json | text).
+fn parse_bundle_format(token: &str) -> Result<atlas_ipc::ReportFormat> {
+    Ok(match token.to_ascii_lowercase().as_str() {
+        "html" => atlas_ipc::ReportFormat::ReportHtml,
+        "json" => atlas_ipc::ReportFormat::ReportJson,
+        "text" | "txt" => atlas_ipc::ReportFormat::ReportText,
+        other => anyhow::bail!("unknown format '{other}'. Use: html | json | text"),
+    })
+}
+
+/// Parses a comma-separated section list into SupportBundleSection discriminants.
+/// An empty string yields an empty vec (which `selected` treats as "all").
+fn parse_bundle_sections(csv: &str) -> Result<Vec<i32>> {
+    use atlas_ipc::SupportBundleSection as S;
+    let mut out = Vec::new();
+    for tok in csv.split(',').map(str::trim).filter(|t| !t.is_empty()) {
+        let s = match tok.to_ascii_lowercase().as_str() {
+            "device" | "device-info" => S::BundleDeviceInfo,
+            "health" => S::BundleHealth,
+            "incidents" => S::BundleIncidents,
+            "changes" | "system-changes" => S::BundleSystemChanges,
+            "crashes" => S::BundleCrashes,
+            "services" => S::BundleServices,
+            "startup" => S::BundleStartup,
+            "self-metrics" | "self" => S::BundleSelfMetrics,
+            other => anyhow::bail!(
+                "unknown section '{other}'. Use: device, health, incidents, \
+                 changes, crashes, services, startup, self-metrics"
+            ),
+        };
+        out.push(s as i32);
+    }
+    Ok(out)
+}
+
+/// `support-bundle`: assemble a redacted diagnostic bundle straight from the
+/// store + live OS reads (no `serve` needed) — the backend verification path.
+#[cfg(windows)]
+fn cmd_support_bundle(
+    db_path: PathBuf,
+    format: &str,
+    minutes: u64,
+    sections_csv: &str,
+    out: Option<PathBuf>,
+    redaction: atlas_ipc::RedactionOptions,
+) -> Result<()> {
+    use support_bundle::{
+        BundleData, ConsumerRow, CrashesSection, DeviceSection, HealthSection, IncidentEntry,
+        SelfMetricsSection,
+    };
+
+    let fmt = parse_bundle_format(format)?;
+    let sel = support_bundle::selected(&parse_bundle_sections(sections_csv)?);
+    let store = Store::open(&db_path)?;
+    let now = now_ms();
+    let from = now - (minutes as i64) * 60_000;
+    let mem_total = current_mem_total();
+
+    // Device.
+    let device = if sel.device {
+        let i = atlas_collectors::device_info();
+        Some(DeviceSection {
+            os_major: i.os_major,
+            os_minor: i.os_minor,
+            os_build: i.os_build,
+            hostname: i.hostname,
+            logical_cpus: i.logical_cpus,
+            p_core_count: i.p_core_count,
+            e_core_count: i.e_core_count,
+            heterogeneous: i.heterogeneous,
+            ram_total_bytes: i.ram_total_bytes,
+            atlas_version: env!("CARGO_PKG_VERSION").to_string(),
+            uptime_ms: i.uptime_ms,
+        })
+    } else {
+        None
+    };
+
+    // Health: two samples ~400 ms apart so CPU rates are real, then top-10.
+    let health = if sel.health {
+        let mut sampler = Sampler::new()?;
+        let _ = sampler.sample()?; // prime
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        let set = sampler.sample()?;
+        let mut procs: Vec<_> = set.processes.iter().collect();
+        procs.sort_by(|a, b| {
+            b.cpu_permille
+                .cmp(&a.cpu_permille)
+                .then(b.working_set.cmp(&a.working_set))
+        });
+        let top = procs
+            .iter()
+            .take(10)
+            .map(|p| ConsumerRow {
+                pid: p.key.pid,
+                image_name: p.image_name.clone(),
+                cpu_permille: p.cpu_permille,
+                working_set: p.working_set,
+                private_bytes: p.private_bytes,
+            })
+            .collect();
+        let s = &set.system;
+        Some(HealthSection {
+            ts_ms: set.ts_ms,
+            cpu_permille: s.cpu_permille,
+            mem_used: s.mem_used,
+            mem_total: s.mem_total,
+            commit_used: s.commit_used,
+            commit_limit: s.commit_limit,
+            process_count: s.process_count,
+            thread_count: s.thread_count,
+            handle_count: s.handle_count,
+            top,
+        })
+    } else {
+        None
+    };
+
+    // Incidents: refresh detection over the window (idempotent), list, diagnose.
+    let incidents = if sel.incidents {
+        let _ = detectors::run_detection_pass(&store, from, now, mem_total)?;
+        let (rows, _truncated) = store.list_incidents(from, now, 200)?;
+        let mut entries = Vec::with_capacity(rows.len());
+        for row in rows {
+            let ctx = diagnostics::DiagnoseContext {
+                kind: row.kind,
+                start_ms: row.start_ms,
+                end_ms: row.end_ms.unwrap_or(0),
+                peak_value: row.peak_value,
+            };
+            let reply = diagnostics::diagnose(&store, &ctx, now, mem_total)?;
+            entries.push(IncidentEntry {
+                incident: incident_row_to_proto(&row),
+                diagnosis: reply.diagnosis,
+                unavailable_reason: reply.unavailable_reason,
+            });
+        }
+        Some(entries)
+    } else {
+        None
+    };
+
+    let changes = if sel.changes {
+        let (rows, _t) = store.list_system_changes(from, now, &[], 1000)?;
+        Some(rows.iter().map(ipc::system_change_row_to_proto).collect())
+    } else {
+        None
+    };
+
+    let crashes = if sel.crashes {
+        let (rows, _t) = store.list_crashes(from, now, &[], 1000)?;
+        // The CLI path reads whatever the scanner has recorded; a serve-hosted
+        // reply carries the scanner's availability, here we present what exists.
+        Some(CrashesSection {
+            available: true,
+            unavailable_reason: String::new(),
+            crashes: rows.iter().map(ipc::crash_row_to_proto).collect(),
+        })
+    } else {
+        None
+    };
+
+    let services = if sel.services {
+        Some(ipc::list_services_impl(""))
+    } else {
+        None
+    };
+    let startup = if sel.startup {
+        Some(ipc::list_startup_impl())
+    } else {
+        None
+    };
+
+    let self_metrics = if sel.self_metrics {
+        store.latest_self_sample()?.map(|s| SelfMetricsSection {
+            ts_ms: s.ts_ms,
+            cpu_permille: s.cpu_permille,
+            working_set: s.working_set,
+            tick_duration_us_avg: s.tick_duration_us_avg,
+            tick_duration_us_max: s.tick_duration_us_max,
+            ticks: s.ticks,
+        })
+    } else {
+        None
+    };
+
+    let data = BundleData {
+        range_from_ms: from,
+        range_to_ms: now,
+        device,
+        health,
+        incidents,
+        changes,
+        crashes,
+        services,
+        startup,
+        self_metrics,
+    };
+    let reply = support_bundle::build_bundle(data, fmt, &redaction);
+
+    match out {
+        Some(path) => {
+            std::fs::write(&path, reply.content.as_bytes())?;
+            println!(
+                "Wrote {} bundle ({}) to {} [redacted: {}]",
+                format,
+                reply.content_type,
+                path.display(),
+                if reply.redaction_applied.is_empty() {
+                    "none".to_string()
+                } else {
+                    reply.redaction_applied.join(", ")
+                }
+            );
+            println!("Suggested filename: {}", reply.filename);
+        }
+        None => print!("{}", reply.content),
+    }
+    Ok(())
+}
+
+/// The support bundle needs live OS reads (device info, inventories) — Windows-only.
+#[cfg(not(windows))]
+fn cmd_support_bundle(
+    _db_path: PathBuf,
+    _format: &str,
+    _minutes: u64,
+    _sections_csv: &str,
+    _out: Option<PathBuf>,
+    _redaction: atlas_ipc::RedactionOptions,
+) -> Result<()> {
+    anyhow::bail!("support-bundle is only supported on Windows")
 }
 
 fn gb(bytes: u64) -> f64 {

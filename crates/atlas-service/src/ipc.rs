@@ -54,19 +54,24 @@ use atlas_ipc::{
     ReportFormat, ResourceOwner as ProtoResourceOwner, RingUpdate, RingWriter, RowInput,
     ScheduledTask as ProtoScheduledTask, SearchHit, SearchReply, SearchRequest, ServiceEntry,
     ServiceStartType, ServiceState, SnapshotReply, SnapshotRequest, StartupEntry, StartupSource,
-    SystemChange as ProtoSystemChange, SystemGauges, TcpState, ThermalSensor as ProtoThermalSensor,
-    ThreadRow, TimeRange, UpdatePrivacyAlertRuleReply, UpdatePrivacyAlertRuleRequest,
-    CAP_BATTERY_STATUS, CAP_BOOT_ANALYSIS, CAP_CRASH_ANALYSIS, CAP_DIAGNOSTICS,
-    CAP_DYNAMIC_PROTECTION, CAP_FTS5_SEARCH, CAP_HISTORY_QUERIES, CAP_INCIDENT_DETECTION,
-    CAP_NETWORK_INSPECTOR, CAP_PRIVACY_ALERTS, CAP_PRIVACY_EVENTS, CAP_PROCESS_INSPECTOR,
-    CAP_PROCESS_SNAPSHOTS, CAP_PROFILES, CAP_REPORTS, CAP_RESOURCE_OWNERSHIP, CAP_RULES_ENGINE,
-    CAP_SAFE_ACTIONS, CAP_SCHEDULED_TASKS, CAP_SERVICES_INVENTORY, CAP_STARTUP_INVENTORY,
+    SupportBundleReply, SupportBundleRequest, SystemChange as ProtoSystemChange, SystemGauges,
+    TcpState, ThermalSensor as ProtoThermalSensor, ThreadRow, TimeRange,
+    UpdatePrivacyAlertRuleReply, UpdatePrivacyAlertRuleRequest, CAP_BATTERY_STATUS,
+    CAP_BOOT_ANALYSIS, CAP_CRASH_ANALYSIS, CAP_DIAGNOSTICS, CAP_DYNAMIC_PROTECTION,
+    CAP_FTS5_SEARCH, CAP_HISTORY_QUERIES, CAP_INCIDENT_DETECTION, CAP_NETWORK_INSPECTOR,
+    CAP_PRIVACY_ALERTS, CAP_PRIVACY_EVENTS, CAP_PROCESS_INSPECTOR, CAP_PROCESS_SNAPSHOTS,
+    CAP_PROFILES, CAP_REPORTS, CAP_RESOURCE_OWNERSHIP, CAP_RULES_ENGINE, CAP_SAFE_ACTIONS,
+    CAP_SCHEDULED_TASKS, CAP_SERVICES_INVENTORY, CAP_STARTUP_INVENTORY, CAP_SUPPORT_BUNDLE,
     CAP_SYSTEM_CHANGES, CAP_THERMAL_SENSORS, RING_ROWS,
 };
 
 use crate::diagnostics::{self, DiagnoseContext};
 use crate::report;
 use crate::rules::RulesEngine;
+use crate::support_bundle::{
+    self, BundleData, ConsumerRow, CrashesSection, DeviceSection, HealthSection, IncidentEntry,
+    SelfMetricsSection,
+};
 use atlas_store::Store;
 use atlas_tsdb::Metric;
 
@@ -485,6 +490,10 @@ impl AtlasQuery for QueryService {
             if crate::forensics::crash_availability(&self.store).0 {
                 flags.push(CAP_CRASH_ANALYSIS.to_string());
             }
+            // R3 remote support bundle: assembled from store data + live OS
+            // reads (device info, service/startup inventories), passed through
+            // the shared redactor. Always available on Windows here.
+            flags.push(CAP_SUPPORT_BUNDLE.to_string());
             let (has_battery, has_thermal, has_boots) = tokio::task::spawn_blocking(|| {
                 (
                     battery_status().present,
@@ -918,6 +927,33 @@ impl AtlasQuery for QueryService {
         }))
     }
 
+    /// R3 remote support bundle (PRD §9.18/§18.3): assemble the requested
+    /// sections from data Atlas already has, run every textual field through the
+    /// shared redactor, and render one self-contained document (HTML/JSON/text).
+    /// Read-only. An empty section list means all sections; a missing range
+    /// defaults to the last 72 h.
+    async fn generate_support_bundle(
+        &self,
+        req: Request<SupportBundleRequest>,
+    ) -> Result<Response<SupportBundleReply>, Status> {
+        let r = req.into_inner();
+        // HTML is the default surface (a support engineer opens it in a browser).
+        let format = ReportFormat::try_from(r.format).unwrap_or(ReportFormat::ReportHtml);
+        let redaction = r.redaction.unwrap_or_default();
+        let sel = support_bundle::selected(&r.sections);
+        let now = now_ms();
+        let (from_ms, to_ms) = match &r.range {
+            Some(tr) if tr.to_ms > tr.from_ms => (tr.from_ms, tr.to_ms),
+            _ => (now - 72 * 3_600_000, now),
+        };
+        let data = self
+            .assemble_bundle(sel, from_ms, to_ms, now)
+            .await
+            .map_err(|e| Status::internal(format!("generate_support_bundle: {e}")))?;
+        let reply = support_bundle::build_bundle(data, format, &redaction);
+        Ok(Response::new(reply))
+    }
+
     // -----------------------------------------------------------------------
     // R2: deep process inspector + resource ownership (PRD §9.4/§9.5). All
     // unary, on-demand, read-only live OS reads. The collectors block (snapshot
@@ -1240,6 +1276,173 @@ impl QueryService {
             Ok((inc, reply))
         }
     }
+
+    /// Assembles the pre-redaction [`BundleData`] for the requested sections
+    /// (R3 support bundle). Store-backed sections (incidents+diagnoses, changes,
+    /// crashes, self-metrics) are read under one lock; the live OS reads
+    /// (device info, service/startup inventories) run on blocking threads; the
+    /// health snapshot comes from the sampler's latest published slot so this
+    /// path never blocks the 1 Hz sampler. Redaction is applied later, in
+    /// `support_bundle::build_bundle`.
+    async fn assemble_bundle(
+        &self,
+        sel: support_bundle::SectionSet,
+        from_ms: i64,
+        to_ms: i64,
+        now: i64,
+    ) -> anyhow::Result<BundleData> {
+        let mem_total = self.slot_mem_total();
+
+        // --- Store-backed sections (one lock; no await while held) ---
+        let (incidents, changes, crashes_records, self_metrics) = {
+            let store = self
+                .store
+                .lock()
+                .map_err(|_| anyhow::anyhow!("store mutex poisoned"))?;
+            let incidents = if sel.incidents {
+                let (rows, _truncated) = store.list_incidents(from_ms, to_ms, 200)?;
+                let mut entries = Vec::with_capacity(rows.len());
+                for row in rows {
+                    let ctx = DiagnoseContext {
+                        kind: row.kind,
+                        start_ms: row.start_ms,
+                        end_ms: row.end_ms.unwrap_or(0),
+                        peak_value: row.peak_value,
+                    };
+                    let reply = diagnostics::diagnose(&store, &ctx, now, mem_total)?;
+                    entries.push(IncidentEntry {
+                        incident: incident_row_to_proto(&row),
+                        diagnosis: reply.diagnosis,
+                        unavailable_reason: reply.unavailable_reason,
+                    });
+                }
+                Some(entries)
+            } else {
+                None
+            };
+            let changes = if sel.changes {
+                let (rows, _truncated) = store.list_system_changes(from_ms, to_ms, &[], 1000)?;
+                Some(rows.iter().map(system_change_row_to_proto).collect())
+            } else {
+                None
+            };
+            let crashes_records = if sel.crashes {
+                let (rows, _truncated) = store.list_crashes(from_ms, to_ms, &[], 1000)?;
+                Some(rows.iter().map(crash_row_to_proto).collect::<Vec<_>>())
+            } else {
+                None
+            };
+            let self_metrics = if sel.self_metrics {
+                store.latest_self_sample()?.map(|s| SelfMetricsSection {
+                    ts_ms: s.ts_ms,
+                    cpu_permille: s.cpu_permille,
+                    working_set: s.working_set,
+                    tick_duration_us_avg: s.tick_duration_us_avg,
+                    tick_duration_us_max: s.tick_duration_us_max,
+                    ticks: s.ticks,
+                })
+            } else {
+                None
+            };
+            (incidents, changes, crashes_records, self_metrics)
+        };
+
+        // Crash availability is read outside the store lock (it locks internally).
+        let crashes = crashes_records.map(|records| {
+            let (available, unavailable_reason) = crate::forensics::crash_availability(&self.store);
+            CrashesSection {
+                available,
+                unavailable_reason,
+                crashes: records,
+            }
+        });
+
+        // --- Live OS reads on blocking threads ---
+        let device = if sel.device {
+            let info = tokio::task::spawn_blocking(atlas_collectors::device_info).await?;
+            Some(DeviceSection {
+                os_major: info.os_major,
+                os_minor: info.os_minor,
+                os_build: info.os_build,
+                hostname: info.hostname,
+                logical_cpus: info.logical_cpus,
+                p_core_count: info.p_core_count,
+                e_core_count: info.e_core_count,
+                heterogeneous: info.heterogeneous,
+                ram_total_bytes: info.ram_total_bytes,
+                atlas_version: env!("CARGO_PKG_VERSION").to_string(),
+                uptime_ms: info.uptime_ms,
+            })
+        } else {
+            None
+        };
+        let services = if sel.services {
+            Some(tokio::task::spawn_blocking(|| list_services_impl("")).await?)
+        } else {
+            None
+        };
+        let startup = if sel.startup {
+            Some(tokio::task::spawn_blocking(list_startup_impl).await?)
+        } else {
+            None
+        };
+
+        // --- Health from the sampler's latest published slot ---
+        let health = if sel.health {
+            self.slot
+                .read()
+                .ok()
+                .and_then(|g| g.clone())
+                .map(|snap| health_from_snapshot(&snap))
+        } else {
+            None
+        };
+
+        Ok(BundleData {
+            range_from_ms: from_ms,
+            range_to_ms: to_ms,
+            device,
+            health,
+            incidents,
+            changes,
+            crashes,
+            services,
+            startup,
+            self_metrics,
+        })
+    }
+}
+
+/// Builds the health section from a published snapshot: the system gauges plus
+/// the top consumers (the snapshot rows are already CPU-sorted). Caps at 10 rows
+/// so the bundle stays a summary, not a full process dump.
+fn health_from_snapshot(snap: &SnapshotReply) -> HealthSection {
+    const TOP_N: usize = 10;
+    let s = snap.system.as_ref();
+    let top = snap
+        .processes
+        .iter()
+        .take(TOP_N)
+        .map(|p| ConsumerRow {
+            pid: p.pid,
+            image_name: p.image_name.clone(),
+            cpu_permille: p.cpu_permille,
+            working_set: p.working_set,
+            private_bytes: p.private_bytes,
+        })
+        .collect();
+    HealthSection {
+        ts_ms: s.map(|g| g.ts_ms).unwrap_or(0),
+        cpu_permille: s.map(|g| g.cpu_permille).unwrap_or(0),
+        mem_used: s.map(|g| g.mem_used).unwrap_or(0),
+        mem_total: s.map(|g| g.mem_total).unwrap_or(0),
+        commit_used: s.map(|g| g.commit_used).unwrap_or(0),
+        commit_limit: s.map(|g| g.commit_limit).unwrap_or(0),
+        process_count: s.map(|g| g.process_count).unwrap_or(0),
+        thread_count: s.map(|g| g.thread_count).unwrap_or(0),
+        handle_count: s.map(|g| g.handle_count).unwrap_or(0),
+        top,
+    }
 }
 
 /// Converts a store incident row to the proto `Incident` (0 end = ongoing).
@@ -1363,7 +1566,7 @@ fn fired_alert_row_to_proto(a: &atlas_store::FiredAlertRow) -> FiredAlert {
 
 /// Maps a store [`atlas_store::SystemChangeRow`] to the proto [`ProtoSystemChange`]
 /// (R3 §9.13). `kind` carries the proto `SystemChangeKind` discriminant directly.
-fn system_change_row_to_proto(c: &atlas_store::SystemChangeRow) -> ProtoSystemChange {
+pub(crate) fn system_change_row_to_proto(c: &atlas_store::SystemChangeRow) -> ProtoSystemChange {
     ProtoSystemChange {
         id: c.id,
         ts_ms: c.ts_ms,
@@ -1379,7 +1582,7 @@ fn system_change_row_to_proto(c: &atlas_store::SystemChangeRow) -> ProtoSystemCh
 /// Maps a store [`atlas_store::CrashRow`] to the proto [`ProtoCrashRecord`]
 /// (R3 §9.14). `context` is the factual, hedged correlation list assembled by the
 /// crash scanner.
-fn crash_row_to_proto(c: &atlas_store::CrashRow) -> ProtoCrashRecord {
+pub(crate) fn crash_row_to_proto(c: &atlas_store::CrashRow) -> ProtoCrashRecord {
     ProtoCrashRecord {
         id: c.id,
         ts_ms: c.ts_ms,
@@ -1407,7 +1610,7 @@ fn startup_source_to_proto(source: CollectorStartupSource) -> i32 {
 }
 
 #[cfg(windows)]
-fn list_startup_impl() -> Vec<StartupEntry> {
+pub(crate) fn list_startup_impl() -> Vec<StartupEntry> {
     enumerate_startup()
         .into_iter()
         .map(|e| StartupEntry {
@@ -1457,7 +1660,7 @@ fn service_start_type_to_proto(start: CollectorStartType) -> i32 {
 }
 
 #[cfg(windows)]
-fn list_services_impl(filter: &str) -> Vec<ServiceEntry> {
+pub(crate) fn list_services_impl(filter: &str) -> Vec<ServiceEntry> {
     enumerate_services(filter)
         .into_iter()
         .map(|s| ServiceEntry {

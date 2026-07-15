@@ -75,6 +75,9 @@ pub use v0::{
     CrashKind, CrashRecord, ListCrashesReply, ListCrashesRequest, ListSystemChangesReply,
     ListSystemChangesRequest, SystemChange, SystemChangeKind,
 };
+// R3 remote support bundle (AtlasQuery, PRD §9.18/§18.3). One redacted, self-
+// contained diagnostic document assembled from data Atlas already has.
+pub use v0::{SupportBundleReply, SupportBundleRequest, SupportBundleSection};
 // R2 rules engine + profiles (AtlasRules service, PRD §9.7).
 pub use v0::{
     CoreAffinityMode, CreateProfileReply, CreateProfileRequest, CreateRuleReply, CreateRuleRequest,
@@ -204,3 +207,11 @@ pub const CAP_SYSTEM_CHANGES: &str = "system_changes";
 /// Advertised only when the WER/reliability event-log channels are readable; the
 /// reply also carries available + unavailable_reason for a precise per-call answer.
 pub const CAP_CRASH_ANALYSIS: &str = "crash_analysis";
+
+/// R3: the service can assemble a single redacted, self-contained diagnostic
+/// support bundle (device info, health, incidents+diagnoses, system changes,
+/// crashes, service/startup inventories, own overhead) from data Atlas already
+/// has, passed through the shared redactor (PRD §9.18/§18.3,
+/// `GenerateSupportBundle`). Store-backed + live OS reads; always available on
+/// Windows here.
+pub const CAP_SUPPORT_BUNDLE: &str = "support_bundle";
