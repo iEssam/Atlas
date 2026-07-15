@@ -73,7 +73,7 @@
             <Border Grid.Column="0"
                     Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                    BorderThickness="1" CornerRadius="8">
+                    BorderThickness="1" CornerRadius="2">
                 <Grid>
                     <!-- Unavailable -->
                     <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
@@ -132,7 +132,7 @@
                                                        Style="{StaticResource BodyStrongTextBlockStyle}" />
                                             <Border VerticalAlignment="Center"
                                                     Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
-                                                    CornerRadius="4" Padding="6,1">
+                                                    CornerRadius="2" Padding="6,1">
                                                 <TextBlock Text="{x:Bind SeverityLabel}"
                                                            Style="{StaticResource CaptionTextBlockStyle}"
                                                            Foreground="{x:Bind SeverityToken, Converter={StaticResource SeverityToBrush}}" />
@@ -202,7 +202,7 @@
                                Style="{StaticResource SubtitleTextBlockStyle}"
                                HorizontalTextAlignment="Center" />
                     <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
-                            CornerRadius="6" Padding="14,10">
+                            CornerRadius="2" Padding="14,10">
                         <TextBlock Text="{x:Bind ViewModel.DiagnosisMessage, Mode=OneWay}"
                                    TextWrapping="Wrap" HorizontalTextAlignment="Center" />
                     </Border>
@@ -242,7 +242,7 @@
                             <StackPanel Orientation="Horizontal" Spacing="12">
                                 <!-- Overall confidence badge (calm) -->
                                 <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
-                                        CornerRadius="12" Padding="10,3">
+                                        CornerRadius="2" Padding="10,3">
                                     <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
                                         <Ellipse Width="8" Height="8"
                                                  Fill="{x:Bind ViewModel.Diagnosis.OverallConfidenceToken, Mode=OneWay, Converter={StaticResource ConfidenceToBrush}}" />
@@ -280,7 +280,7 @@
                                             <Border Grid.Column="2"
                                                     Visibility="{x:Bind HasMetric}"
                                                     Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
-                                                    CornerRadius="4" Padding="6,1" VerticalAlignment="Top">
+                                                    CornerRadius="2" Padding="6,1" VerticalAlignment="Top">
                                                 <TextBlock Text="{x:Bind MetricText}"
                                                            FontFamily="Consolas"
                                                            Style="{StaticResource CaptionTextBlockStyle}" />
@@ -304,7 +304,7 @@
                                     <DataTemplate x:DataType="vm:FactorRowViewModel">
                                         <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                                BorderThickness="1" CornerRadius="8"
+                                                BorderThickness="1" CornerRadius="2"
                                                 Padding="14,10" Margin="0,3">
                                             <Grid ColumnSpacing="12">
                                                 <Grid.ColumnDefinitions>
@@ -333,7 +333,7 @@
                                                 <!-- Confidence badge (calm color token) -->
                                                 <Border Grid.Column="2" VerticalAlignment="Top"
                                                         Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
-                                                        CornerRadius="12" Padding="10,3">
+                                                        CornerRadius="2" Padding="10,3">
                                                     <StackPanel Orientation="Horizontal" Spacing="6"
                                                                 VerticalAlignment="Center">
                                                         <Ellipse Width="8" Height="8"
@@ -379,7 +379,7 @@
                             <Border Visibility="{x:Bind ViewModel.Diagnosis.HasRecommendation, Mode=OneWay}"
                                     Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                    BorderThickness="1" CornerRadius="8" Padding="14,10">
+                                    BorderThickness="1" CornerRadius="2" Padding="14,10">
                                 <StackPanel Spacing="4">
                                     <StackPanel Orientation="Horizontal" Spacing="8">
                                         <FontIcon Glyph="&#xE9F5;" FontSize="14"
@@ -402,7 +402,7 @@
                                         Visibility="{x:Bind ViewModel.Diagnosis.HasRisk, Mode=OneWay}"
                                         Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                         BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                        BorderThickness="1" CornerRadius="8" Padding="14,10">
+                                        BorderThickness="1" CornerRadius="2" Padding="14,10">
                                     <StackPanel Spacing="4">
                                         <TextBlock Text="Risk"
                                                    Style="{StaticResource CaptionTextBlockStyle}"
@@ -415,7 +415,7 @@
                                         Visibility="{x:Bind ViewModel.Diagnosis.HasReversibility, Mode=OneWay}"
                                         Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                         BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                        BorderThickness="1" CornerRadius="8" Padding="14,10">
+                                        BorderThickness="1" CornerRadius="2" Padding="14,10">
                                     <StackPanel Spacing="4">
                                         <TextBlock Text="Reversibility"
                                                    Style="{StaticResource CaptionTextBlockStyle}"
@@ -429,7 +429,7 @@
                             <Border Visibility="{x:Bind ViewModel.Diagnosis.HasVerificationPlan, Mode=OneWay}"
                                     Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                    BorderThickness="1" CornerRadius="8" Padding="14,10">
+                                    BorderThickness="1" CornerRadius="2" Padding="14,10">
                                 <StackPanel Spacing="4">
                                     <StackPanel Orientation="Horizontal" Spacing="8">
                                         <FontIcon Glyph="&#xE73E;" FontSize="14"

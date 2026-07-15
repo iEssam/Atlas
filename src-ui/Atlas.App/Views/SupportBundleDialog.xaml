@@ -136,7 +136,7 @@
                           AutomationProperties.Name="Redact command lines"
                           Checked="OnRedactionChanged" Unchecked="OnRedactionChanged" />
                 <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
-                        CornerRadius="6" Padding="12,8">
+                        CornerRadius="2" Padding="12,8">
                     <TextBlock x:Name="RedactionSummaryText"
                                TextWrapping="Wrap"
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />

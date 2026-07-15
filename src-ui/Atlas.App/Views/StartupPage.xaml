@@ -117,7 +117,7 @@
                                         <DataTemplate x:DataType="vm:StartupItem">
                                             <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                                    BorderThickness="1" CornerRadius="6"
+                                                    BorderThickness="1" CornerRadius="2"
                                                     Padding="16,8" Margin="0,0,0,6">
                                                 <Grid ColumnSpacing="12">
                                                     <Grid.ColumnDefinitions>
@@ -143,7 +143,7 @@
                                                     <!-- Enabled/disabled pill -->
                                                     <Border Grid.Column="3" VerticalAlignment="Center"
                                                             HorizontalAlignment="Left"
-                                                            CornerRadius="10" Padding="10,2"
+                                                            CornerRadius="2" Padding="10,2"
                                                             Background="{ThemeResource ControlFillColorSecondaryBrush}">
                                                         <TextBlock Text="{x:Bind EnabledText}"
                                                                    Style="{StaticResource CaptionTextBlockStyle}" />

@@ -84,7 +84,7 @@
                 <ItemsControl.ItemTemplate>
                     <DataTemplate x:DataType="vm:SimulatedTargetRow">
                         <Border Margin="0,3"
-                                CornerRadius="6"
+                                CornerRadius="2"
                                 Padding="12,8"
                                 Background="{x:Bind Blocked, Converter={StaticResource BlockedToBrush}}"
                                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"

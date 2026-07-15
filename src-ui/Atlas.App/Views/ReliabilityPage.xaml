@@ -68,7 +68,7 @@
         <Border Grid.Row="3"
                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                BorderThickness="1" CornerRadius="8">
+                BorderThickness="1" CornerRadius="2">
             <Grid>
                 <!-- Unsupported (server too old) -->
                 <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
@@ -96,7 +96,7 @@
                                Style="{StaticResource SubtitleTextBlockStyle}"
                                HorizontalTextAlignment="Center" />
                     <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
-                            CornerRadius="6" Padding="14,10">
+                            CornerRadius="2" Padding="14,10">
                         <TextBlock Text="{x:Bind ViewModel.UnavailableMessage, Mode=OneWay}"
                                    TextWrapping="Wrap" HorizontalTextAlignment="Center" />
                     </Border>
@@ -136,7 +136,7 @@
                         <DataTemplate x:DataType="vm:CrashRowViewModel">
                             <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                    BorderThickness="1" CornerRadius="8"
+                                    BorderThickness="1" CornerRadius="2"
                                     Padding="16,12" Margin="0,4">
                                 <StackPanel Spacing="10">
                                     <!-- Header: glyph + kind/subject + time -->
@@ -179,7 +179,7 @@
                                     <!-- Correlated context: hedged, correlation-not-blame -->
                                     <Border Visibility="{x:Bind HasContext}"
                                             Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
-                                            CornerRadius="6" Padding="12,10">
+                                            CornerRadius="2" Padding="12,10">
                                         <StackPanel Spacing="6">
                                             <StackPanel Orientation="Horizontal" Spacing="8">
                                                 <FontIcon Glyph="&#xE946;" FontSize="12"

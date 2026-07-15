@@ -25,7 +25,7 @@
                 <Border x:Name="DemoBadge" Visibility="Collapsed"
                         VerticalAlignment="Center"
                         Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
-                        CornerRadius="4" Padding="8,2">
+                        CornerRadius="2" Padding="8,2">
                     <TextBlock Text="Demo data" Style="{StaticResource CaptionTextBlockStyle}" />
                 </Border>
             </StackPanel>
@@ -177,7 +177,7 @@
         <Border Grid.Row="3"
                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                BorderThickness="1" CornerRadius="8" Padding="16,12"
+                BorderThickness="1" CornerRadius="2" Padding="16,12"
                 MaxHeight="260">
             <Grid RowSpacing="8">
                 <Grid.RowDefinitions>

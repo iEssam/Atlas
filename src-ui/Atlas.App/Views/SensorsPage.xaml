@@ -35,7 +35,7 @@
             <Border Grid.Row="1"
                     Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                    BorderThickness="1" CornerRadius="8" Padding="20,16">
+                    BorderThickness="1" CornerRadius="2" Padding="20,16">
                 <StackPanel Spacing="10">
                     <StackPanel Orientation="Horizontal" Spacing="10">
                         <FontIcon Glyph="&#xE83F;" FontSize="18" VerticalAlignment="Center" />
@@ -87,7 +87,7 @@
             <Border Grid.Row="2"
                     Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                    BorderThickness="1" CornerRadius="8" Padding="20,16">
+                    BorderThickness="1" CornerRadius="2" Padding="20,16">
                 <StackPanel Spacing="10">
                     <StackPanel Orientation="Horizontal" Spacing="10">
                         <FontIcon Glyph="&#xE9CA;" FontSize="18" VerticalAlignment="Center" />
@@ -140,7 +140,7 @@
             <Border Grid.Row="3"
                     Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                    BorderThickness="1" CornerRadius="8" Padding="20,16">
+                    BorderThickness="1" CornerRadius="2" Padding="20,16">
                 <StackPanel Spacing="10">
                     <StackPanel Orientation="Horizontal" Spacing="10">
                         <FontIcon Glyph="&#xE7E8;" FontSize="18" VerticalAlignment="Center" />

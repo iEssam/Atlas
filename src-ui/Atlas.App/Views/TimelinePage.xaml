@@ -72,7 +72,7 @@
         <Border Grid.Row="2"
                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                BorderThickness="1" CornerRadius="8">
+                BorderThickness="1" CornerRadius="2">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="*" MinHeight="180" />

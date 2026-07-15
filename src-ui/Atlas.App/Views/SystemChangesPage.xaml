@@ -80,7 +80,7 @@
             <Border Grid.Column="0"
                     Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                    BorderThickness="1" CornerRadius="8">
+                    BorderThickness="1" CornerRadius="2">
                 <Grid>
                     <!-- Unavailable (server too old) -->
                     <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
@@ -145,7 +145,7 @@
                                             <Border VerticalAlignment="Center"
                                                     Visibility="{x:Bind IsReversible}"
                                                     Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
-                                                    CornerRadius="4" Padding="6,1">
+                                                    CornerRadius="2" Padding="6,1">
                                                 <TextBlock Text="{x:Bind ReversibleLabel}"
                                                            Style="{StaticResource CaptionTextBlockStyle}"
                                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
@@ -180,7 +180,7 @@
             <Border Grid.Column="1"
                     Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                    BorderThickness="1" CornerRadius="8">
+                    BorderThickness="1" CornerRadius="2">
                 <Grid>
                     <!-- Placeholder when nothing selected -->
                     <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
@@ -250,7 +250,7 @@
                             <!-- Reversibility note (informational) -->
                             <Border Visibility="{x:Bind ViewModel.SelectedChange.IsReversible, Mode=OneWay}"
                                     Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
-                                    CornerRadius="6" Padding="12,8">
+                                    CornerRadius="2" Padding="12,8">
                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                     <FontIcon Glyph="&#xE7A7;" FontSize="14"
                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"

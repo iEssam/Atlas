@@ -1,30 +1,26 @@
+using Atlas.App.ViewModels;
 using Atlas.App.Views;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Media;
 
 namespace Atlas.App;
 
 /// <summary>
-/// The single application window: a NavigationView shell with Overview and Live
-/// Activity pages. Mica backdrop applied when available.
+/// The single application window: an evidence-console shell (grouped
+/// NavigationView, top status bar, sidebar footer) hosting the page frame. The
+/// shell status binds only to real device/connection state (<see cref="ShellViewModel"/>).
 /// </summary>
 public sealed partial class MainWindow : Window
 {
+    /// <summary>Shell status view model (device/session + real capture state).</summary>
+    public ShellViewModel ViewModel { get; }
+
     public MainWindow()
     {
+        ViewModel = new ShellViewModel(DispatcherQueue);
         InitializeComponent();
 
-        // Mica backdrop — trivially available in WinAppSDK 1.6; the setter is a
-        // no-op fallback on unsupported OSes.
-        try
-        {
-            SystemBackdrop = new MicaBackdrop();
-        }
-        catch
-        {
-            // Leave default backdrop.
-        }
+        Closed += (_, _) => ViewModel.Stop();
 
         ContentFrame.Navigate(typeof(OverviewPage));
     }

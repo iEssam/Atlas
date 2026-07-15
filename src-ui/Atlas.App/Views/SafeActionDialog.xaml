@@ -19,7 +19,7 @@
         <Border x:Name="RiskCard"
                 Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                BorderThickness="1" CornerRadius="6" Padding="12">
+                BorderThickness="1" CornerRadius="2" Padding="12">
             <StackPanel Spacing="8">
                 <StackPanel Orientation="Horizontal" Spacing="8">
                     <FontIcon x:Name="RiskIcon" Glyph="&#xE7BA;" FontSize="16"

@@ -32,7 +32,7 @@
         <Border Grid.Row="2"
                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                BorderThickness="1" CornerRadius="8" Padding="16,12">
+                BorderThickness="1" CornerRadius="2" Padding="16,12">
             <StackPanel Orientation="Horizontal" Spacing="32">
                 <StackPanel>
                     <TextBlock Text="System CPU" Style="{StaticResource CaptionTextBlockStyle}"

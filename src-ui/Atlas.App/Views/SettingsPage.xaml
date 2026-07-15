@@ -26,7 +26,7 @@
                 <!-- Support bundle card -->
                 <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                         BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                        BorderThickness="1" CornerRadius="8" Padding="20,16">
+                        BorderThickness="1" CornerRadius="2" Padding="20,16">
                     <StackPanel Spacing="14">
 
                         <!-- Header -->
@@ -61,7 +61,7 @@
                 <!-- MCP integration card -->
                 <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                         BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                        BorderThickness="1" CornerRadius="8" Padding="20,16">
+                        BorderThickness="1" CornerRadius="2" Padding="20,16">
                     <StackPanel Spacing="14">
 
                         <!-- Header + off-by-default pill -->
@@ -74,7 +74,7 @@
                             </StackPanel>
                             <Border HorizontalAlignment="Right" VerticalAlignment="Center"
                                     Background="{ThemeResource SystemFillColorNeutralBackgroundBrush}"
-                                    CornerRadius="10" Padding="10,3">
+                                    CornerRadius="2" Padding="10,3">
                                 <TextBlock Text="Off by default"
                                            Style="{StaticResource CaptionTextBlockStyle}"
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
@@ -166,7 +166,7 @@
                                        Text="Add this to your MCP client's configuration (for example Claude Desktop's claude_desktop_config.json), then restart the client. Adjust the path to where atlas-mcp is installed." />
                             <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
                                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                    BorderThickness="1" CornerRadius="6" Padding="4">
+                                    BorderThickness="1" CornerRadius="2" Padding="4">
                                 <TextBox x:Name="ConfigBox"
                                          AutomationProperties.Name="MCP client configuration snippet"
                                          IsReadOnly="True" IsSpellCheckEnabled="False"

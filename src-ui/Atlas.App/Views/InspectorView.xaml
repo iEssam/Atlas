@@ -96,7 +96,7 @@
                                 <StackPanel Orientation="Horizontal" Spacing="10">
                                     <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                             BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                            BorderThickness="1" CornerRadius="6" Padding="10,6">
+                                            BorderThickness="1" CornerRadius="2" Padding="10,6">
                                         <StackPanel Orientation="Horizontal" Spacing="8">
                                             <Ellipse Width="10" Height="10" VerticalAlignment="Center"
                                                      Fill="{x:Bind ViewModel.OverviewSignatureToken, Mode=OneWay, Converter={StaticResource TrustTokenToBrush}}" />
@@ -105,7 +105,7 @@
                                     </Border>
                                     <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                             BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                            BorderThickness="1" CornerRadius="6" Padding="10,6">
+                                            BorderThickness="1" CornerRadius="2" Padding="10,6">
                                         <StackPanel Orientation="Horizontal" Spacing="8">
                                             <TextBlock Text="Integrity:"
                                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
@@ -556,7 +556,7 @@
 
                                     <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                             BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                            BorderThickness="1" CornerRadius="6" Padding="10,6"
+                                            BorderThickness="1" CornerRadius="2" Padding="10,6"
                                             HorizontalAlignment="Left">
                                         <StackPanel Orientation="Horizontal" Spacing="8">
                                             <Ellipse Width="10" Height="10" VerticalAlignment="Center"
@@ -579,7 +579,7 @@
                                             <DataTemplate x:DataType="vm:CertRowItem">
                                                 <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                                         BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                                        BorderThickness="1" CornerRadius="6"
+                                                        BorderThickness="1" CornerRadius="2"
                                                         Padding="12,10" Margin="0,0,0,8">
                                                     <Grid ColumnSpacing="12" RowSpacing="4">
                                                         <Grid.ColumnDefinitions>
@@ -615,7 +615,7 @@
                                                                     Spacing="8">
                                                             <TextBlock Text="{x:Bind ValidUntilText}" VerticalAlignment="Center" />
                                                             <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
-                                                                    CornerRadius="10" Padding="8,2"
+                                                                    CornerRadius="2" Padding="8,2"
                                                                     Visibility="{x:Bind HasValidityNote}">
                                                                 <StackPanel Orientation="Horizontal" Spacing="6">
                                                                     <Ellipse Width="8" Height="8" VerticalAlignment="Center"
@@ -739,7 +739,7 @@
                                             <DataTemplate x:DataType="x:String">
                                                 <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
                                                         BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                                        BorderThickness="1" CornerRadius="12" Padding="10,4">
+                                                        BorderThickness="1" CornerRadius="2" Padding="10,4">
                                                     <TextBlock Text="{x:Bind}" Style="{StaticResource CaptionTextBlockStyle}"
                                                                TextTrimming="CharacterEllipsis"
                                                                ToolTipService.ToolTip="{x:Bind}" />
@@ -766,7 +766,7 @@
                                             <DataTemplate x:DataType="x:String">
                                                 <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
                                                         BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                                        BorderThickness="1" CornerRadius="12" Padding="10,4">
+                                                        BorderThickness="1" CornerRadius="2" Padding="10,4">
                                                     <TextBlock Text="{x:Bind}" Style="{StaticResource CaptionTextBlockStyle}"
                                                                TextTrimming="CharacterEllipsis"
                                                                ToolTipService.ToolTip="{x:Bind}" />
@@ -793,7 +793,7 @@
                                             <DataTemplate x:DataType="x:String">
                                                 <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
                                                         BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                                        BorderThickness="1" CornerRadius="12" Padding="10,4">
+                                                        BorderThickness="1" CornerRadius="2" Padding="10,4">
                                                     <StackPanel Orientation="Horizontal" Spacing="6">
                                                         <FontIcon Glyph="&#xE72E;" FontSize="12" VerticalAlignment="Center"
                                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />

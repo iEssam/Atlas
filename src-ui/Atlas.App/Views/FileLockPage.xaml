@@ -116,7 +116,7 @@
                         <Grid ColumnSpacing="12" Padding="8,6"
                               Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                               BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                              BorderThickness="1" CornerRadius="6">
+                              BorderThickness="1" CornerRadius="2">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="*" />
@@ -136,7 +136,7 @@
                                                VerticalAlignment="Center"
                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                     <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
-                                            CornerRadius="4" Padding="6,1" VerticalAlignment="Center">
+                                            CornerRadius="2" Padding="6,1" VerticalAlignment="Center">
                                         <TextBlock Text="{x:Bind KindText}" FontSize="11"
                                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                     </Border>

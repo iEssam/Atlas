@@ -5,113 +5,164 @@
     xmlns:views="using:Atlas.App.Views"
     Title="System Atlas">
 
-    <NavigationView
-        x:Name="Nav"
-        PaneDisplayMode="Left"
-        IsBackButtonVisible="Collapsed"
-        IsSettingsVisible="False"
-        SelectionChanged="Nav_SelectionChanged">
-        <NavigationView.MenuItems>
-            <NavigationViewItem Content="Overview" IsSelected="True" Tag="overview">
-                <NavigationViewItem.Icon>
-                    <FontIcon Glyph="&#xE80F;" />
-                </NavigationViewItem.Icon>
-            </NavigationViewItem>
-            <NavigationViewItem Content="Live Activity" Tag="live">
-                <NavigationViewItem.Icon>
-                    <FontIcon Glyph="&#xE9D9;" />
-                </NavigationViewItem.Icon>
-            </NavigationViewItem>
-            <NavigationViewItem Content="Timeline" Tag="timeline">
-                <NavigationViewItem.Icon>
-                    <FontIcon Glyph="&#xE81C;" />
-                </NavigationViewItem.Icon>
-            </NavigationViewItem>
-            <NavigationViewItem Content="Search" Tag="search">
-                <NavigationViewItem.Icon>
-                    <FontIcon Glyph="&#xE721;" />
-                </NavigationViewItem.Icon>
-            </NavigationViewItem>
-            <NavigationViewItem Content="Privacy" Tag="privacy">
-                <NavigationViewItem.Icon>
-                    <FontIcon Glyph="&#xE72E;" />
-                </NavigationViewItem.Icon>
-            </NavigationViewItem>
-            <NavigationViewItem Content="Privacy Alerts" Tag="privacyalerts">
-                <NavigationViewItem.Icon>
-                    <FontIcon Glyph="&#xEA8F;" />
-                </NavigationViewItem.Icon>
-            </NavigationViewItem>
-            <NavigationViewItem Content="Startup" Tag="startup">
-                <NavigationViewItem.Icon>
-                    <FontIcon Glyph="&#xE7E8;" />
-                </NavigationViewItem.Icon>
-            </NavigationViewItem>
-            <NavigationViewItem Content="Services" Tag="services">
-                <NavigationViewItem.Icon>
-                    <FontIcon Glyph="&#xE9F5;" />
-                </NavigationViewItem.Icon>
-            </NavigationViewItem>
-            <NavigationViewItem Content="Network" Tag="network">
-                <NavigationViewItem.Icon>
-                    <FontIcon Glyph="&#xE968;" />
-                </NavigationViewItem.Icon>
-            </NavigationViewItem>
-            <NavigationViewItem Content="Scheduled Tasks" Tag="scheduledtasks">
-                <NavigationViewItem.Icon>
-                    <FontIcon Glyph="&#xE823;" />
-                </NavigationViewItem.Icon>
-            </NavigationViewItem>
-            <NavigationViewItem Content="Sensors" Tag="sensors">
-                <NavigationViewItem.Icon>
-                    <FontIcon Glyph="&#xE9CA;" />
-                </NavigationViewItem.Icon>
-            </NavigationViewItem>
-            <NavigationViewItem Content="File Lock Search" Tag="filelock">
-                <NavigationViewItem.Icon>
-                    <FontIcon Glyph="&#xE8E5;" />
-                </NavigationViewItem.Icon>
-            </NavigationViewItem>
-            <NavigationViewItem Content="Rules" Tag="rules">
-                <NavigationViewItem.Icon>
-                    <FontIcon Glyph="&#xE9E9;" />
-                </NavigationViewItem.Icon>
-            </NavigationViewItem>
-            <NavigationViewItem Content="Profiles" Tag="profiles">
-                <NavigationViewItem.Icon>
-                    <FontIcon Glyph="&#xE748;" />
-                </NavigationViewItem.Icon>
-            </NavigationViewItem>
-            <NavigationViewItem Content="Diagnostics" Tag="diagnostics">
-                <NavigationViewItem.Icon>
-                    <FontIcon Glyph="&#xE9D9;" />
-                </NavigationViewItem.Icon>
-            </NavigationViewItem>
-            <NavigationViewItem Content="System Changes" Tag="systemchanges">
-                <NavigationViewItem.Icon>
-                    <FontIcon Glyph="&#xE81C;" />
-                </NavigationViewItem.Icon>
-            </NavigationViewItem>
-            <NavigationViewItem Content="Reliability" Tag="reliability">
-                <NavigationViewItem.Icon>
-                    <FontIcon Glyph="&#xEBE8;" />
-                </NavigationViewItem.Icon>
-            </NavigationViewItem>
-        </NavigationView.MenuItems>
+    <!-- Force the graphite dark language regardless of the OS theme. -->
+    <Grid x:Name="Root" RequestedTheme="Dark"
+          Background="{ThemeResource AtlasGraphiteBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
 
-        <NavigationView.FooterMenuItems>
-            <NavigationViewItem Content="Plugins" Tag="plugins">
-                <NavigationViewItem.Icon>
-                    <FontIcon Glyph="&#xE71D;" />
-                </NavigationViewItem.Icon>
-            </NavigationViewItem>
-            <NavigationViewItem Content="Settings" Tag="settings">
-                <NavigationViewItem.Icon>
-                    <FontIcon Glyph="&#xE713;" />
-                </NavigationViewItem.Icon>
-            </NavigationViewItem>
-        </NavigationView.FooterMenuItems>
+        <!-- ===================== TOP STATUS / TITLE BAR ===================== -->
+        <Border Grid.Row="0" Height="46"
+                Background="{ThemeResource AtlasVoidBrush}"
+                BorderBrush="{ThemeResource AtlasLineBrush}"
+                BorderThickness="0,0,0,1"
+                Padding="16,0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
 
-        <Frame x:Name="ContentFrame" />
-    </NavigationView>
+                <!-- Product mark -->
+                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="10"
+                            VerticalAlignment="Center">
+                    <FontIcon Glyph="&#xE9D9;" FontSize="16"
+                              Foreground="{ThemeResource AtlasCyanBrush}" />
+                    <TextBlock Text="System Atlas" VerticalAlignment="Center"
+                               Style="{StaticResource BodyStrongTextBlockStyle}" />
+                </StackPanel>
+
+                <!-- Device / session (real) -->
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="20"
+                            HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <TextBlock Text="{x:Bind ViewModel.DeviceLabel}"
+                               Style="{StaticResource AtlasSectionLabelStyle}"
+                               VerticalAlignment="Center" />
+                    <TextBlock Text="{x:Bind ViewModel.SessionLabel}"
+                               Style="{StaticResource AtlasSectionLabelStyle}"
+                               VerticalAlignment="Center" />
+                </StackPanel>
+
+                <!-- Capture / connection state (real) -->
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8"
+                            VerticalAlignment="Center">
+                    <Ellipse Width="7" Height="7" VerticalAlignment="Center"
+                             Fill="{x:Bind ViewModel.CaptureBrush, Mode=OneWay}" />
+                    <TextBlock Text="{x:Bind ViewModel.CaptureStateText, Mode=OneWay}"
+                               Style="{StaticResource AtlasSectionLabelStyle}"
+                               Foreground="{ThemeResource AtlasMutedBrush}"
+                               VerticalAlignment="Center" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- ===================== EVIDENCE-CONSOLE SIDEBAR + CONTENT ===================== -->
+        <NavigationView
+            x:Name="Nav"
+            Grid.Row="1"
+            PaneDisplayMode="Left"
+            OpenPaneLength="240"
+            IsBackButtonVisible="Collapsed"
+            IsSettingsVisible="False"
+            IsPaneToggleButtonVisible="True"
+            SelectionChanged="Nav_SelectionChanged">
+
+            <NavigationView.MenuItems>
+                <NavigationViewItemHeader Content="OBSERVE" />
+                <NavigationViewItem Content="Overview" IsSelected="True" Tag="overview">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE80F;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="Live Activity" Tag="live">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE9D9;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="Timeline" Tag="timeline">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE81C;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="Search" Tag="search">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE721;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="Privacy" Tag="privacy">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE72E;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="Privacy Alerts" Tag="privacyalerts">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xEA8F;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+
+                <NavigationViewItemHeader Content="INVENTORY" />
+                <NavigationViewItem Content="Startup" Tag="startup">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE7E8;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="Services" Tag="services">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE9F5;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="Network" Tag="network">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE968;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="Scheduled Tasks" Tag="scheduledtasks">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE823;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="Sensors" Tag="sensors">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE9CA;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="File Lock Search" Tag="filelock">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE8E5;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+
+                <NavigationViewItemHeader Content="CONTROL" />
+                <NavigationViewItem Content="Rules" Tag="rules">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE9E9;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="Profiles" Tag="profiles">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE748;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+
+                <NavigationViewItemHeader Content="EXPLAIN" />
+                <NavigationViewItem Content="Diagnostics" Tag="diagnostics">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xEC05;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="System Changes" Tag="systemchanges">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE7BA;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="Reliability" Tag="reliability">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xEBE8;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+            </NavigationView.MenuItems>
+
+            <NavigationView.FooterMenuItems>
+                <NavigationViewItemHeader Content="EXTEND" />
+                <NavigationViewItem Content="Plugins" Tag="plugins">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE71D;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="Settings" Tag="settings">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE713;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+            </NavigationView.FooterMenuItems>
+
+            <!-- Sidebar footer status (real capture/connection state only) -->
+            <NavigationView.PaneFooter>
+                <Border BorderBrush="{ThemeResource AtlasLineBrush}"
+                        BorderThickness="0,1,0,0"
+                        Padding="16,10,16,12">
+                    <StackPanel Spacing="5">
+                        <StackPanel Orientation="Horizontal" Spacing="7">
+                            <Ellipse Width="6" Height="6" VerticalAlignment="Center"
+                                     Fill="{x:Bind ViewModel.CaptureBrush, Mode=OneWay}" />
+                            <TextBlock Text="{x:Bind ViewModel.CaptureStateText, Mode=OneWay}"
+                                       Style="{StaticResource AtlasSectionLabelStyle}"
+                                       Foreground="{ThemeResource AtlasMutedBrush}" />
+                        </StackPanel>
+                        <TextBlock Text="{x:Bind ViewModel.SourceText, Mode=OneWay}"
+                                   Style="{StaticResource AtlasSectionLabelStyle}" />
+                        <TextBlock Text="READ-ONLY QUERIES"
+                                   Style="{StaticResource AtlasSectionLabelStyle}" />
+                    </StackPanel>
+                </Border>
+            </NavigationView.PaneFooter>
+
+            <Frame x:Name="ContentFrame" />
+        </NavigationView>
+    </Grid>
 </Window>

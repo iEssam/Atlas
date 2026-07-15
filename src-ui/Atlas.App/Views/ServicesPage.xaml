@@ -164,7 +164,7 @@
         <Border Grid.Row="4"
                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                BorderThickness="1" CornerRadius="8" Padding="16,12"
+                BorderThickness="1" CornerRadius="2" Padding="16,12"
                 Margin="0,4,0,0"
                 Visibility="{x:Bind ViewModel.HasSelection, Mode=OneWay}">
             <StackPanel Spacing="6">

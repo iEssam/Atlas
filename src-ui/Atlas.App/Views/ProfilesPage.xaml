@@ -24,7 +24,7 @@
                 <Border x:Name="DemoBadge" Visibility="Collapsed"
                         VerticalAlignment="Center"
                         Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
-                        CornerRadius="4" Padding="8,2">
+                        CornerRadius="2" Padding="8,2">
                     <TextBlock Text="Demo data" Style="{StaticResource CaptionTextBlockStyle}" />
                 </Border>
             </StackPanel>
@@ -86,7 +86,7 @@
                             <Border Margin="0,0,0,10"
                                     Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                    BorderThickness="1" CornerRadius="8" Padding="16,12">
+                                    BorderThickness="1" CornerRadius="2" Padding="16,12">
                                 <Grid ColumnSpacing="12">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
@@ -99,7 +99,7 @@
                                                        Style="{StaticResource BodyStrongTextBlockStyle}"
                                                        VerticalAlignment="Center" />
                                             <Border Background="{ThemeResource SystemFillColorSuccessBackgroundBrush}"
-                                                    CornerRadius="4" Padding="8,1"
+                                                    CornerRadius="2" Padding="8,1"
                                                     VerticalAlignment="Center"
                                                     Visibility="{x:Bind Active, Mode=OneWay}">
                                                 <TextBlock Text="Active"

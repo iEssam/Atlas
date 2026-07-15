@@ -25,7 +25,7 @@
                 <Border x:Name="DemoBadge" Visibility="Collapsed"
                         VerticalAlignment="Center"
                         Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
-                        CornerRadius="4" Padding="8,2">
+                        CornerRadius="2" Padding="8,2">
                     <TextBlock Text="Demo data" Style="{StaticResource CaptionTextBlockStyle}" />
                 </Border>
             </StackPanel>
@@ -45,7 +45,7 @@
         <Border Grid.Row="1"
                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                BorderThickness="1" CornerRadius="8" Padding="16,12">
+                BorderThickness="1" CornerRadius="2" Padding="16,12">
             <StackPanel Orientation="Horizontal" Spacing="12">
                 <FontIcon Glyph="&#xE72E;" FontSize="18" VerticalAlignment="Top" Margin="0,2,0,0"
                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
@@ -111,7 +111,7 @@
                     <DataTemplate x:DataType="vm:PluginRowViewModel">
                         <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                BorderThickness="1" CornerRadius="8" Padding="16,12">
+                                BorderThickness="1" CornerRadius="2" Padding="16,12">
                             <Grid ColumnSpacing="16">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
@@ -131,7 +131,7 @@
                                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                         <!-- Signature badge (calm: signed=positive, unsigned=caution) -->
                                         <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
-                                                CornerRadius="4" Padding="8,2" VerticalAlignment="Center">
+                                                CornerRadius="2" Padding="8,2" VerticalAlignment="Center">
                                             <StackPanel Orientation="Horizontal" Spacing="6"
                                                         ToolTipService.ToolTip="{x:Bind SignatureNote}">
                                                 <FontIcon Glyph="{x:Bind SignatureGlyph}" FontSize="13"
@@ -188,7 +188,7 @@
                                                 <DataTemplate x:DataType="vm:CapabilityChip">
                                                     <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
                                                             BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                                            BorderThickness="1" CornerRadius="12" Padding="10,4">
+                                                            BorderThickness="1" CornerRadius="2" Padding="10,4">
                                                         <StackPanel Orientation="Horizontal" Spacing="6">
                                                             <FontIcon Glyph="{x:Bind Glyph}" FontSize="12"
                                                                       VerticalAlignment="Center"
