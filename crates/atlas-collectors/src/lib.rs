@@ -13,6 +13,7 @@ pub mod cadence;
 pub mod changes;
 #[cfg(windows)]
 pub mod crashes;
+pub mod deviceinfo;
 #[cfg(windows)]
 pub mod events;
 pub mod ffi;
@@ -62,6 +63,7 @@ pub use changes::{
 pub use crashes::{
     count_repeated_restarts, read_crashes, recent_change_notes, CrashScan, RawCrash,
 };
+pub use deviceinfo::{device_info, DeviceInfo};
 #[cfg(windows)]
 pub use events::{EventError, ProcessEvent, ProcessEventKind, ProcessEventWatcher, WatcherOptions};
 pub use gauges::{cpu_times, memory_status, processor_count, CpuTimes, MemoryStatus};

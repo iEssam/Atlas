@@ -152,8 +152,9 @@ fn replace_ci(haystack: &str, needle: &str, replacement: &str) -> String {
 }
 
 /// Applies the redactor to every textual field of the incident + diagnosis,
-/// returning redacted copies the formatters consume.
-fn redact(incident: &Incident, diag: &Diagnosis, r: &Redactor) -> (Incident, Diagnosis) {
+/// returning redacted copies the formatters consume. Shared with the support
+/// bundle's incidents section (docs/phases.md R3) so both redact identically.
+pub(crate) fn redact(incident: &Incident, diag: &Diagnosis, r: &Redactor) -> (Incident, Diagnosis) {
     let inc = Incident {
         summary: r.apply(&incident.summary),
         ..incident.clone()
@@ -250,7 +251,7 @@ fn render_unavailable(format: ReportFormat, reason: &str) -> (String, String) {
 // Label helpers (proto discriminants -> human strings).
 // ---------------------------------------------------------------------------
 
-fn kind_label(kind: i32) -> &'static str {
+pub(crate) fn kind_label(kind: i32) -> &'static str {
     match IncidentKind::try_from(kind) {
         Ok(IncidentKind::CpuSaturation) => "CPU saturation",
         Ok(IncidentKind::MemoryPressure) => "Memory pressure",
@@ -259,7 +260,7 @@ fn kind_label(kind: i32) -> &'static str {
     }
 }
 
-fn severity_label(sev: i32) -> &'static str {
+pub(crate) fn severity_label(sev: i32) -> &'static str {
     match Severity::try_from(sev) {
         Ok(Severity::Info) => "Info",
         Ok(Severity::Warning) => "Warning",
@@ -268,7 +269,7 @@ fn severity_label(sev: i32) -> &'static str {
     }
 }
 
-fn confidence_label(c: i32) -> &'static str {
+pub(crate) fn confidence_label(c: i32) -> &'static str {
     match Confidence::try_from(c) {
         Ok(Confidence::Insufficient) => "INSUFFICIENT",
         Ok(Confidence::Low) => "LOW",
@@ -610,7 +611,7 @@ fn render_html(inc: &Incident, diag: &Diagnosis) -> String {
 }
 
 /// Minimal HTML-escaping for text nodes/attribute-free content.
-fn html_escape(s: &str) -> String {
+pub(crate) fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")

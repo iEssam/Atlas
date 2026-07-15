@@ -365,6 +365,45 @@ impl AtlasQuery for FakeQuery {
         }))
     }
 
+    // R3 remote support bundle: a fixed self-contained reply so the transport
+    // test exercises the new RPC end-to-end (the real assembly/redaction/format
+    // logic is unit-tested in atlas-service::support_bundle). Echoes the format
+    // in the content type + filename and the applied redaction categories.
+    async fn generate_support_bundle(
+        &self,
+        req: Request<atlas_ipc::SupportBundleRequest>,
+    ) -> Result<Response<atlas_ipc::SupportBundleReply>, Status> {
+        let r = req.into_inner();
+        let is_json = r.format == atlas_ipc::ReportFormat::ReportJson as i32;
+        let mut redaction_applied = Vec::new();
+        if let Some(opts) = &r.redaction {
+            if opts.redact_paths {
+                redaction_applied.push("paths".to_string());
+            }
+            if opts.redact_user_names {
+                redaction_applied.push("user_names".to_string());
+            }
+        }
+        Ok(Response::new(atlas_ipc::SupportBundleReply {
+            content: if is_json {
+                "{\"device\":{}}".into()
+            } else {
+                "<!doctype html><title>Atlas support bundle</title>".into()
+            },
+            content_type: if is_json {
+                "application/json".into()
+            } else {
+                "text/html".into()
+            },
+            filename: if is_json {
+                "atlas-support-2023-11-15.json".into()
+            } else {
+                "atlas-support-2023-11-15.html".into()
+            },
+            redaction_applied,
+        }))
+    }
+
     // R2 inspector/resource-ownership: fixed responses so the transport test
     // exercises the five new RPCs end-to-end (the real inspection logic is
     // unit-tested in atlas-collectors against live processes).
@@ -1235,6 +1274,31 @@ async fn capabilities_and_snapshot_round_trip() {
     assert_eq!(crashes.crashes.len(), 1);
     assert_eq!(crashes.crashes[0].exception_code, "0xc0000005");
     assert!(crashes.crashes[0].context[1].contains("not proof"));
+
+    // R3: GenerateSupportBundle round-trips a self-contained document with a
+    // content type, a dated filename, and the applied redaction categories.
+    let bundle = client
+        .generate_support_bundle(atlas_ipc::SupportBundleRequest {
+            range: None,
+            redaction: Some(atlas_ipc::RedactionOptions {
+                redact_user_names: true,
+                redact_computer_name: false,
+                redact_paths: true,
+                redact_command_lines: false,
+            }),
+            sections: vec![],
+            format: atlas_ipc::ReportFormat::ReportHtml as i32,
+        })
+        .await
+        .expect("GenerateSupportBundle")
+        .into_inner();
+    assert_eq!(bundle.content_type, "text/html");
+    assert!(bundle.content.contains("support bundle"));
+    assert!(bundle.filename.ends_with(".html"));
+    assert_eq!(
+        bundle.redaction_applied,
+        vec!["paths".to_string(), "user_names".to_string()]
+    );
 
     // Shut the server down cleanly.
     let _ = shutdown_tx.send(());

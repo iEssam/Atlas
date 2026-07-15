@@ -486,6 +486,46 @@ service AtlasQuery {
   rpc ListFiredAlerts(ListFiredAlertsRequest) returns (ListFiredAlertsReply);
   rpc ListSystemChanges(ListSystemChangesRequest) returns (ListSystemChangesReply);
   rpc ListCrashes(ListCrashesRequest) returns (ListCrashesReply);
+  rpc GenerateSupportBundle(SupportBundleRequest) returns (SupportBundleReply);
+}
+
+// ---------------------------------------------------------------------------
+// R3: remote support bundle (PRD §9.18 diagnostic bundle, §18.3). One redacted,
+// self-contained diagnostic document a user can hand to IT/support — assembled
+// from data Atlas already has (health, incidents+diagnoses, changes, crashes,
+// inventories, own overhead), passed through the shared Redactor. Read-only.
+// Reuses the existing RedactionOptions (M8).
+// ---------------------------------------------------------------------------
+
+enum SupportBundleSection {
+  SUPPORT_BUNDLE_SECTION_UNSPECIFIED = 0;
+  BUNDLE_DEVICE_INFO = 1;
+  BUNDLE_HEALTH = 2;
+  BUNDLE_INCIDENTS = 3;
+  BUNDLE_SYSTEM_CHANGES = 4;
+  BUNDLE_CRASHES = 5;
+  BUNDLE_SERVICES = 6;
+  BUNDLE_STARTUP = 7;
+  BUNDLE_SELF_METRICS = 8;
+}
+
+message SupportBundleRequest {
+  // Window to summarize (incidents/changes/crashes). Default = last 72 h.
+  TimeRange range = 1;
+  RedactionOptions redaction = 2;
+  // Sections to include; empty = all.
+  repeated SupportBundleSection sections = 3;
+  // Output format. HTML self-contained (default), JSON, or text.
+  ReportFormat format = 4;
+}
+
+message SupportBundleReply {
+  string content = 1;
+  string content_type = 2;
+  // Suggested file name, e.g. "atlas-support-2026-07-15.html".
+  string filename = 3;
+  // Echo of the redaction categories actually applied.
+  repeated string redaction_applied = 4;
 }
 
 // ---------------------------------------------------------------------------

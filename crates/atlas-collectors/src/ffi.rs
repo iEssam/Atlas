@@ -115,6 +115,32 @@ extern "system" {
     pub fn GlobalMemoryStatusEx(lpBuffer: *mut MEMORYSTATUSEX) -> BOOL;
 
     pub fn GetActiveProcessorCount(GroupNumber: u16) -> u32;
+
+    /// Milliseconds since the system booted (device-info / support bundle
+    /// uptime). Monotonic, never wraps within a boot on 64-bit.
+    pub fn GetTickCount64() -> u64;
+}
+
+/// `RTL_OSVERSIONINFOW` — the OS version block filled by `RtlGetVersion`. The
+/// trailing `szCSDVersion` is a fixed 128-`WCHAR` array; only the major/minor/
+/// build numbers are read for the support bundle's device section. Using
+/// `RtlGetVersion` (not the shimmed `GetVersionEx`) reports the real build even
+/// without an app manifest.
+#[repr(C)]
+pub struct RTL_OSVERSIONINFOW {
+    pub dwOSVersionInfoSize: DWORD,
+    pub dwMajorVersion: DWORD,
+    pub dwMinorVersion: DWORD,
+    pub dwBuildNumber: DWORD,
+    pub dwPlatformId: DWORD,
+    pub szCSDVersion: [u16; 128],
+}
+
+#[link(name = "ntdll")]
+extern "system" {
+    /// Fills `lpVersionInformation` with the true OS version. Returns
+    /// `STATUS_SUCCESS` (0). `dwOSVersionInfoSize` must be set by the caller.
+    pub fn RtlGetVersion(lpVersionInformation: *mut RTL_OSVERSIONINFOW) -> NTSTATUS;
 }
 
 // ---------------------------------------------------------------------------
