@@ -1,0 +1,200 @@
+<ContentDialog
+    x:Class="Atlas.App.Views.SupportBundleDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    Title="Create support bundle"
+    CloseButtonText="Close"
+    DefaultButton="None">
+
+    <ScrollViewer VerticalScrollMode="Auto" VerticalScrollBarVisibility="Auto"
+                  MaxHeight="600">
+        <StackPanel Spacing="16" Width="480">
+
+            <!-- What this is -->
+            <TextBlock TextWrapping="Wrap"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Text="A support bundle is one self-contained file you can hand to an IT or support engineer. Atlas assembles it from data it already has — nothing new is collected. It is read-only and it is generated on your machine." />
+
+            <!-- Sections -->
+            <StackPanel Spacing="8">
+                <TextBlock Text="What to include" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                <TextBlock Text="All sections are included by default. Uncheck anything you'd rather leave out."
+                           TextWrapping="Wrap"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+                <CheckBox x:Name="SectionDeviceInfo" IsChecked="True"
+                          AutomationProperties.Name="Include device info section">
+                    <StackPanel>
+                        <TextBlock Text="Device info" />
+                        <TextBlock Text="Basic hardware and OS details: model, CPU, memory, and Windows version."
+                                   TextWrapping="Wrap" Style="{StaticResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    </StackPanel>
+                </CheckBox>
+                <CheckBox x:Name="SectionHealth" IsChecked="True"
+                          AutomationProperties.Name="Include health section">
+                    <StackPanel>
+                        <TextBlock Text="Health" />
+                        <TextBlock Text="Recent system health — CPU, memory, and disk trends."
+                                   TextWrapping="Wrap" Style="{StaticResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    </StackPanel>
+                </CheckBox>
+                <CheckBox x:Name="SectionIncidents" IsChecked="True"
+                          AutomationProperties.Name="Include incidents and diagnoses section">
+                    <StackPanel>
+                        <TextBlock Text="Incidents &amp; diagnoses" />
+                        <TextBlock Text="Detected slowdowns and Atlas's diagnosis of what drove each one. Uses the time window below."
+                                   TextWrapping="Wrap" Style="{StaticResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    </StackPanel>
+                </CheckBox>
+                <CheckBox x:Name="SectionSystemChanges" IsChecked="True"
+                          AutomationProperties.Name="Include system changes section">
+                    <StackPanel>
+                        <TextBlock Text="System changes" />
+                        <TextBlock Text="What changed recently: installs, updates, drivers, services, and startup items. Uses the time window below."
+                                   TextWrapping="Wrap" Style="{StaticResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    </StackPanel>
+                </CheckBox>
+                <CheckBox x:Name="SectionCrashes" IsChecked="True"
+                          AutomationProperties.Name="Include crashes section">
+                    <StackPanel>
+                        <TextBlock Text="Crashes" />
+                        <TextBlock Text="Recent crashes, hangs, and unexpected shutdowns with their context. Uses the time window below."
+                                   TextWrapping="Wrap" Style="{StaticResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    </StackPanel>
+                </CheckBox>
+                <CheckBox x:Name="SectionServices" IsChecked="True"
+                          AutomationProperties.Name="Include services section">
+                    <StackPanel>
+                        <TextBlock Text="Services" />
+                        <TextBlock Text="The Windows service inventory and each service's current state."
+                                   TextWrapping="Wrap" Style="{StaticResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    </StackPanel>
+                </CheckBox>
+                <CheckBox x:Name="SectionStartup" IsChecked="True"
+                          AutomationProperties.Name="Include startup section">
+                    <StackPanel>
+                        <TextBlock Text="Startup" />
+                        <TextBlock Text="Programs and tasks configured to run at sign-in or boot."
+                                   TextWrapping="Wrap" Style="{StaticResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    </StackPanel>
+                </CheckBox>
+                <CheckBox x:Name="SectionSelfMetrics" IsChecked="True"
+                          AutomationProperties.Name="Include Atlas overhead section">
+                    <StackPanel>
+                        <TextBlock Text="Atlas overhead" />
+                        <TextBlock Text="Atlas's own resource use, so support can see the tool's own footprint."
+                                   TextWrapping="Wrap" Style="{StaticResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    </StackPanel>
+                </CheckBox>
+            </StackPanel>
+
+            <!-- Time window -->
+            <StackPanel Spacing="6">
+                <TextBlock Text="Time window" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                <TextBlock Text="How far back to look for incidents, system changes, and crashes."
+                           TextWrapping="Wrap"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <RadioButtons x:Name="WindowChoices"
+                              AutomationProperties.Name="Time window"
+                              SelectionChanged="OnWindowChanged">
+                    <RadioButton Content="Last 24 hours" Tag="24"
+                                 AutomationProperties.Name="Last 24 hours" />
+                    <RadioButton Content="Last 72 hours" Tag="72"
+                                 AutomationProperties.Name="Last 72 hours" />
+                    <RadioButton Content="Last 7 days" Tag="168"
+                                 AutomationProperties.Name="Last 7 days" />
+                </RadioButtons>
+            </StackPanel>
+
+            <!-- Redaction (safety framing) -->
+            <StackPanel Spacing="8">
+                <TextBlock Text="Redaction" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                <InfoBar IsOpen="True" IsClosable="False" Severity="Informational"
+                         Title="This file is meant to leave your machine"
+                         Message="This bundle contains diagnostic evidence for a support engineer. Redaction removes the selected personal details before the file is created, so unrelated personal activity stays off it. These are on by default — leave them on unless your support contact asks otherwise." />
+                <CheckBox x:Name="RedactUserNames" Content="User names" IsChecked="True"
+                          AutomationProperties.Name="Redact user names"
+                          Checked="OnRedactionChanged" Unchecked="OnRedactionChanged" />
+                <CheckBox x:Name="RedactComputerName" Content="Computer name" IsChecked="True"
+                          AutomationProperties.Name="Redact computer name"
+                          Checked="OnRedactionChanged" Unchecked="OnRedactionChanged" />
+                <CheckBox x:Name="RedactPaths" Content="File paths" IsChecked="True"
+                          AutomationProperties.Name="Redact file paths"
+                          Checked="OnRedactionChanged" Unchecked="OnRedactionChanged" />
+                <CheckBox x:Name="RedactCommandLines" Content="Command lines" IsChecked="True"
+                          AutomationProperties.Name="Redact command lines"
+                          Checked="OnRedactionChanged" Unchecked="OnRedactionChanged" />
+                <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                        CornerRadius="6" Padding="12,8">
+                    <TextBlock x:Name="RedactionSummaryText"
+                               TextWrapping="Wrap"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                </Border>
+            </StackPanel>
+
+            <!-- Format -->
+            <StackPanel Spacing="6">
+                <TextBlock Text="Format" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                <ComboBox x:Name="FormatCombo"
+                          AutomationProperties.Name="Bundle format"
+                          HorizontalAlignment="Stretch"
+                          SelectionChanged="OnFormatChanged">
+                    <ComboBoxItem Content="HTML (self-contained)" Tag="html" IsSelected="True" />
+                    <ComboBoxItem Content="JSON" Tag="json" />
+                    <ComboBoxItem Content="Plain text" Tag="text" />
+                </ComboBox>
+            </StackPanel>
+
+            <!-- Generate -->
+            <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                <Button x:Name="GenerateButton" Content="Generate bundle"
+                        AutomationProperties.Name="Generate support bundle"
+                        Style="{StaticResource AccentButtonStyle}"
+                        Click="OnGenerateClick" />
+                <ProgressRing x:Name="BusyRing" IsActive="False" Width="16" Height="16" />
+            </StackPanel>
+
+            <!-- Status / unavailable -->
+            <InfoBar x:Name="StatusBar" IsOpen="False" IsClosable="False" />
+
+            <!-- Preview + actions -->
+            <StackPanel x:Name="PreviewPanel" Spacing="8" Visibility="Collapsed">
+
+                <!-- What was stripped (redaction_applied echo) -->
+                <InfoBar x:Name="RedactionAppliedBar" IsOpen="False" IsClosable="False"
+                         Severity="Success"
+                         Title="What was removed" />
+
+                <TextBlock Text="Preview" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                <TextBox x:Name="PreviewBox"
+                         AutomationProperties.Name="Support bundle preview"
+                         IsReadOnly="True"
+                         AcceptsReturn="True"
+                         TextWrapping="NoWrap"
+                         FontFamily="Consolas"
+                         Height="200"
+                         ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                         ScrollViewer.VerticalScrollBarVisibility="Auto" />
+                <StackPanel Orientation="Horizontal" Spacing="12">
+                    <Button x:Name="SaveButton" Content="Save to file…"
+                            AutomationProperties.Name="Save support bundle to file"
+                            Click="OnSaveClick" />
+                    <Button x:Name="CopyButton" Content="Copy"
+                            AutomationProperties.Name="Copy support bundle to clipboard"
+                            Click="OnCopyClick" />
+                </StackPanel>
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+</ContentDialog>

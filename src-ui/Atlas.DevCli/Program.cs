@@ -18,6 +18,7 @@ bool watch = false;
 bool probeR2 = false;
 bool probeRules = false;
 bool probePrivacyAlerts = false;
+bool probeSupportBundle = false;
 uint probePid = 0;
 
 for (int i = 0; i < args.Length; i++)
@@ -52,6 +53,11 @@ for (int i = 0; i < args.Length; i++)
         case "--probe-privacy-alerts":
             probePrivacyAlerts = true;
             break;
+        // R3 support-bundle live check: exercise GenerateSupportBundle and report
+        // how it degrades (Supported vs Unsupported→"server too old").
+        case "--probe-support-bundle":
+            probeSupportBundle = true;
+            break;
         case "--pid" when i + 1 < args.Length:
             if (!uint.TryParse(args[++i], out probePid))
             {
@@ -63,7 +69,8 @@ for (int i = 0; i < args.Length; i++)
         case "--help":
             Console.WriteLine(
                 "usage: atlas-devcli [--pipe <who>] [--top <n>] [--watch] "
-                + "[--probe-r2 [--pid <pid>]] [--probe-rules] [--probe-privacy-alerts]");
+                + "[--probe-r2 [--pid <pid>]] [--probe-rules] [--probe-privacy-alerts] "
+                + "[--probe-support-bundle]");
             return 0;
         default:
             Console.Error.WriteLine($"unknown argument: {args[i]}");
@@ -84,6 +91,11 @@ if (probeRules)
 if (probePrivacyAlerts)
 {
     return await ProbePrivacyAlertsAsync(who);
+}
+
+if (probeSupportBundle)
+{
+    return await ProbeSupportBundleAsync(who);
 }
 
 var pipePath = AtlasPipe.FullPath(who ?? AtlasPipe.DefaultWho());
@@ -336,6 +348,56 @@ static async Task<int> ProbePrivacyAlertsAsync(string? who)
         Console.WriteLine(rules.Supported
             ? "Privacy alerts are served — the Privacy Alerts page will show live data."
             : "Privacy alerts are not served — the Privacy Alerts page will show its calm "
+              + "\"unavailable — server too old\" state, and the app stays fully usable.");
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"error: {ex.Message}");
+        return 1;
+    }
+}
+
+// Exercises the R3 remote support-bundle RPC (GenerateSupportBundle) and prints
+// whether the server supported it or degraded to Unsupported. This is the console
+// equivalent of opening the Settings page's "Create support bundle" dialog and
+// clicking Generate: against a server too old to serve this RPC (the server side
+// lands after this UI), the call should come back Unsupported (not throw), which
+// is exactly what drives the dialog's calm "unavailable — server too old" state.
+// When Supported, it also reports the redaction_applied echo the dialog shows the
+// user. Read-only — a support bundle is assembled from data Atlas already has.
+static async Task<int> ProbeSupportBundleAsync(string? who)
+{
+    try
+    {
+        using var atlas = AtlasChannel.Connect(who);
+        Console.WriteLine("Probing GenerateSupportBundle ...");
+        Console.WriteLine();
+
+        long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        long from = SupportBundleFormatter.WindowFromMs(now, 72);
+        var redaction = new Atlas.V0.RedactionOptions
+        {
+            RedactUserNames = true,
+            RedactComputerName = true,
+            RedactPaths = true,
+            RedactCommandLines = true,
+        };
+
+        var bundle = await atlas.GenerateSupportBundleAsync(
+            from, now, Atlas.V0.ReportFormat.ReportHtml, redaction,
+            SupportBundleFormatter.AllSections);
+
+        Console.WriteLine(bundle.Supported
+            ? $"GenerateSupportBundle : Supported (filename={bundle.Value.Filename}, "
+              + $"{bundle.Value.Content.Length} chars, {bundle.Value.ContentType}) — "
+              + SupportBundleFormatter.RedactionAppliedSummary(bundle.Value.RedactionApplied)
+            : $"GenerateSupportBundle : Unsupported — {bundle.UnsupportedReason}");
+
+        Console.WriteLine();
+        Console.WriteLine(bundle.Supported
+            ? "The support bundle is served — the Settings dialog will show a live preview."
+            : "The support bundle is not served — the Settings dialog will show its calm "
               + "\"unavailable — server too old\" state, and the app stays fully usable.");
         return 0;
     }

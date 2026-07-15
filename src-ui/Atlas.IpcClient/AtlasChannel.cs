@@ -639,6 +639,47 @@ public sealed class AtlasChannel : IDisposable
     }
 
     // ----------------------------------------------------------------------
+    // R3: remote support bundle (AtlasQuery, PRD §9.18, §18.3). One redacted,
+    // self-contained diagnostic document the user can hand to IT/support,
+    // assembled from data Atlas already has and passed through the shared
+    // Redactor. Read-only. Same Unimplemented→Unsupported guard so the export
+    // dialog shows a calm "unavailable" state against an older service that
+    // serves this RPC as Unimplemented (the server side lands after the UI —
+    // task brief). The reply echoes back the redaction categories actually
+    // applied so the UI can show the user exactly what was stripped.
+    // ----------------------------------------------------------------------
+
+    /// <summary>
+    /// Generates a remote support bundle over <paramref name="fromMs"/>..<paramref name="toMs"/>
+    /// (the window bounds the incident/change/crash sections) in the requested
+    /// <paramref name="format"/>, including the given <paramref name="sections"/>
+    /// (empty = all) and applying <paramref name="redaction"/> server-side.
+    /// Returns the rendered content, its MIME type, a suggested filename, and the
+    /// echo of the redaction categories actually applied.
+    /// </summary>
+    public Task<RpcOutcome<SupportBundleReply>> GenerateSupportBundleAsync(
+        long fromMs,
+        long toMs,
+        ReportFormat format,
+        RedactionOptions redaction,
+        IEnumerable<SupportBundleSection>? sections = null,
+        CancellationToken cancellationToken = default)
+    {
+        var req = new SupportBundleRequest
+        {
+            Range = new TimeRange { FromMs = fromMs, ToMs = toMs },
+            Format = format,
+            Redaction = redaction ?? new RedactionOptions(),
+        };
+        if (sections is not null)
+        {
+            req.Sections.AddRange(sections);
+        }
+        return GuardAsync(() => _client.GenerateSupportBundleAsync(
+            req, cancellationToken: cancellationToken).ResponseAsync);
+    }
+
+    // ----------------------------------------------------------------------
     // M6: safe process actions (AtlasControl) — two-phase prepare/execute.
     // ----------------------------------------------------------------------
 

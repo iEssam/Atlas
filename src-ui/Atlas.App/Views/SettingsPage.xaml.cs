@@ -1,3 +1,4 @@
+using System;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Windows.ApplicationModel.DataTransfer;
@@ -36,10 +37,24 @@ public sealed partial class SettingsPage : Page
         "  }\n" +
         "}";
 
+    private readonly string? _who;
+
     public SettingsPage()
     {
+        var who = Environment.GetEnvironmentVariable("ATLAS_PIPE");
+        _who = string.IsNullOrEmpty(who) ? null : who;
+
         InitializeComponent();
         ConfigBox.Text = ConfigSnippet;
+    }
+
+    private async void CreateBundle_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new SupportBundleDialog(_who)
+        {
+            XamlRoot = XamlRoot,
+        };
+        await dialog.ShowAsync();
     }
 
     private void CopyConfig_Click(object sender, RoutedEventArgs e)
