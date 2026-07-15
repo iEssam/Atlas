@@ -487,6 +487,63 @@ service AtlasQuery {
   rpc ListSystemChanges(ListSystemChangesRequest) returns (ListSystemChangesReply);
   rpc ListCrashes(ListCrashesRequest) returns (ListCrashesReply);
   rpc GenerateSupportBundle(SupportBundleRequest) returns (SupportBundleReply);
+  rpc GetSecurityMetadata(GetSecurityMetadataRequest) returns (GetSecurityMetadataReply);
+}
+
+// ---------------------------------------------------------------------------
+// R3: expert security metadata (PRD §9.4.1/§9.4.6). On-demand deep security
+// detail for one process — the signing certificate chain, file hash, token
+// privileges/groups/capabilities, and process mitigation policies. Read-only;
+// cross-user/protected processes degrade honestly (limited / unavailable).
+// ---------------------------------------------------------------------------
+
+message CertInfo {
+  string subject = 1;
+  string issuer = 2;
+  string thumbprint_sha1 = 3;
+  int64 not_before_ms = 4;
+  int64 not_after_ms = 5;
+}
+
+message TokenPrivilege {
+  // e.g. "SeDebugPrivilege".
+  string name = 1;
+  bool enabled = 2;
+}
+
+message SecurityMetadata {
+  // File identity.
+  string file_sha256 = 1;
+  // Reuses the inspector's signature label ("Signed (Microsoft)" / ...).
+  string signature_status = 2;
+  // Signing certificate chain, leaf → root (empty when unsigned/unavailable).
+  repeated CertInfo cert_chain = 3;
+  // Token.
+  string user_sid = 4;
+  string integrity_level = 5;
+  bool elevated = 6;
+  bool app_container = 7;
+  repeated TokenPrivilege privileges = 8;
+  // Group names (or SIDs where the name can't be resolved).
+  repeated string groups = 9;
+  // App-container capability names, when applicable.
+  repeated string capabilities = 10;
+  // Process mitigation policies that are on, e.g. "DEP", "ASLR (high-entropy)",
+  // "CFG", "no child processes", where readable.
+  repeated string mitigations = 11;
+  // True when some fields were unavailable (cross-user without elevation).
+  bool limited = 12;
+}
+
+message GetSecurityMetadataRequest {
+  uint32 pid = 1;
+  int64 create_time_100ns = 2;
+}
+
+message GetSecurityMetadataReply {
+  bool available = 1;
+  string unavailable_reason = 2;
+  SecurityMetadata metadata = 3;
 }
 
 // ---------------------------------------------------------------------------

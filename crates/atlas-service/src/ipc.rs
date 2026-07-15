@@ -32,15 +32,16 @@ use atlas_collectors::{
 use atlas_ipc::v0::atlas_query_server::AtlasQuery;
 use atlas_ipc::{
     BatteryStatus as ProtoBatteryStatus, Bookmark, BootRecord as ProtoBootRecord,
-    CapabilitiesReply, CapabilitiesRequest, CapabilityKind, Connection as ProtoConnection,
-    CrashRecord as ProtoCrashRecord, CreateBookmarkReply, CreateBookmarkRequest,
-    CreatePrivacyAlertRuleReply, CreatePrivacyAlertRuleRequest, DeletePrivacyAlertRuleReply,
-    DeletePrivacyAlertRuleRequest, DiagnoseReply, DiagnoseRequest, EventRow,
-    FindResourceOwnersReply, FindResourceOwnersRequest, FiredAlert, GenerateReportReply,
-    GenerateReportRequest, GetBatteryStatusReply, GetBatteryStatusRequest, GetThermalReply,
-    GetThermalRequest, HandleRow, Incident, L4Protocol, ListBookmarksReply, ListBookmarksRequest,
-    ListBootsReply, ListBootsRequest, ListConnectionsReply, ListConnectionsRequest,
-    ListCrashesReply, ListCrashesRequest, ListEventsReply, ListEventsRequest, ListFiredAlertsReply,
+    CapabilitiesReply, CapabilitiesRequest, CapabilityKind, CertInfo,
+    Connection as ProtoConnection, CrashRecord as ProtoCrashRecord, CreateBookmarkReply,
+    CreateBookmarkRequest, CreatePrivacyAlertRuleReply, CreatePrivacyAlertRuleRequest,
+    DeletePrivacyAlertRuleReply, DeletePrivacyAlertRuleRequest, DiagnoseReply, DiagnoseRequest,
+    EventRow, FindResourceOwnersReply, FindResourceOwnersRequest, FiredAlert, GenerateReportReply,
+    GenerateReportRequest, GetBatteryStatusReply, GetBatteryStatusRequest,
+    GetSecurityMetadataReply, GetSecurityMetadataRequest, GetThermalReply, GetThermalRequest,
+    HandleRow, Incident, L4Protocol, ListBookmarksReply, ListBookmarksRequest, ListBootsReply,
+    ListBootsRequest, ListConnectionsReply, ListConnectionsRequest, ListCrashesReply,
+    ListCrashesRequest, ListEventsReply, ListEventsRequest, ListFiredAlertsReply,
     ListFiredAlertsRequest, ListHandlesReply, ListHandlesRequest, ListIncidentsReply,
     ListIncidentsRequest, ListListeningPortsReply, ListListeningPortsRequest, ListModulesReply,
     ListModulesRequest, ListPrivacyAlertRulesReply, ListPrivacyAlertRulesRequest,
@@ -52,17 +53,18 @@ use atlas_ipc::{
     PrivacyUsage, ProcessDetail as ProtoProcessDetail, ProcessDetailReply, ProcessDetailRequest,
     ProcessHit, ProcessRole, ProcessRow, QueryRangeReply, QueryRangeRequest, RangeBucket,
     ReportFormat, ResourceOwner as ProtoResourceOwner, RingUpdate, RingWriter, RowInput,
-    ScheduledTask as ProtoScheduledTask, SearchHit, SearchReply, SearchRequest, ServiceEntry,
-    ServiceStartType, ServiceState, SnapshotReply, SnapshotRequest, StartupEntry, StartupSource,
-    SupportBundleReply, SupportBundleRequest, SystemChange as ProtoSystemChange, SystemGauges,
-    TcpState, ThermalSensor as ProtoThermalSensor, ThreadRow, TimeRange,
+    ScheduledTask as ProtoScheduledTask, SearchHit, SearchReply, SearchRequest,
+    SecurityMetadata as ProtoSecurityMetadata, ServiceEntry, ServiceStartType, ServiceState,
+    SnapshotReply, SnapshotRequest, StartupEntry, StartupSource, SupportBundleReply,
+    SupportBundleRequest, SystemChange as ProtoSystemChange, SystemGauges, TcpState,
+    ThermalSensor as ProtoThermalSensor, ThreadRow, TimeRange, TokenPrivilege,
     UpdatePrivacyAlertRuleReply, UpdatePrivacyAlertRuleRequest, CAP_BATTERY_STATUS,
     CAP_BOOT_ANALYSIS, CAP_CRASH_ANALYSIS, CAP_DIAGNOSTICS, CAP_DYNAMIC_PROTECTION,
     CAP_FTS5_SEARCH, CAP_HISTORY_QUERIES, CAP_INCIDENT_DETECTION, CAP_NETWORK_INSPECTOR,
     CAP_PLUGINS, CAP_PRIVACY_ALERTS, CAP_PRIVACY_EVENTS, CAP_PROCESS_INSPECTOR,
     CAP_PROCESS_SNAPSHOTS, CAP_PROFILES, CAP_REPORTS, CAP_RESOURCE_OWNERSHIP, CAP_RULES_ENGINE,
-    CAP_SAFE_ACTIONS, CAP_SCHEDULED_TASKS, CAP_SERVICES_INVENTORY, CAP_STARTUP_INVENTORY,
-    CAP_SUPPORT_BUNDLE, CAP_SYSTEM_CHANGES, CAP_THERMAL_SENSORS, RING_ROWS,
+    CAP_SAFE_ACTIONS, CAP_SCHEDULED_TASKS, CAP_SECURITY_METADATA, CAP_SERVICES_INVENTORY,
+    CAP_STARTUP_INVENTORY, CAP_SUPPORT_BUNDLE, CAP_SYSTEM_CHANGES, CAP_THERMAL_SENSORS, RING_ROWS,
 };
 
 use crate::diagnostics::{self, DiagnoseContext};
@@ -460,6 +462,10 @@ impl AtlasQuery for QueryService {
             // live OS reads (no store), always available on Windows here.
             flags.push(CAP_PROCESS_INSPECTOR.to_string());
             flags.push(CAP_RESOURCE_OWNERSHIP.to_string());
+            // R3: expert security metadata — an on-demand live OS read (file
+            // hash, signing cert chain, token detail, mitigations), always
+            // available on Windows here; cross-user fields degrade honestly.
+            flags.push(CAP_SECURITY_METADATA.to_string());
             // R2: the performance rules engine + profiles (AtlasRules). Store-
             // backed persistence + audit; the applier runs on the sampler thread.
             flags.push(CAP_RULES_ENGINE.to_string());
@@ -1089,6 +1095,29 @@ impl AtlasQuery for QueryService {
         }))
     }
 
+    /// R3 expert security metadata (PRD §9.4.1/§9.4.6): on-demand deep security
+    /// detail for one process — file SHA-256, the signing certificate chain,
+    /// token privileges/groups/capabilities, and readable mitigation policies.
+    /// A live OS read that blocks (disk hashing, WinTrust chain walk, token +
+    /// mitigation queries), so it runs on a blocking thread. Cross-user/protected
+    /// fields degrade with `limited`; a gone/inaccessible pid is available=false.
+    async fn get_security_metadata(
+        &self,
+        req: Request<GetSecurityMetadataRequest>,
+    ) -> Result<Response<GetSecurityMetadataReply>, Status> {
+        let r = req.into_inner();
+        let res = tokio::task::spawn_blocking(move || {
+            atlas_collectors::security_metadata(r.pid, r.create_time_100ns)
+        })
+        .await
+        .map_err(|e| Status::internal(format!("security_metadata task: {e}")))?;
+        Ok(Response::new(GetSecurityMetadataReply {
+            available: res.available,
+            unavailable_reason: res.unavailable_reason,
+            metadata: res.metadata.map(security_metadata_to_proto),
+        }))
+    }
+
     // -----------------------------------------------------------------------
     // R2 monitors (PRD §9.12, §9.9.2, §9.8.4, §9.6.6/§9.6.7). All read-only
     // live OS reads that block (extended-table syscalls, DNS-cache queries,
@@ -1192,6 +1221,42 @@ fn process_detail_to_proto(d: atlas_collectors::ProcessDetail) -> ProtoProcessDe
         start_time_ms: d.start_time_ms,
         package_identity: d.package_identity,
         limited: d.limited,
+    }
+}
+
+/// Maps a collector [`atlas_collectors::SecurityMetadata`] to the proto message
+/// (field-for-field, including the cert chain + privilege lists).
+fn security_metadata_to_proto(m: atlas_collectors::SecurityMetadata) -> ProtoSecurityMetadata {
+    ProtoSecurityMetadata {
+        file_sha256: m.file_sha256,
+        signature_status: m.signature_status,
+        cert_chain: m
+            .cert_chain
+            .into_iter()
+            .map(|c| CertInfo {
+                subject: c.subject,
+                issuer: c.issuer,
+                thumbprint_sha1: c.thumbprint_sha1,
+                not_before_ms: c.not_before_ms,
+                not_after_ms: c.not_after_ms,
+            })
+            .collect(),
+        user_sid: m.user_sid,
+        integrity_level: m.integrity_level,
+        elevated: m.elevated,
+        app_container: m.app_container,
+        privileges: m
+            .privileges
+            .into_iter()
+            .map(|p| TokenPrivilege {
+                name: p.name,
+                enabled: p.enabled,
+            })
+            .collect(),
+        groups: m.groups,
+        capabilities: m.capabilities,
+        mitigations: m.mitigations,
+        limited: m.limited,
     }
 }
 

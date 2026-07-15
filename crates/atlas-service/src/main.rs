@@ -289,6 +289,18 @@ enum Cmd {
         #[arg(long, default_value_t = 0)]
         handle_limit: u32,
     },
+    /// Deep security detail for a process by pid (R3, PRD §9.4.1/§9.4.6).
+    ///
+    /// Prints the on-disk image SHA-256, the signature status + signing
+    /// certificate chain (leaf → root), the token privileges/groups/capabilities,
+    /// and the readable process mitigation policies. Runs unprivileged; cross-
+    /// user/protected fields degrade with `limited` rather than failing. Inspect
+    /// your own service pid, or a signed process (e.g. a .NET host) for a chain.
+    Security {
+        /// Target process id.
+        #[arg(long)]
+        pid: u32,
+    },
     /// Find what is using a file or folder (R2, PRD §9.5).
     ///
     /// Restart-Manager resource-ownership search: prints the processes/services
@@ -926,6 +938,7 @@ fn run() -> Result<()> {
             threads,
             handle_limit,
         } => cmd_inspect(pid, handles, modules, threads, handle_limit),
+        Cmd::Security { pid } => cmd_security(pid),
         Cmd::Locks { path } => cmd_locks(&path),
         Cmd::Connections { listening } => cmd_connections(listening),
         Cmd::Ports => cmd_ports(),
@@ -4142,6 +4155,99 @@ fn cmd_inspect(
     _handle_limit: u32,
 ) -> Result<()> {
     anyhow::bail!("the `inspect` command requires Windows (process inspector FFI)");
+}
+
+/// `security`: deep security detail for a process (R3, PRD §9.4.1/§9.4.6).
+/// Windows-only. Prints the file hash, signature + certificate chain, token
+/// privileges/groups/capabilities, and mitigations.
+#[cfg(windows)]
+fn cmd_security(pid: u32) -> Result<()> {
+    let res = atlas_collectors::security_metadata(pid, 0);
+    if !res.available {
+        println!("Process {pid} unavailable: {}", res.unavailable_reason);
+        return Ok(());
+    }
+    let m = res.metadata.expect("available metadata present");
+    println!("== Security metadata for pid {pid} ==");
+    println!("  file SHA-256     : {}", show(&m.file_sha256));
+    println!(
+        "  signature        : {}   (user {} / integrity {} / elevated {})",
+        show(&m.signature_status),
+        show(&m.user_sid),
+        show(&m.integrity_level),
+        m.elevated
+    );
+    println!(
+        "  app container    : {}",
+        if m.app_container { "yes" } else { "no" }
+    );
+
+    println!("\n-- Certificate chain ({}) --", m.cert_chain.len());
+    if m.cert_chain.is_empty() {
+        println!("  (no signing certificate chain — unsigned or unverifiable)");
+    } else {
+        for (i, c) in m.cert_chain.iter().enumerate() {
+            let tag = if i == 0 {
+                "leaf"
+            } else if i + 1 == m.cert_chain.len() {
+                "root"
+            } else {
+                "  "
+            };
+            println!(
+                "  [{i}] {tag:<4} {} <= issued by {}",
+                show(&c.subject),
+                show(&c.issuer)
+            );
+            println!(
+                "            sha1 {}   valid {}..{}",
+                show(&c.thumbprint_sha1),
+                c.not_before_ms,
+                c.not_after_ms
+            );
+        }
+    }
+
+    println!("\n-- Token privileges ({}) --", m.privileges.len());
+    for p in m.privileges.iter().take(200) {
+        println!(
+            "  {:<36} {}",
+            p.name,
+            if p.enabled { "enabled" } else { "disabled" }
+        );
+    }
+
+    println!("\n-- Token groups ({}) --", m.groups.len());
+    for g in m.groups.iter().take(200) {
+        println!("  {g}");
+    }
+
+    println!("\n-- Capabilities ({}) --", m.capabilities.len());
+    for c in m.capabilities.iter().take(200) {
+        println!("  {c}");
+    }
+
+    println!("\n-- Mitigations ({}) --", m.mitigations.len());
+    if m.mitigations.is_empty() {
+        println!("  (none readable)");
+    } else {
+        println!("  {}", m.mitigations.join(", "));
+    }
+
+    println!(
+        "\n  coverage         : {}",
+        if m.limited {
+            "LIMITED (some fields need elevation / cross-user)"
+        } else {
+            "full"
+        }
+    );
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn cmd_security(_pid: u32) -> Result<()> {
+    anyhow::bail!("the `security` command requires Windows (security-metadata FFI)");
 }
 
 /// `locks`: find what is using a file/folder via the Restart Manager (R2).
