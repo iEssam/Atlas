@@ -82,6 +82,77 @@ message GpuEngineTelemetry {
   uint32 utilization_permille = 2;
 }
 
+enum GpuTelemetrySource {
+  GPU_SOURCE_UNSPECIFIED = 0;
+  GPU_SOURCE_WINDOWS_WDDM = 1;
+  GPU_SOURCE_NVIDIA_NVML = 2;
+}
+
+enum GpuSensorKind {
+  GPU_SENSOR_UNSPECIFIED = 0;
+  GPU_SENSOR_CORE_TEMPERATURE = 1;
+  GPU_SENSOR_MEMORY_TEMPERATURE = 2;
+  GPU_SENSOR_HOTSPOT_TEMPERATURE = 3;
+  GPU_SENSOR_BOARD_TEMPERATURE = 4;
+  GPU_SENSOR_POWER_WATTS = 5;
+  GPU_SENSOR_POWER_PERCENT = 6;
+  GPU_SENSOR_CORE_CLOCK = 7;
+  GPU_SENSOR_MEMORY_CLOCK = 8;
+  GPU_SENSOR_FAN_RPM = 9;
+  GPU_SENSOR_FAN_PERCENT = 10;
+  GPU_SENSOR_THROTTLE_REASONS = 11;
+}
+
+enum GpuAvailabilityReason {
+  GPU_AVAILABILITY_NONE = 0;
+  GPU_AVAILABILITY_PROVIDER_MISSING = 1;
+  GPU_AVAILABILITY_HELPER_START_FAILURE = 2;
+  GPU_AVAILABILITY_HELPER_TIMEOUT = 3;
+  GPU_AVAILABILITY_HELPER_BACKOFF = 4;
+  GPU_AVAILABILITY_STALE_SAMPLE = 5;
+  GPU_AVAILABILITY_UNSUPPORTED_METRIC = 6;
+  GPU_AVAILABILITY_IDENTITY_UNMATCHED = 7;
+  GPU_AVAILABILITY_DEVICE_LOST = 8;
+  GPU_AVAILABILITY_DRIVER_ERROR = 9;
+}
+
+enum GpuTemperatureKind {
+  GPU_TEMPERATURE_CORE = 0;
+  GPU_TEMPERATURE_MEMORY = 1;
+  GPU_TEMPERATURE_HOTSPOT = 2;
+  GPU_TEMPERATURE_BOARD = 3;
+  GPU_TEMPERATURE_OTHER = 4;
+}
+
+enum GpuThrottleReason {
+  GPU_THROTTLE_UNSPECIFIED = 0;
+  GPU_THROTTLE_SOFTWARE_THERMAL = 1;
+  GPU_THROTTLE_HARDWARE_THERMAL = 2;
+  GPU_THROTTLE_SOFTWARE_POWER_CAP = 3;
+  GPU_THROTTLE_HARDWARE_SLOWDOWN = 4;
+  GPU_THROTTLE_HARDWARE_POWER_BRAKE = 5;
+  GPU_THROTTLE_OTHER = 6;
+  GPU_THROTTLE_IDLE = 7;
+  GPU_THROTTLE_APPLICATION_CLOCKS = 8;
+  GPU_THROTTLE_SYNC_BOOST = 9;
+  GPU_THROTTLE_DISPLAY_CLOCK_SETTING = 10;
+}
+
+message GpuTemperatureTelemetry {
+  GpuTemperatureKind kind = 1;
+  double celsius = 2;
+  GpuTelemetrySource source = 3;
+  string label = 4;
+}
+
+message GpuSensorAvailability {
+  GpuSensorKind kind = 1;
+  bool available = 2;
+  GpuTelemetrySource source = 3;
+  GpuAvailabilityReason reason = 4;
+  string detail = 5;
+}
+
 message GpuAdapterTelemetry {
   string adapter_key = 1;
   string name = 2;
@@ -103,6 +174,20 @@ message GpuAdapterTelemetry {
   string sensor_unavailable_reason = 18;
   uint32 vendor_id = 19;
   uint32 device_id = 20;
+  uint32 physical_adapter_index = 21;
+  uint32 pci_domain = 22;
+  uint32 pci_bus = 23;
+  uint32 pci_device = 24;
+  uint32 pci_function = 25;
+  string driver_date = 26;
+  optional double power_percent = 27;
+  optional double fan_percent = 28;
+  optional double temperature_warning_c = 29;
+  optional double temperature_max_c = 30;
+  repeated GpuTemperatureTelemetry temperatures = 31;
+  repeated GpuThrottleReason throttle_reasons = 32;
+  repeated GpuSensorAvailability sensor_availability = 33;
+  bool pci_identity_available = 34;
 }
 
 message SnapshotRequest {
@@ -158,6 +243,10 @@ enum MetricKind {
   GPU_ADAPTER_MEMORY_CLOCK_MHZ = 46;
   GPU_ADAPTER_FAN_RPM = 47;
   GPU_ADAPTER_THROTTLING = 48;
+  GPU_ADAPTER_POWER_PERCENT = 49;
+  GPU_ADAPTER_FAN_PERCENT = 50;
+  GPU_ADAPTER_MEMORY_TEMPERATURE_C = 51;
+  GPU_ADAPTER_HOTSPOT_TEMPERATURE_C = 52;
 }
 
 message QueryRangeRequest {

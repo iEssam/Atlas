@@ -63,6 +63,10 @@ pub enum Metric {
     GpuAdapterMemoryClockMhz = 206,
     GpuAdapterFanRpm = 207,
     GpuAdapterThrottling = 208,
+    GpuAdapterPowerPercent = 209,
+    GpuAdapterFanPercent = 210,
+    GpuAdapterMemoryTemperatureC = 211,
+    GpuAdapterHotspotTemperatureC = 212,
 }
 
 impl Metric {
@@ -103,6 +107,10 @@ impl Metric {
             206 => Metric::GpuAdapterMemoryClockMhz,
             207 => Metric::GpuAdapterFanRpm,
             208 => Metric::GpuAdapterThrottling,
+            209 => Metric::GpuAdapterPowerPercent,
+            210 => Metric::GpuAdapterFanPercent,
+            211 => Metric::GpuAdapterMemoryTemperatureC,
+            212 => Metric::GpuAdapterHotspotTemperatureC,
             _ => return None,
         })
     }
@@ -268,10 +276,18 @@ mod tests {
             Metric::SysProcessCount,
             Metric::SysThreadCount,
             Metric::SysHandleCount,
+            Metric::GpuAdapterPowerPercent,
+            Metric::GpuAdapterFanPercent,
+            Metric::GpuAdapterMemoryTemperatureC,
+            Metric::GpuAdapterHotspotTemperatureC,
         ] {
             assert_eq!(Metric::from_u16(m.as_u16()), Some(m));
         }
         assert_eq!(Metric::from_u16(9999), None);
+        assert_eq!(Metric::GpuAdapterPowerPercent.as_u16(), 209);
+        assert_eq!(Metric::GpuAdapterFanPercent.as_u16(), 210);
+        assert_eq!(Metric::GpuAdapterMemoryTemperatureC.as_u16(), 211);
+        assert_eq!(Metric::GpuAdapterHotspotTemperatureC.as_u16(), 212);
     }
 
     #[test]

@@ -20,6 +20,7 @@ pub mod ffi;
 pub mod gauges;
 pub mod grouping;
 pub mod gpu;
+pub mod gpu_vendor;
 #[cfg(windows)]
 pub mod handles;
 #[cfg(windows)]
@@ -72,8 +73,12 @@ pub use events::{EventError, ProcessEvent, ProcessEventKind, ProcessEventWatcher
 pub use gauges::{cpu_times, memory_status, processor_count, CpuTimes, MemoryStatus};
 pub use grouping::{group_processes, image_family, GroupInput, GroupOutput, ProcessRole};
 pub use gpu::{
-    AdapterLuid, EngineClass as GpuEngineClass, GpuAdapterSample, GpuCollector,
-    GpuEngineSample, GpuProcessSample, GpuSnapshot,
+    AdapterId, AdapterLuid, AvailabilityReason as GpuAvailabilityReason,
+    EngineClass as GpuEngineClass, GpuAdapterSample, GpuCollector, GpuEngineSample,
+    GpuProcessSample, GpuSnapshot, SensorAvailability as GpuSensorAvailability,
+    SensorKind as GpuSensorKind, TelemetrySource as GpuTelemetrySource,
+    TemperatureKind as GpuTemperatureKind, TemperatureSample as GpuTemperatureSample,
+    ThrottleReason as GpuThrottleReason,
 };
 #[cfg(windows)]
 pub use handles::{list_handles, HandleRow, HandlesResult};

@@ -512,6 +512,14 @@ pub struct GpuAdapterRow {
     pub name: String,
     pub driver_version: String,
     pub active_display: bool,
+    pub physical_adapter_index: u32,
+    pub vendor_id: u32,
+    pub device_id: u32,
+    pub pci_domain: u32,
+    pub pci_bus: u32,
+    pub pci_device: u32,
+    pub pci_function: u32,
+    pub driver_date: String,
     pub first_seen_ms: i64,
     pub last_seen_ms: i64,
 }
@@ -889,18 +897,38 @@ impl Store {
         name: &str,
         driver_version: &str,
         active_display: bool,
+        physical_adapter_index: u32,
+        vendor_id: u32,
+        device_id: u32,
+        pci_domain: u32,
+        pci_bus: u32,
+        pci_device: u32,
+        pci_function: u32,
+        driver_date: &str,
         seen_ms: i64,
     ) -> Result<i64> {
         self.conn.execute(
             "INSERT INTO gpu_adapter
-                 (adapter_key, name, driver_version, active_display, first_seen_ms, last_seen_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?5)
+                 (adapter_key, name, driver_version, active_display, first_seen_ms, last_seen_ms,
+                  physical_adapter_index, vendor_id, device_id, pci_domain, pci_bus, pci_device,
+                  pci_function, driver_date)
+             VALUES (?1, ?2, ?3, ?4, ?13, ?13, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
              ON CONFLICT(adapter_key) DO UPDATE SET
                  name = excluded.name,
                  driver_version = excluded.driver_version,
                  active_display = excluded.active_display,
+                 physical_adapter_index = excluded.physical_adapter_index,
+                 vendor_id = excluded.vendor_id,
+                 device_id = excluded.device_id,
+                 pci_domain = excluded.pci_domain,
+                 pci_bus = excluded.pci_bus,
+                 pci_device = excluded.pci_device,
+                 pci_function = excluded.pci_function,
+                 driver_date = excluded.driver_date,
                  last_seen_ms = excluded.last_seen_ms",
-            params![adapter_key, name, driver_version, active_display as i64, seen_ms],
+            params![adapter_key, name, driver_version, active_display as i64,
+                physical_adapter_index, vendor_id, device_id, pci_domain, pci_bus, pci_device,
+                pci_function, driver_date, seen_ms],
         )?;
         Ok(self.conn.query_row(
             "SELECT id FROM gpu_adapter WHERE adapter_key = ?1",
@@ -911,13 +939,18 @@ impl Store {
 
     pub fn list_gpu_adapters(&self) -> Result<Vec<GpuAdapterRow>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, adapter_key, name, driver_version, active_display, first_seen_ms, last_seen_ms
+            "SELECT id, adapter_key, name, driver_version, active_display,
+                    physical_adapter_index, vendor_id, device_id, pci_domain, pci_bus, pci_device,
+                    pci_function, driver_date, first_seen_ms, last_seen_ms
              FROM gpu_adapter ORDER BY active_display DESC, id ASC",
         )?;
         let rows = stmt.query_map([], |row| Ok(GpuAdapterRow {
             id: row.get(0)?, adapter_key: row.get(1)?, name: row.get(2)?,
             driver_version: row.get(3)?, active_display: row.get::<_, i64>(4)? != 0,
-            first_seen_ms: row.get(5)?, last_seen_ms: row.get(6)?,
+            physical_adapter_index: row.get(5)?, vendor_id: row.get(6)?, device_id: row.get(7)?,
+            pci_domain: row.get(8)?, pci_bus: row.get(9)?, pci_device: row.get(10)?,
+            pci_function: row.get(11)?, driver_date: row.get(12)?,
+            first_seen_ms: row.get(13)?, last_seen_ms: row.get(14)?,
         }))?.collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
@@ -1006,6 +1039,23 @@ impl Store {
                 )?;
             }
             self.conn.execute_batch("PRAGMA user_version = 14;")?;
+        }
+        if version < 15 {
+            for (column, sql) in [
+                ("physical_adapter_index", "ALTER TABLE gpu_adapter ADD COLUMN physical_adapter_index INTEGER NOT NULL DEFAULT 0;"),
+                ("vendor_id", "ALTER TABLE gpu_adapter ADD COLUMN vendor_id INTEGER NOT NULL DEFAULT 0;"),
+                ("device_id", "ALTER TABLE gpu_adapter ADD COLUMN device_id INTEGER NOT NULL DEFAULT 0;"),
+                ("pci_domain", "ALTER TABLE gpu_adapter ADD COLUMN pci_domain INTEGER NOT NULL DEFAULT 0;"),
+                ("pci_bus", "ALTER TABLE gpu_adapter ADD COLUMN pci_bus INTEGER NOT NULL DEFAULT 0;"),
+                ("pci_device", "ALTER TABLE gpu_adapter ADD COLUMN pci_device INTEGER NOT NULL DEFAULT 0;"),
+                ("pci_function", "ALTER TABLE gpu_adapter ADD COLUMN pci_function INTEGER NOT NULL DEFAULT 0;"),
+                ("driver_date", "ALTER TABLE gpu_adapter ADD COLUMN driver_date TEXT NOT NULL DEFAULT '';"),
+            ] {
+                if !column_exists(&self.conn, "gpu_adapter", column)? {
+                    self.conn.execute_batch(sql)?;
+                }
+            }
+            self.conn.execute_batch("PRAGMA user_version = 15;")?;
         }
         // FTS5 objects are built (idempotently, IF NOT EXISTS) on every open
         // once the module is confirmed present, independent of user_version: a
@@ -3395,7 +3445,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 14, "migration walks v1 up to the current schema");
+        assert_eq!(version, 15, "migration walks v1 up to the current schema");
 
         store
             .write_self_sample(&SelfSampleRow {
@@ -3471,7 +3521,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 14, "migration walks a v2 db to the current schema");
+        assert_eq!(version, 15, "migration walks a v2 db to the current schema");
         assert!(column_exists(&store.conn, "process_instance", "exit_status").unwrap());
 
         // Pre-existing row survived and has a NULL exit_status.
@@ -3581,13 +3631,51 @@ mod tests {
     }
 
     #[test]
-    fn fresh_database_is_v14() {
+    fn fresh_database_is_v15() {
         let store = Store::open_in_memory().unwrap();
         let version: i64 = store
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 14);
+        assert_eq!(version, 15);
+    }
+
+    #[test]
+    fn v15_migration_adds_gpu_identity_metadata_to_v14_database() {
+        let store = Store::open_in_memory().unwrap();
+        for column in [
+            "driver_date", "pci_function", "pci_device", "pci_bus", "pci_domain",
+            "device_id", "vendor_id", "physical_adapter_index",
+        ] {
+            store.conn.execute_batch(&format!("ALTER TABLE gpu_adapter DROP COLUMN {column};")).unwrap();
+        }
+        store.conn.execute_batch("PRAGMA user_version = 14;").unwrap();
+        store.migrate().unwrap();
+        let version: i64 = store.conn.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
+        assert_eq!(version, 15);
+        for column in [
+            "physical_adapter_index", "vendor_id", "device_id", "pci_domain", "pci_bus",
+            "pci_device", "pci_function", "driver_date",
+        ] {
+            assert!(column_exists(&store.conn, "gpu_adapter", column).unwrap(), "missing {column}");
+        }
+    }
+
+    #[test]
+    fn gpu_adapter_v15_metadata_round_trips() {
+        let store = Store::open_in_memory().unwrap();
+        let id = store.upsert_gpu_adapter(
+            "00000001:00000002:p1", "GPU", "32.0", true, 1, 0x10de, 0x2489,
+            0, 1, 0, 0, "2026-05-19", 1_234,
+        ).unwrap();
+        let rows = store.list_gpu_adapters().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, id);
+        assert_eq!(rows[0].physical_adapter_index, 1);
+        assert_eq!(rows[0].vendor_id, 0x10de);
+        assert_eq!(rows[0].device_id, 0x2489);
+        assert_eq!(rows[0].pci_bus, 1);
+        assert_eq!(rows[0].driver_date, "2026-05-19");
     }
 
     #[test]

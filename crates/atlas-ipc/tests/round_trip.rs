@@ -6,14 +6,46 @@
 #![cfg(windows)]
 
 use tonic::{Request, Response, Status};
+use prost::Message;
 
 use atlas_ipc::v0::atlas_plugins_server::{AtlasPlugins, AtlasPluginsServer};
 use atlas_ipc::v0::atlas_query_server::{AtlasQuery, AtlasQueryServer};
 use atlas_ipc::v0::atlas_rules_server::{AtlasRules, AtlasRulesServer};
 use atlas_ipc::{
-    CapabilitiesReply, CapabilitiesRequest, ProcessRow, SnapshotReply, SnapshotRequest,
-    SystemGauges, CAP_PROCESS_SNAPSHOTS,
+    CapabilitiesReply, CapabilitiesRequest, GpuAdapterTelemetry, GpuAvailabilityReason,
+    GpuSensorAvailability, GpuSensorKind, GpuTelemetrySource, ProcessRow, SnapshotReply,
+    SnapshotRequest, SystemGauges, CAP_PROCESS_SNAPSHOTS,
 };
+
+#[derive(Clone, PartialEq, Message)]
+struct LegacyGpuAdapter {
+    #[prost(string, tag = "1")]
+    adapter_key: String,
+    #[prost(string, tag = "2")]
+    name: String,
+    #[prost(double, optional, tag = "11")]
+    temperature_c: Option<f64>,
+    #[prost(double, optional, tag = "12")]
+    power_w: Option<f64>,
+}
+
+#[test]
+fn gpu_contract_is_additive_for_legacy_clients_and_services() {
+    let current = GpuAdapterTelemetry {
+        adapter_key: "adapter".into(), name: "GPU".into(), temperature_c: Some(59.0),
+        power_w: Some(125.0), power_percent: Some(73.0), fan_percent: Some(44.0),
+        driver_date: "2026-05-19".into(), ..Default::default()
+    };
+    let legacy = LegacyGpuAdapter::decode(current.encode_to_vec().as_slice()).unwrap();
+    assert_eq!(legacy.adapter_key, "adapter");
+    assert_eq!(legacy.temperature_c, Some(59.0));
+
+    let old_wire = LegacyGpuAdapter { adapter_key: "old".into(), name: "Old GPU".into(), temperature_c: Some(50.0), power_w: None };
+    let decoded = GpuAdapterTelemetry::decode(old_wire.encode_to_vec().as_slice()).unwrap();
+    assert_eq!(decoded.name, "Old GPU");
+    assert_eq!(decoded.power_percent, None);
+    assert!(decoded.sensor_availability.is_empty());
+}
 
 /// Minimal fixed-response service so the test exercises the transport, not the
 /// sampler. Returns three synthetic process rows and honors `top_n`.
@@ -78,6 +110,22 @@ impl AtlasQuery for FakeQuery {
                 ..Default::default()
             }),
             processes,
+            gpu_adapters: vec![GpuAdapterTelemetry {
+                adapter_key: "00000000:00000001".into(),
+                name: "Test GPU".into(),
+                temperature_c: Some(59.0),
+                power_w: Some(120.5),
+                power_percent: Some(61.0),
+                fan_percent: Some(44.0),
+                sensor_availability: vec![GpuSensorAvailability {
+                    kind: GpuSensorKind::GpuSensorCoreTemperature as i32,
+                    available: true,
+                    source: GpuTelemetrySource::GpuSourceNvidiaNvml as i32,
+                    reason: GpuAvailabilityReason::GpuAvailabilityNone as i32,
+                    detail: String::new(),
+                }],
+                ..Default::default()
+            }],
             ..Default::default()
         }))
     }
@@ -1053,6 +1101,10 @@ async fn capabilities_and_snapshot_round_trip() {
     assert_eq!(snap.processes.len(), 2);
     assert_eq!(snap.processes[0].pid, 100);
     assert!(snap.system.is_some());
+    assert_eq!(snap.gpu_adapters[0].temperature_c, Some(59.0));
+    assert_eq!(snap.gpu_adapters[0].power_percent, Some(61.0));
+    assert_eq!(snap.gpu_adapters[0].sensor_availability[0].source,
+        GpuTelemetrySource::GpuSourceNvidiaNvml as i32);
 
     // top_n=0 returns all.
     let all = client

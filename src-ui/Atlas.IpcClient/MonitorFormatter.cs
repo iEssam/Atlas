@@ -424,6 +424,29 @@ public static class MonitorFormatter
     public static string ThermalSourceText(string? source) =>
         string.IsNullOrWhiteSpace(source) ? "—" : source!.Trim();
 
+    /// <summary>Stable, user-facing label for a GPU telemetry provider.</summary>
+    public static string GpuSourceText(GpuTelemetrySource source) => source switch
+    {
+        GpuTelemetrySource.GpuSourceNvidiaNvml => "NVIDIA NVML",
+        GpuTelemetrySource.GpuSourceWindowsWddm => "Windows WDDM",
+        _ => "source unavailable",
+    };
+
+    /// <summary>The stable GPU availability code carried over IPC.</summary>
+    public static string GpuAvailabilityCode(GpuAvailabilityReason reason) => reason switch
+    {
+        GpuAvailabilityReason.GpuAvailabilityProviderMissing => "provider_missing",
+        GpuAvailabilityReason.GpuAvailabilityHelperStartFailure => "helper_start_failure",
+        GpuAvailabilityReason.GpuAvailabilityHelperTimeout => "helper_timeout",
+        GpuAvailabilityReason.GpuAvailabilityHelperBackoff => "helper_backoff",
+        GpuAvailabilityReason.GpuAvailabilityStaleSample => "stale_sample",
+        GpuAvailabilityReason.GpuAvailabilityUnsupportedMetric => "unsupported_metric",
+        GpuAvailabilityReason.GpuAvailabilityIdentityUnmatched => "identity_unmatched",
+        GpuAvailabilityReason.GpuAvailabilityDeviceLost => "device_lost",
+        GpuAvailabilityReason.GpuAvailabilityDriverError => "driver_error",
+        _ => "available",
+    };
+
     // ----------------------------------------------------------------------
     // Shared "available = false" honesty helper (task brief §4).
     // ----------------------------------------------------------------------

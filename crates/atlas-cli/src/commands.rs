@@ -28,7 +28,8 @@ use atlas_ipc::{
     ListRulesRequest, ListScheduledTasksReply, ListScheduledTasksRequest, ListServicesReply,
     ListServicesRequest, ListStartupReply, ListStartupRequest, MetricKind, QueryRangeReply,
     QueryRangeRequest, SearchReply, SearchRequest, SnapshotReply, SnapshotRequest, StartupSource,
-    TimeRange,
+    TimeRange, GpuAvailabilityReason, GpuSensorKind, GpuTelemetrySource, GpuTemperatureKind,
+    GpuThrottleReason,
 };
 
 use crate::client::Connection;
@@ -98,6 +99,11 @@ pub fn snapshot_json(reply: &SnapshotReply) -> Value {
             "process_count": s.process_count,
             "thread_count": s.thread_count,
             "handle_count": s.handle_count,
+            "gpu_percent": s.gpu_permille as f64 / 10.0,
+            "gpu_dedicated_used_bytes": s.gpu_dedicated_used,
+            "gpu_dedicated_budget_bytes": s.gpu_dedicated_budget,
+            "gpu_shared_used_bytes": s.gpu_shared_used,
+            "gpu_shared_budget_bytes": s.gpu_shared_budget,
         })
     });
     let processes: Vec<Value> = reply
@@ -117,30 +123,78 @@ pub fn snapshot_json(reply: &SnapshotReply) -> Value {
                 "write_bps": p.write_bps,
                 "thread_count": p.thread_count,
                 "handle_count": p.handle_count,
+                "gpu_percent": p.gpu_permille as f64 / 10.0,
+                "gpu_dedicated_bytes": p.gpu_dedicated_bytes,
+                "gpu_shared_bytes": p.gpu_shared_bytes,
             })
         })
         .collect();
-    json!({ "system": system, "processes": processes, "returned": processes.len() })
+    let gpu_adapters: Vec<Value> = reply.gpu_adapters.iter().map(|a| json!({
+        "adapter_key": a.adapter_key,
+        "name": a.name,
+        "driver_version": a.driver_version,
+        "driver_date": a.driver_date,
+        "physical_adapter_index": a.physical_adapter_index,
+        "pci": a.pci_identity_available.then(|| format!("{:04X}:{:02X}:{:02X}.{}", a.pci_domain, a.pci_bus, a.pci_device, a.pci_function)),
+        "utilization_percent": a.utilization_permille as f64 / 10.0,
+        "temperature_c": a.temperature_c,
+        "power_w": a.power_w,
+        "power_percent": a.power_percent,
+        "core_clock_mhz": a.core_clock_mhz,
+        "memory_clock_mhz": a.memory_clock_mhz,
+        "fan_rpm": a.fan_rpm,
+        "fan_percent": a.fan_percent,
+        "temperatures": a.temperatures.iter().map(|t| json!({
+            "kind": GpuTemperatureKind::try_from(t.kind).map(|v| v.as_str_name()).unwrap_or("UNKNOWN"),
+            "celsius": t.celsius,
+            "source": GpuTelemetrySource::try_from(t.source).map(|v| v.as_str_name()).unwrap_or("UNKNOWN"),
+            "label": t.label,
+        })).collect::<Vec<_>>(),
+        "throttle_reasons": a.throttle_reasons.iter().map(|v| GpuThrottleReason::try_from(*v).map(|v| v.as_str_name()).unwrap_or("UNKNOWN")).collect::<Vec<_>>(),
+        "sensor_availability": a.sensor_availability.iter().map(|v| json!({
+            "metric": GpuSensorKind::try_from(v.kind).map(|v| v.as_str_name()).unwrap_or("UNKNOWN"),
+            "available": v.available,
+            "source": GpuTelemetrySource::try_from(v.source).map(|v| v.as_str_name()).unwrap_or("UNKNOWN"),
+            "reason": GpuAvailabilityReason::try_from(v.reason).map(|v| v.as_str_name()).unwrap_or("UNKNOWN"),
+            "detail": v.detail,
+        })).collect::<Vec<_>>(),
+    })).collect();
+    json!({ "system": system, "gpu_adapters": gpu_adapters, "gpu_unavailable_reason": reply.gpu_unavailable_reason, "processes": processes, "returned": processes.len() })
 }
 
 pub fn snapshot_table(reply: &SnapshotReply) -> String {
     let mut out = String::new();
     if let Some(s) = reply.system.as_ref() {
         out.push_str(&format!(
-            "system  cpu {}  mem {}/{}  commit {}/{}  procs {}  threads {}  handles {}\n\n",
+            "system  cpu {}  gpu {}  mem {}/{}  gpu memory {}/{}  procs {}  threads {}  handles {}\n\n",
             permille_pct(s.cpu_permille),
+            permille_pct(s.gpu_permille),
             bytes(s.mem_used),
             bytes(s.mem_total),
-            bytes(s.commit_used),
-            bytes(s.commit_limit),
+            bytes(s.gpu_dedicated_used + s.gpu_shared_used),
+            bytes(s.gpu_dedicated_budget + s.gpu_shared_budget),
             s.process_count,
             s.thread_count,
             s.handle_count,
         ));
     }
+    for adapter in &reply.gpu_adapters {
+        out.push_str(&format!(
+            "gpu  {}  load {}  temp {}  power {} / {}  fan {} / {}  source {}\n",
+            adapter.name, permille_pct(adapter.utilization_permille),
+            adapter.temperature_c.map(|v| format!("{v:.1} C")).unwrap_or_else(|| "unavailable".into()),
+            adapter.power_w.map(|v| format!("{v:.1} W")).unwrap_or_else(|| "unavailable".into()),
+            adapter.power_percent.map(|v| format!("{v:.1}%")).unwrap_or_else(|| "unavailable".into()),
+            adapter.fan_rpm.map(|v| format!("{v} RPM")).unwrap_or_else(|| "unavailable".into()),
+            adapter.fan_percent.map(|v| format!("{v:.1}%")).unwrap_or_else(|| "unavailable".into()),
+            if adapter.sensor_source.is_empty() { "unavailable" } else { &adapter.sensor_source },
+        ));
+    }
+    if !reply.gpu_adapters.is_empty() { out.push('\n'); }
     let mut t = Table::new(&[
         "PID",
         "CPU",
+        "GPU",
         "WORKING SET",
         "PRIVATE",
         "THR",
@@ -151,6 +205,7 @@ pub fn snapshot_table(reply: &SnapshotReply) -> String {
         t.push(vec![
             p.pid.to_string(),
             permille_pct(p.cpu_permille),
+            permille_pct(p.gpu_permille),
             bytes(p.working_set),
             bytes(p.private_bytes),
             p.thread_count.to_string(),

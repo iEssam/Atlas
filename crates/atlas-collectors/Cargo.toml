@@ -4,9 +4,14 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
+[[bin]]
+name = "atlas-gpu-vendor-host"
+path = "src/gpu_vendor_host_main.rs"
+
 [dependencies]
 anyhow = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 ferrisetw = { workspace = true }

@@ -1,10 +1,10 @@
 #requires -Version 5.1
 <#
     Starts the complete System Atlas development stack in one console:
-      1. builds atlas-service (unless -SkipBuild is supplied)
+      1. builds atlas-service, its isolated GPU vendor helper, and the UI (unless -SkipBuild is supplied)
       2. starts TSDB recording (unless -NoRecord is supplied)
       3. starts the named-pipe/shared-memory backend
-      4. waits for the pipe, then runs the WinUI app
+      4. waits for the pipe, then runs the WinUI app through its native apphost
 
     Usage:
       .\scripts\dev.ps1
@@ -30,7 +30,16 @@ $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 $profile = if ($Configuration -eq 'Release') { 'release' } else { 'debug' }
 $serviceExe = Join-Path $repo "target\$profile\atlas-service.exe"
+$gpuVendorHostExe = Join-Path $repo "target\$profile\atlas-gpu-vendor-host.exe"
 $uiProject = Join-Path $repo 'src-ui\Atlas.App\Atlas.App.csproj'
+$uiRuntime = if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq [System.Runtime.InteropServices.Architecture]::Arm64) {
+    'win-arm64'
+}
+else {
+    'win-x64'
+}
+$uiTargetFramework = 'net10.0-windows10.0.19041.0'
+$uiExe = Join-Path $repo "src-ui\Atlas.App\bin\$Configuration\$uiTargetFramework\$uiRuntime\Atlas.App.exe"
 $pipeName = "SystemAtlas.dev.$env:USERNAME"
 $pipePath = "\\.\pipe\$pipeName"
 $started = [System.Collections.Generic.List[System.Diagnostics.Process]]::new()
@@ -43,6 +52,58 @@ function Test-AtlasPipe {
     catch {
         return $false
     }
+}
+
+function Test-SmartAppControlEnforced {
+    try {
+        $policy = Get-ItemProperty `
+            -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy' `
+            -Name 'VerifiedAndReputablePolicyState' `
+            -ErrorAction Stop
+        return $policy.VerifiedAndReputablePolicyState -eq 1
+    }
+    catch {
+        return $false
+    }
+}
+
+function Assert-NativeDevBinariesCanRun {
+    if (-not (Test-SmartAppControlEnforced)) {
+        return
+    }
+
+    $requiresUnsignedBuild = -not $SkipBuild
+    $unsignedExistingBinary = $false
+    if ($SkipBuild) {
+        foreach ($path in @($serviceExe, $gpuVendorHostExe)) {
+            if ((Test-Path -LiteralPath $path) -and
+                (Get-AuthenticodeSignature -LiteralPath $path).Status -ne 'Valid') {
+                $unsignedExistingBinary = $true
+                break
+            }
+        }
+    }
+
+    if (-not $requiresUnsignedBuild -and -not $unsignedExistingBinary) {
+        return
+    }
+
+    throw @'
+Smart App Control is in enforcement mode. Cargo Debug/Release output is unsigned,
+so Windows will block atlas-service.exe and atlas-gpu-vendor-host.exe regardless
+of which PowerShell launch command is used.
+
+Choose one supported development setup:
+  1. Turn Smart App Control off on this development PC. This cannot be reversed
+     without resetting or reinstalling Windows.
+  2. Use a Windows development VM with Smart App Control off. Physical GPU and
+     NVML validation may not be available through the VM's virtual GPU.
+  3. Sign the native binaries with an RSA code-signing certificate from a CA in
+     Microsoft's Trusted Root Program, then run this script with -SkipBuild.
+
+A locally generated self-signed certificate is not accepted by Smart App Control.
+Open: Windows Security > App & browser control > Smart App Control settings.
+'@
 }
 
 function Start-AtlasProcess([string[]]$Arguments, [string]$Label) {
@@ -59,6 +120,8 @@ function Start-AtlasProcess([string[]]$Arguments, [string]$Label) {
 
 Push-Location $repo
 try {
+    Assert-NativeDevBinariesCanRun
+
     if (-not $SkipBuild) {
         Write-Host "Building atlas-service ($Configuration)..." -ForegroundColor Cyan
         $cargoArgs = @('build', '-p', 'atlas-service')
@@ -67,13 +130,31 @@ try {
         if ($LASTEXITCODE -ne 0) {
             throw "cargo build failed with exit code $LASTEXITCODE"
         }
+        $helperArgs = @('build', '-p', 'atlas-collectors', '--bin', 'atlas-gpu-vendor-host')
+        if ($Configuration -eq 'Release') { $helperArgs += '--release' }
+        & cargo @helperArgs
+        if ($LASTEXITCODE -ne 0) {
+            throw "GPU vendor helper build failed with exit code $LASTEXITCODE"
+        }
+
+        Write-Host "Building Atlas UI ($Configuration, $uiRuntime)..." -ForegroundColor Cyan
+        & dotnet build $uiProject --configuration $Configuration --runtime $uiRuntime
+        if ($LASTEXITCODE -ne 0) {
+            throw "Atlas UI build failed with exit code $LASTEXITCODE"
+        }
     }
 
     if (-not (Test-Path -LiteralPath $serviceExe)) {
         throw "Backend executable not found: $serviceExe. Run without -SkipBuild first."
     }
+    if (-not (Test-Path -LiteralPath $gpuVendorHostExe)) {
+        throw "GPU vendor helper not found: $gpuVendorHostExe. Run without -SkipBuild first."
+    }
     if (-not (Test-Path -LiteralPath $uiProject)) {
         throw "UI project not found: $uiProject"
+    }
+    if (-not (Test-Path -LiteralPath $uiExe)) {
+        throw "UI executable not found: $uiExe. Run without -SkipBuild first."
     }
 
     if (Test-AtlasPipe) {
@@ -107,8 +188,14 @@ try {
 
     Write-Host "Starting Atlas UI ($Configuration)..." -ForegroundColor Green
     Write-Host 'Press Ctrl+C here to stop the complete stack cleanly.' -ForegroundColor DarkGray
-    & dotnet run --project $uiProject --configuration $Configuration
+    # WinUI's generated native apphost performs Windows App SDK bootstrap and
+    # activation that `dotnet exec Atlas.App.dll` does not provide.
+    & $uiExe
     $uiExitCode = $LASTEXITCODE
+
+    if ($uiExitCode -ne 0) {
+        throw "Atlas UI exited with code $uiExitCode"
+    }
 
     if ($started.Count -gt 0 -and ($started | Where-Object { -not $_.HasExited })) {
         Write-Host 'The UI exited. Press Ctrl+C to flush recording and stop the backend cleanly.' -ForegroundColor Yellow
@@ -116,6 +203,10 @@ try {
             Start-Sleep -Milliseconds 500
         }
     }
+}
+catch {
+    $uiExitCode = 1
+    Write-Host $_.Exception.Message -ForegroundColor Red
 }
 finally {
     # Ctrl+C is delivered to all processes sharing this console. Give the Rust

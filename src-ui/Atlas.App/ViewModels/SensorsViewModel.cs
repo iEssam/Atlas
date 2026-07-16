@@ -228,20 +228,28 @@ public sealed partial class SensorsViewModel : ObservableObject
                 GpuSensors.Clear();
                 foreach (var a in reply.GpuAdapters)
                 {
-                    var readings = new[]
-                    {
-                        a.HasTemperatureC ? $"{a.TemperatureC:F1} °C" : "temperature unavailable",
-                        a.HasPowerW ? $"{a.PowerW:F1} W" : "power unavailable",
-                        a.HasCoreClockMhz ? $"{a.CoreClockMhz} MHz core" : "clock unavailable",
-                        a.HasFanRpm ? $"{a.FanRpm} RPM" : "fan unavailable",
-                        a.HasThermalThrottling ? (a.ThermalThrottling ? "thermal throttle reported" : "no thermal throttle") : "throttle state unavailable",
-                    };
-                    var source = string.IsNullOrWhiteSpace(a.SensorSource)
-                        ? MonitorFormatter.UnavailableReason(a.SensorUnavailableReason, "No supported vendor sensor runtime was found.")
-                        : $"Source: {a.SensorSource}";
+                    var readings = new List<string>();
+                    AddGpuReading(readings, a, GpuSensorKind.GpuSensorCoreTemperature, a.HasTemperatureC ? $"core {a.TemperatureC:F1} °C" : null);
+                    AddGpuReading(readings, a, GpuSensorKind.GpuSensorPowerWatts, a.HasPowerW ? $"draw {a.PowerW:F1} W" : null);
+                    AddGpuReading(readings, a, GpuSensorKind.GpuSensorPowerPercent, a.HasPowerPercent ? $"power load {a.PowerPercent:F1} %" : null);
+                    AddGpuReading(readings, a, GpuSensorKind.GpuSensorCoreClock, a.HasCoreClockMhz ? $"core {a.CoreClockMhz} MHz" : null);
+                    AddGpuReading(readings, a, GpuSensorKind.GpuSensorMemoryClock, a.HasMemoryClockMhz ? $"memory {a.MemoryClockMhz} MHz" : null);
+                    AddGpuReading(readings, a, GpuSensorKind.GpuSensorFanRpm, a.HasFanRpm ? $"fan {a.FanRpm} RPM" : null);
+                    AddGpuReading(readings, a, GpuSensorKind.GpuSensorFanPercent, a.HasFanPercent ? $"fan target {a.FanPercent:F1} %" : null);
+                    readings.AddRange(a.Temperatures
+                        .Where(t => t.Kind != GpuTemperatureKind.GpuTemperatureCore)
+                        .Select(t => $"{t.Label} {t.Celsius:F1} °C · {GpuAdapterItem.SourceName(t.Source)}"));
+                    var unavailable = a.SensorAvailability
+                        .Where(v => !v.Available)
+                        .Select(v => $"{GpuAdapterItem.SourceName(v.Source)} {v.Kind.ToString().Replace("GpuSensor", string.Empty)}: {GpuAdapterItem.ReasonCode(v.Reason)}")
+                        .Distinct()
+                        .ToList();
+                    var source = unavailable.Count == 0
+                        ? (string.IsNullOrWhiteSpace(a.SensorSource) ? "No provider status was reported." : a.SensorSource)
+                        : string.Join(" · ", unavailable);
                     GpuSensors.Add(new GpuSensorItem(
                         string.IsNullOrWhiteSpace(a.Name) ? "GPU" : a.Name,
-                        string.Join("  •  ", readings), source));
+                        string.Join(" · ", readings), source));
                 }
                 GpuPresent = GpuSensors.Count > 0;
                 GpuAbsent = !GpuPresent;
@@ -260,6 +268,17 @@ public sealed partial class SensorsViewModel : ObservableObject
                 GpuNote = $"GPU sensor coverage could not be read: {ex.Message}";
             });
         }
+    }
+
+    private static void AddGpuReading(List<string> readings, GpuAdapterTelemetry adapter, GpuSensorKind kind, string? value)
+    {
+        if (value is null) return;
+        var source = adapter.SensorAvailability
+            .Where(v => v.Kind == kind && v.Available)
+            .OrderByDescending(v => v.Source == GpuTelemetrySource.GpuSourceNvidiaNvml)
+            .Select(v => GpuAdapterItem.SourceName(v.Source))
+            .FirstOrDefault();
+        readings.Add(string.IsNullOrWhiteSpace(source) ? value : $"{value} · {source}");
     }
 
     private async Task LoadBootsAsync(AtlasChannel channel, CancellationToken ct)

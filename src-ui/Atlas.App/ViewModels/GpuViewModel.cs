@@ -81,9 +81,7 @@ public sealed partial class GpuViewModel : ObservableObject
         foreach (var p in snapshot.Processes
             .Where(p => p.GpuPermille > 0 || p.GpuDedicatedBytes > 0 || p.GpuSharedBytes > 0)
             .OrderByDescending(p => p.GpuPermille).Take(50))
-        {
             Processes.Add(new GpuProcessItem(p));
-        }
 
         IsUnavailable = Adapters.Count == 0;
         UnavailableReason = IsUnavailable
@@ -99,17 +97,26 @@ public sealed partial class GpuAdapterItem : ObservableObject
 {
     public string AdapterKey { get; }
     public ObservableCollection<GpuEngineItem> Engines { get; } = new();
+    public ObservableCollection<GpuTemperatureItem> AdditionalTemperatures { get; } = new();
+    public ObservableCollection<GpuAvailabilityItem> Availability { get; } = new();
     [ObservableProperty] private string _name = "GPU";
     [ObservableProperty] private string _driverVersion = string.Empty;
+    [ObservableProperty] private string _driverDate = string.Empty;
+    [ObservableProperty] private string _pciLocation = "PCI location unavailable";
+    [ObservableProperty] private string _adapterIdentity = string.Empty;
     [ObservableProperty] private bool _activeDisplay;
     [ObservableProperty] private double _utilizationPercent;
     [ObservableProperty] private string _dedicatedText = "0 MB measured";
     [ObservableProperty] private string _sharedText = "0 MB measured";
-    [ObservableProperty] private string _temperatureText = "Not exposed";
-    [ObservableProperty] private string _powerText = "Not exposed";
-    [ObservableProperty] private string _clockText = "Not exposed";
-    [ObservableProperty] private string _fanText = "Not exposed";
-    [ObservableProperty] private string _throttleText = "Not exposed";
+    [ObservableProperty] private string _temperatureText = "Unavailable";
+    [ObservableProperty] private string _powerWattsText = "Unavailable";
+    [ObservableProperty] private string _powerPercentText = "Unavailable";
+    [ObservableProperty] private string _coreClockText = "Unavailable";
+    [ObservableProperty] private string _memoryClockText = "Unavailable";
+    [ObservableProperty] private string _fanRpmText = "Unavailable";
+    [ObservableProperty] private string _fanPercentText = "Unavailable";
+    [ObservableProperty] private string _temperatureLimitsText = "Limits unavailable";
+    [ObservableProperty] private string _throttleText = "Unavailable";
     [ObservableProperty] private string _sensorStatus = string.Empty;
     public string UtilizationText => $"{UtilizationPercent:F1} %";
     public string DisplayRole => ActiveDisplay ? "Active display adapter" : "Available adapter";
@@ -118,24 +125,122 @@ public sealed partial class GpuAdapterItem : ObservableObject
 
     public void Apply(GpuAdapterTelemetry a)
     {
-        Name = a.Name; DriverVersion = a.DriverVersion; ActiveDisplay = a.ActiveDisplay;
+        Name = a.Name;
+        DriverVersion = string.IsNullOrWhiteSpace(a.DriverVersion) ? "Driver version unavailable" : $"Driver {a.DriverVersion}";
+        DriverDate = string.IsNullOrWhiteSpace(a.DriverDate) ? "Driver date unavailable" : $"Driver date {a.DriverDate}";
+        ActiveDisplay = a.ActiveDisplay;
+        PciLocation = a.PciIdentityAvailable
+            ? $"PCI {a.PciDomain:X4}:{a.PciBus:X2}:{a.PciDevice:X2}.{a.PciFunction}"
+            : "PCI location unavailable";
+        AdapterIdentity = $"VEN_{a.VendorId:X4} · DEV_{a.DeviceId:X4} · physical {a.PhysicalAdapterIndex}";
         UtilizationPercent = a.UtilizationPermille / 10.0;
         OnPropertyChanged(nameof(UtilizationText)); OnPropertyChanged(nameof(DisplayRole));
         DedicatedText = MemoryLine(a.DedicatedUsed, a.DedicatedBudget);
         SharedText = MemoryLine(a.SharedUsed, a.SharedBudget);
-        TemperatureText = a.HasTemperatureC ? $"{a.TemperatureC:F1} °C" : "Not exposed";
-        PowerText = a.HasPowerW ? $"{a.PowerW:F1} W" : "Not exposed";
-        ClockText = a.HasCoreClockMhz ? $"{a.CoreClockMhz} MHz core" : "Not exposed";
-        FanText = a.HasFanRpm ? $"{a.FanRpm} RPM" : "Not exposed";
-        ThrottleText = a.HasThermalThrottling ? (a.ThermalThrottling ? "Throttling reported" : "No throttling reported") : "Not exposed";
-        SensorStatus = string.IsNullOrWhiteSpace(a.SensorSource) ? a.SensorUnavailableReason : $"Sensor source: {a.SensorSource}";
+        TemperatureText = Reading(a.HasTemperatureC, a.HasTemperatureC ? $"{a.TemperatureC:F1} °C" : null, a, GpuSensorKind.GpuSensorCoreTemperature);
+        PowerWattsText = Reading(a.HasPowerW, a.HasPowerW ? $"{a.PowerW:F1} W" : null, a, GpuSensorKind.GpuSensorPowerWatts);
+        PowerPercentText = Reading(a.HasPowerPercent, a.HasPowerPercent ? $"{a.PowerPercent:F1} %" : null, a, GpuSensorKind.GpuSensorPowerPercent);
+        CoreClockText = Reading(a.HasCoreClockMhz, a.HasCoreClockMhz ? $"{a.CoreClockMhz} MHz" : null, a, GpuSensorKind.GpuSensorCoreClock);
+        MemoryClockText = Reading(a.HasMemoryClockMhz, a.HasMemoryClockMhz ? $"{a.MemoryClockMhz} MHz" : null, a, GpuSensorKind.GpuSensorMemoryClock);
+        FanRpmText = Reading(a.HasFanRpm, a.HasFanRpm ? $"{a.FanRpm} RPM" : null, a, GpuSensorKind.GpuSensorFanRpm);
+        FanPercentText = Reading(a.HasFanPercent, a.HasFanPercent ? $"{a.FanPercent:F1} %" : null, a, GpuSensorKind.GpuSensorFanPercent);
+        TemperatureLimitsText = TemperatureLimits(a);
+        ThrottleText = ThrottleState(a);
+        SensorStatus = ProviderStatus(a);
         Engines.Clear();
         foreach (var e in a.Engines.OrderBy(e => e.EngineClass)) Engines.Add(new GpuEngineItem(e));
+        AdditionalTemperatures.Clear();
+        foreach (var temperature in a.Temperatures.Where(t => t.Kind != GpuTemperatureKind.GpuTemperatureCore))
+            AdditionalTemperatures.Add(new GpuTemperatureItem(temperature));
+        Availability.Clear();
+        foreach (var availability in a.SensorAvailability.Where(v => !v.Available).OrderBy(v => v.Source).ThenBy(v => v.Kind))
+            Availability.Add(new GpuAvailabilityItem(availability));
     }
+
+    private static string Reading(bool present, string? value, GpuAdapterTelemetry adapter, GpuSensorKind kind)
+    {
+        var available = adapter.SensorAvailability.Where(v => v.Kind == kind && v.Available)
+            .OrderByDescending(v => v.Source == GpuTelemetrySource.GpuSourceNvidiaNvml).FirstOrDefault();
+        if (present && value is not null)
+            return available is null ? value : $"{value} · {SourceName(available.Source)}";
+        var unavailable = adapter.SensorAvailability.Where(v => v.Kind == kind && !v.Available)
+            .OrderByDescending(v => v.Source == GpuTelemetrySource.GpuSourceNvidiaNvml).FirstOrDefault();
+        return unavailable is null ? "Unavailable" : $"Unavailable · {ReasonCode(unavailable.Reason)}";
+    }
+
+    private static string TemperatureLimits(GpuAdapterTelemetry adapter)
+    {
+        var parts = new List<string>();
+        if (adapter.HasTemperatureWarningC) parts.Add($"warning {adapter.TemperatureWarningC:F1} °C");
+        if (adapter.HasTemperatureMaxC) parts.Add($"maximum {adapter.TemperatureMaxC:F1} °C");
+        return parts.Count == 0 ? "Limits unavailable" : $"{string.Join(" · ", parts)} · Windows WDDM";
+    }
+
+    private static string ThrottleState(GpuAdapterTelemetry adapter)
+    {
+        if (!adapter.HasThermalThrottling)
+            return Reading(false, null, adapter, GpuSensorKind.GpuSensorThrottleReasons);
+        if (adapter.ThrottleReasons.Count == 0)
+            return "No explicit thermal throttle · NVIDIA NVML";
+        return $"{string.Join(", ", adapter.ThrottleReasons.Select(ThrottleName))} · NVIDIA NVML";
+    }
+
+    private static string ProviderStatus(GpuAdapterTelemetry adapter)
+    {
+        bool nvmlActive = adapter.SensorAvailability.Any(v => v.Source == GpuTelemetrySource.GpuSourceNvidiaNvml && v.Available);
+        var nvmlFailure = adapter.SensorAvailability.FirstOrDefault(v =>
+            v.Source == GpuTelemetrySource.GpuSourceNvidiaNvml && !v.Available &&
+            v.Reason != GpuAvailabilityReason.GpuAvailabilityUnsupportedMetric);
+        if (nvmlActive) return "NVIDIA NVML is active. Unsupported fields remain on their current Windows WDDM reading.";
+        if (nvmlFailure is not null)
+            return $"Windows WDDM fallback · {ReasonCode(nvmlFailure.Reason)} · {nvmlFailure.Detail}";
+        return string.IsNullOrWhiteSpace(adapter.SensorSource) ? adapter.SensorUnavailableReason : adapter.SensorSource;
+    }
+
+    internal static string SourceName(GpuTelemetrySource source) => MonitorFormatter.GpuSourceText(source);
+
+    internal static string ReasonCode(GpuAvailabilityReason reason) => MonitorFormatter.GpuAvailabilityCode(reason);
+
+    private static string ThrottleName(GpuThrottleReason reason) => reason switch
+    {
+        GpuThrottleReason.GpuThrottleSoftwareThermal => "software thermal limit",
+        GpuThrottleReason.GpuThrottleHardwareThermal => "hardware thermal limit",
+        GpuThrottleReason.GpuThrottleSoftwarePowerCap => "software power cap",
+        GpuThrottleReason.GpuThrottleHardwareSlowdown => "hardware slowdown",
+        GpuThrottleReason.GpuThrottleHardwarePowerBrake => "hardware power brake",
+        GpuThrottleReason.GpuThrottleIdle => "GPU idle",
+        GpuThrottleReason.GpuThrottleApplicationClocks => "application clock setting",
+        GpuThrottleReason.GpuThrottleSyncBoost => "sync boost",
+        GpuThrottleReason.GpuThrottleDisplayClockSetting => "display clock setting",
+        _ => "other hardware reason",
+    };
 
     private static string MemoryLine(ulong used, ulong budget) => budget > 0
         ? $"{used / 1048576.0:F0} / {budget / 1048576.0:F0} MB"
         : $"{used / 1048576.0:F0} MB measured - budget unavailable";
+}
+
+public sealed class GpuTemperatureItem
+{
+    public string Name { get; }
+    public string ValueText { get; }
+    public GpuTemperatureItem(GpuTemperatureTelemetry temperature)
+    {
+        Name = string.IsNullOrWhiteSpace(temperature.Label) ? temperature.Kind.ToString() : temperature.Label;
+        ValueText = $"{temperature.Celsius:F1} °C · {GpuAdapterItem.SourceName(temperature.Source)}";
+    }
+}
+
+public sealed class GpuAvailabilityItem
+{
+    public string Metric { get; }
+    public string Detail { get; }
+    public GpuAvailabilityItem(GpuSensorAvailability availability)
+    {
+        Metric = availability.Kind.ToString().Replace("GpuSensor", string.Empty);
+        Detail = $"{GpuAdapterItem.SourceName(availability.Source)} · {GpuAdapterItem.ReasonCode(availability.Reason)}" +
+            (string.IsNullOrWhiteSpace(availability.Detail) ? string.Empty : $" · {availability.Detail}");
+    }
 }
 
 public sealed class GpuEngineItem

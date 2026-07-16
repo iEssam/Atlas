@@ -141,6 +141,12 @@ pub struct HealthSection {
     pub process_count: u32,
     pub thread_count: u32,
     pub handle_count: u32,
+    pub gpu_permille: u32,
+    pub gpu_dedicated_used: u64,
+    pub gpu_dedicated_budget: u64,
+    pub gpu_shared_used: u64,
+    pub gpu_shared_budget: u64,
+    pub gpu_details: Vec<String>,
     pub top: Vec<ConsumerRow>,
 }
 
@@ -234,6 +240,7 @@ pub fn redact_data(data: &BundleData, r: &Redactor) -> BundleData {
                     ..c.clone()
                 })
                 .collect(),
+            gpu_details: h.gpu_details.iter().map(|line| ap(line)).collect(),
             ..h.clone()
         }),
         incidents: data.incidents.as_ref().map(|list| {
@@ -401,9 +408,13 @@ fn pressure_summary(h: &HealthSection) -> String {
     if commit_pct >= 90.0 {
         notes.push("commit charge nearly at the limit".to_string());
     }
+    if h.gpu_permille >= 850 {
+        notes.push("GPU under sustained load".to_string());
+    }
     let head = format!(
-        "CPU {}, memory {:.0}%, commit {:.0}%",
+        "CPU {}, GPU {}, memory {:.0}%, commit {:.0}%",
         pct(h.cpu_permille),
+        pct(h.gpu_permille),
         mem_pct,
         commit_pct
     );
@@ -486,6 +497,12 @@ fn render_text(data: &BundleData) -> String {
             "Processes {}, threads {}, handles {}\n",
             h.process_count, h.thread_count, h.handle_count
         ));
+        s.push_str(&format!(
+            "GPU memory dedicated {}/{}, shared {}/{}\n",
+            human_bytes(h.gpu_dedicated_used), human_bytes(h.gpu_dedicated_budget),
+            human_bytes(h.gpu_shared_used), human_bytes(h.gpu_shared_budget),
+        ));
+        for detail in &h.gpu_details { s.push_str(&format!("GPU: {detail}\n")); }
         s.push_str("Top consumers:\n");
         if h.top.is_empty() {
             s.push_str("  (none)\n");
@@ -706,6 +723,12 @@ fn render_json(data: &BundleData) -> String {
                 "process_count": h.process_count,
                 "thread_count": h.thread_count,
                 "handle_count": h.handle_count,
+                "gpu_permille": h.gpu_permille,
+                "gpu_dedicated_used": h.gpu_dedicated_used,
+                "gpu_dedicated_budget": h.gpu_dedicated_budget,
+                "gpu_shared_used": h.gpu_shared_used,
+                "gpu_shared_budget": h.gpu_shared_budget,
+                "gpu_details": h.gpu_details,
                 "pressure_summary": pressure_summary(h),
                 "top": top,
             }),
@@ -909,15 +932,26 @@ fn render_html(data: &BundleData) -> String {
         if h.top.is_empty() {
             rows.push_str("<tr><td colspan=\"4\"><em>none</em></td></tr>");
         }
+        let gpu_details = if h.gpu_details.is_empty() {
+            "<li><em>No GPU adapter details available</em></li>".to_string()
+        } else {
+            h.gpu_details.iter().map(|line| format!("<li>{}</li>", esc(line))).collect::<String>()
+        };
         let inner = format!(
             "<p class=\"summary\">{}</p>\
              <p class=\"k\">Processes {}, threads {}, handles {}</p>\
+             <p class=\"k\">GPU memory: dedicated {} / {}, shared {} / {}</p>\
+             <ul>{gpu_details}</ul>\
              <table><thead><tr><th>PID</th><th>Process</th><th class=\"num\">CPU</th><th class=\"num\">Working set</th></tr></thead>\
              <tbody>{rows}</tbody></table>",
             esc(&pressure_summary(h)),
             h.process_count,
             h.thread_count,
             h.handle_count,
+            esc(&human_bytes(h.gpu_dedicated_used)),
+            esc(&human_bytes(h.gpu_dedicated_budget)),
+            esc(&human_bytes(h.gpu_shared_used)),
+            esc(&human_bytes(h.gpu_shared_budget)),
         );
         section("health", "Health", inner, &mut toc, &mut body);
     }
@@ -1178,6 +1212,12 @@ mod tests {
                 process_count: 300,
                 thread_count: 4000,
                 handle_count: 90000,
+                gpu_permille: 510,
+                gpu_dedicated_used: 2_000_000_000,
+                gpu_dedicated_budget: 8_000_000_000,
+                gpu_shared_used: 100_000_000,
+                gpu_shared_budget: 8_000_000_000,
+                gpu_details: vec!["RTX fixture source=NVIDIA NVML".into()],
                 top: vec![ConsumerRow {
                     pid: 4242,
                     image_name: r"game.exe from C:\Users\alice\game.exe".into(),

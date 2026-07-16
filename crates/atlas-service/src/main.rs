@@ -1869,9 +1869,22 @@ impl BlockWriter {
         add(Metric::GpuAdapterSharedUsed, a.shared_used as f64);
         if let Some(v) = a.temperature_c { add(Metric::GpuAdapterTemperatureC, v); }
         if let Some(v) = a.power_w { add(Metric::GpuAdapterPowerW, v); }
+        if let Some(v) = a.power_percent { add(Metric::GpuAdapterPowerPercent, v); }
         if let Some(v) = a.core_clock_mhz { add(Metric::GpuAdapterCoreClockMhz, v as f64); }
         if let Some(v) = a.memory_clock_mhz { add(Metric::GpuAdapterMemoryClockMhz, v as f64); }
         if let Some(v) = a.fan_rpm { add(Metric::GpuAdapterFanRpm, v as f64); }
+        if let Some(v) = a.fan_percent { add(Metric::GpuAdapterFanPercent, v); }
+        for temperature in &a.temperatures {
+            match temperature.kind {
+                atlas_collectors::GpuTemperatureKind::Memory => {
+                    add(Metric::GpuAdapterMemoryTemperatureC, temperature.celsius);
+                }
+                atlas_collectors::GpuTemperatureKind::Hotspot => {
+                    add(Metric::GpuAdapterHotspotTemperatureC, temperature.celsius);
+                }
+                _ => {}
+            }
+        }
         if let Some(v) = a.thermal_throttling { add(Metric::GpuAdapterThrottling, if v { 1.0 } else { 0.0 }); }
     }
 
@@ -1960,8 +1973,11 @@ fn writer_thread(
             bw.append_sys(tick.ts_ms, &tick.sys);
             for adapter in &tick.gpu_adapters {
                 let scope = store.upsert_gpu_adapter(
-                    &adapter.luid.stable_key(), &adapter.name, &adapter.driver_version,
-                    adapter.active_display, tick.ts_ms,
+                    &adapter.stable_key(), &adapter.name, &adapter.driver_version,
+                    adapter.active_display, adapter.physical_index, adapter.vendor_id,
+                    adapter.device_id, adapter.pci_domain, adapter.pci_bus,
+                    adapter.pci_device, adapter.pci_function, &adapter.driver_date,
+                    tick.ts_ms,
                 )?;
                 bw.append_gpu_adapter(tick.ts_ms, scope, adapter);
             }
@@ -5702,6 +5718,13 @@ fn cmd_support_bundle(
             })
             .collect();
         let s = &set.system;
+        let gpu_details = set.gpu.adapters.iter().map(|adapter| format!(
+            "{} [{}] load={:.1}% temp={:?}C watts={:?} power_percent={:?} fan_rpm={:?} fan_percent={:?} core_clock={:?}MHz memory_clock={:?}MHz throttle={:?}; availability={:?}",
+            adapter.name, adapter.stable_key(), adapter.utilization_permille as f64 / 10.0,
+            adapter.temperature_c, adapter.power_w, adapter.power_percent, adapter.fan_rpm,
+            adapter.fan_percent, adapter.core_clock_mhz, adapter.memory_clock_mhz,
+            adapter.throttle_reasons, adapter.sensor_availability,
+        )).collect();
         Some(HealthSection {
             ts_ms: set.ts_ms,
             cpu_permille: s.cpu_permille,
@@ -5712,6 +5735,12 @@ fn cmd_support_bundle(
             process_count: s.process_count,
             thread_count: s.thread_count,
             handle_count: s.handle_count,
+            gpu_permille: s.gpu_permille,
+            gpu_dedicated_used: s.gpu_dedicated_used,
+            gpu_dedicated_budget: s.gpu_dedicated_budget,
+            gpu_shared_used: s.gpu_shared_used,
+            gpu_shared_budget: s.gpu_shared_budget,
+            gpu_details,
             top,
         })
     } else {

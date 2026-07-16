@@ -36,11 +36,13 @@ use atlas_ipc::{
     Connection as ProtoConnection, CrashRecord as ProtoCrashRecord, CreateBookmarkReply,
     CreateBookmarkRequest, CreatePrivacyAlertRuleReply, CreatePrivacyAlertRuleRequest,
     DeletePrivacyAlertRuleReply, DeletePrivacyAlertRuleRequest, DiagnoseReply, DiagnoseRequest,
-    EventRow, FindResourceOwnersReply, FindResourceOwnersRequest, FiredAlert, GenerateReportReply,
+    EventRow, EvidenceItem, FindResourceOwnersReply, FindResourceOwnersRequest, FiredAlert, GenerateReportReply,
     GenerateReportRequest, GetBatteryStatusReply, GetBatteryStatusRequest, GpuAdapterTelemetry,
-    GpuEngineClass, GpuEngineTelemetry,
+    GpuAvailabilityReason, GpuEngineClass, GpuEngineTelemetry, GpuSensorAvailability,
+    GpuSensorKind, GpuTelemetrySource, GpuTemperatureKind, GpuTemperatureTelemetry,
+    GpuThrottleReason,
     GetSecurityMetadataReply, GetSecurityMetadataRequest, GetThermalReply, GetThermalRequest,
-    HandleRow, Incident, L4Protocol, ListBookmarksReply, ListBookmarksRequest, ListBootsReply,
+    HandleRow, Incident, IncidentKind, L4Protocol, ListBookmarksReply, ListBookmarksRequest, ListBootsReply,
     ListBootsRequest, ListConnectionsReply, ListConnectionsRequest, ListCrashesReply,
     ListCrashesRequest, ListEventsReply, ListEventsRequest, ListFiredAlertsReply,
     ListFiredAlertsRequest, ListHandlesReply, ListHandlesRequest, ListIncidentsReply,
@@ -62,6 +64,7 @@ use atlas_ipc::{
     UpdatePrivacyAlertRuleReply, UpdatePrivacyAlertRuleRequest, CAP_BATTERY_STATUS,
     CAP_BOOT_ANALYSIS, CAP_CRASH_ANALYSIS, CAP_DIAGNOSTICS, CAP_DYNAMIC_PROTECTION,
     CAP_FTS5_SEARCH, CAP_GPU_CORE_TELEMETRY, CAP_GPU_PROCESS_MEMORY, CAP_GPU_RULE_TRIGGERS,
+    CAP_GPU_VENDOR_SENSORS, CAP_GPU_WDDM_SENSORS,
     CAP_HISTORY_QUERIES, CAP_INCIDENT_DETECTION, CAP_NETWORK_INSPECTOR,
     CAP_PLUGINS, CAP_PRIVACY_ALERTS, CAP_PRIVACY_EVENTS, CAP_PROCESS_INSPECTOR,
     CAP_PROCESS_SNAPSHOTS, CAP_PROFILES, CAP_REPORTS, CAP_RESOURCE_OWNERSHIP, CAP_RULES_ENGINE,
@@ -99,6 +102,73 @@ fn role_to_proto(role: CollectorRole) -> i32 {
         CollectorRole::Service => ProcessRole::Service,
     };
     r as i32
+}
+
+fn gpu_source_to_proto(source: atlas_collectors::GpuTelemetrySource) -> i32 {
+    (match source {
+        atlas_collectors::GpuTelemetrySource::WindowsWddm => GpuTelemetrySource::GpuSourceWindowsWddm,
+        atlas_collectors::GpuTelemetrySource::NvidiaNvml => GpuTelemetrySource::GpuSourceNvidiaNvml,
+    }) as i32
+}
+
+fn gpu_sensor_kind_to_proto(kind: atlas_collectors::GpuSensorKind) -> i32 {
+    use atlas_collectors::GpuSensorKind as C;
+    (match kind {
+        C::CoreTemperature => GpuSensorKind::GpuSensorCoreTemperature,
+        C::MemoryTemperature => GpuSensorKind::GpuSensorMemoryTemperature,
+        C::HotspotTemperature => GpuSensorKind::GpuSensorHotspotTemperature,
+        C::BoardTemperature => GpuSensorKind::GpuSensorBoardTemperature,
+        C::PowerWatts => GpuSensorKind::GpuSensorPowerWatts,
+        C::PowerPercent => GpuSensorKind::GpuSensorPowerPercent,
+        C::CoreClock => GpuSensorKind::GpuSensorCoreClock,
+        C::MemoryClock => GpuSensorKind::GpuSensorMemoryClock,
+        C::FanRpm => GpuSensorKind::GpuSensorFanRpm,
+        C::FanPercent => GpuSensorKind::GpuSensorFanPercent,
+        C::ThrottleReasons => GpuSensorKind::GpuSensorThrottleReasons,
+    }) as i32
+}
+
+fn gpu_availability_to_proto(reason: atlas_collectors::GpuAvailabilityReason) -> i32 {
+    use atlas_collectors::GpuAvailabilityReason as C;
+    (match reason {
+        C::None => GpuAvailabilityReason::GpuAvailabilityNone,
+        C::ProviderMissing => GpuAvailabilityReason::GpuAvailabilityProviderMissing,
+        C::HelperStartFailure => GpuAvailabilityReason::GpuAvailabilityHelperStartFailure,
+        C::HelperTimeout => GpuAvailabilityReason::GpuAvailabilityHelperTimeout,
+        C::HelperBackoff => GpuAvailabilityReason::GpuAvailabilityHelperBackoff,
+        C::StaleSample => GpuAvailabilityReason::GpuAvailabilityStaleSample,
+        C::UnsupportedMetric => GpuAvailabilityReason::GpuAvailabilityUnsupportedMetric,
+        C::IdentityUnmatched => GpuAvailabilityReason::GpuAvailabilityIdentityUnmatched,
+        C::DeviceLost => GpuAvailabilityReason::GpuAvailabilityDeviceLost,
+        C::DriverError => GpuAvailabilityReason::GpuAvailabilityDriverError,
+    }) as i32
+}
+
+fn gpu_temperature_kind_to_proto(kind: atlas_collectors::GpuTemperatureKind) -> i32 {
+    use atlas_collectors::GpuTemperatureKind as C;
+    (match kind {
+        C::Core => GpuTemperatureKind::GpuTemperatureCore,
+        C::Memory => GpuTemperatureKind::GpuTemperatureMemory,
+        C::Hotspot => GpuTemperatureKind::GpuTemperatureHotspot,
+        C::Board => GpuTemperatureKind::GpuTemperatureBoard,
+        C::Other => GpuTemperatureKind::GpuTemperatureOther,
+    }) as i32
+}
+
+fn gpu_throttle_to_proto(reason: atlas_collectors::GpuThrottleReason) -> i32 {
+    use atlas_collectors::GpuThrottleReason as C;
+    (match reason {
+        C::SoftwareThermal => GpuThrottleReason::GpuThrottleSoftwareThermal,
+        C::HardwareThermal => GpuThrottleReason::GpuThrottleHardwareThermal,
+        C::SoftwarePowerCap => GpuThrottleReason::GpuThrottleSoftwarePowerCap,
+        C::HardwareSlowdown => GpuThrottleReason::GpuThrottleHardwareSlowdown,
+        C::HardwarePowerBrake => GpuThrottleReason::GpuThrottleHardwarePowerBrake,
+        C::Idle => GpuThrottleReason::GpuThrottleIdle,
+        C::ApplicationClocks => GpuThrottleReason::GpuThrottleApplicationClocks,
+        C::SyncBoost => GpuThrottleReason::GpuThrottleSyncBoost,
+        C::DisplayClockSetting => GpuThrottleReason::GpuThrottleDisplayClockSetting,
+        C::Other => GpuThrottleReason::GpuThrottleOther,
+    }) as i32
 }
 
 /// Converts a collector [`SampleSet`] into the proto [`SnapshotReply`], sorted
@@ -168,7 +238,7 @@ fn to_reply(set: &SampleSet) -> SnapshotReply {
         }),
         processes,
         gpu_adapters: set.gpu.adapters.iter().map(|a| GpuAdapterTelemetry {
-            adapter_key: a.luid.stable_key(),
+            adapter_key: a.stable_key(),
             name: a.name.clone(),
             driver_version: a.driver_version.clone(),
             active_display: a.active_display,
@@ -198,6 +268,31 @@ fn to_reply(set: &SampleSet) -> SnapshotReply {
             sensor_unavailable_reason: a.sensor_unavailable_reason.clone(),
             vendor_id: a.vendor_id,
             device_id: a.device_id,
+            physical_adapter_index: a.physical_index,
+            pci_domain: a.pci_domain,
+            pci_bus: a.pci_bus,
+            pci_device: a.pci_device,
+            pci_function: a.pci_function,
+            driver_date: a.driver_date.clone(),
+            power_percent: a.power_percent,
+            fan_percent: a.fan_percent,
+            temperature_warning_c: a.temperature_warning_c,
+            temperature_max_c: a.temperature_max_c,
+            temperatures: a.temperatures.iter().map(|t| GpuTemperatureTelemetry {
+                kind: gpu_temperature_kind_to_proto(t.kind),
+                celsius: t.celsius,
+                source: gpu_source_to_proto(t.source),
+                label: t.label.clone(),
+            }).collect(),
+            throttle_reasons: a.throttle_reasons.iter().copied().map(gpu_throttle_to_proto).collect(),
+            sensor_availability: a.sensor_availability.iter().map(|s| GpuSensorAvailability {
+                kind: gpu_sensor_kind_to_proto(s.kind),
+                available: s.available,
+                source: gpu_source_to_proto(s.source),
+                reason: gpu_availability_to_proto(s.reason),
+                detail: s.detail.clone(),
+            }).collect(),
+            pci_identity_available: a.pci_identity_available,
         }).collect(),
         gpu_unavailable_reason: set.gpu.unavailable_reason.clone(),
     }
@@ -522,11 +617,18 @@ impl AtlasQuery for QueryService {
             flags.push(CAP_RULES_ENGINE.to_string());
             flags.push(CAP_PROFILES.to_string());
             flags.push(CAP_GPU_RULE_TRIGGERS.to_string());
-            if self.slot.read().ok().and_then(|s| s.as_ref().cloned())
-                .map(|s| !s.gpu_adapters.is_empty()).unwrap_or(false)
-            {
+            let gpu_snapshot = self.slot.read().ok().and_then(|s| s.as_ref().cloned());
+            if gpu_snapshot.as_ref().map(|s| !s.gpu_adapters.is_empty()).unwrap_or(false) {
                 flags.push(CAP_GPU_CORE_TELEMETRY.to_string());
                 flags.push(CAP_GPU_PROCESS_MEMORY.to_string());
+                flags.push(CAP_GPU_WDDM_SENSORS.to_string());
+            }
+            if gpu_snapshot.as_ref().is_some_and(|snapshot| snapshot.gpu_adapters.iter().any(|adapter| {
+                adapter.sensor_availability.iter().any(|sensor| {
+                    sensor.available && sensor.source == GpuTelemetrySource::GpuSourceNvidiaNvml as i32
+                })
+            })) {
+                flags.push(CAP_GPU_VENDOR_SENSORS.to_string());
             }
             // R3: dynamic responsiveness protection (the watchdog runs on the
             // sampler tick, store-backed config, disabled by default).
@@ -1348,6 +1450,36 @@ impl QueryService {
             .1)
     }
 
+    fn enrich_gpu_diagnosis(&self, incident: &Incident, reply: &mut DiagnoseReply) {
+        let is_gpu = matches!(IncidentKind::try_from(incident.kind),
+            Ok(IncidentKind::GpuSaturation | IncidentKind::GpuMemoryExhaustion | IncidentKind::GpuThermalThrottling));
+        if !is_gpu { return; }
+        let snapshot = self.slot.read().ok().and_then(|guard| guard.as_ref().cloned());
+        let Some(snapshot) = snapshot else { return; };
+        let Some(diagnosis) = reply.diagnosis.as_mut() else { return; };
+        for adapter in &snapshot.gpu_adapters {
+            let provider_state = adapter.sensor_availability.iter().map(|item| format!(
+                "{}:{}:{}:{}",
+                GpuSensorKind::try_from(item.kind).map(|v| v.as_str_name()).unwrap_or("unknown_metric"),
+                item.available,
+                GpuTelemetrySource::try_from(item.source).map(|v| v.as_str_name()).unwrap_or("unknown_source"),
+                GpuAvailabilityReason::try_from(item.reason).map(|v| v.as_str_name()).unwrap_or("unknown_reason"),
+            )).collect::<Vec<_>>().join(", ");
+            diagnosis.evidence.push(EvidenceItem {
+                text: format!(
+                    "Current non-causal adapter context for {}: load {:.1}%, temperature {:?} C, watts {:?}, power percent {:?}, fan RPM {:?}, fan percent {:?}, throttle reasons {:?}; provider availability [{}]",
+                    adapter.name, adapter.utilization_permille as f64 / 10.0, adapter.temperature_c,
+                    adapter.power_w, adapter.power_percent, adapter.fan_rpm, adapter.fan_percent,
+                    adapter.throttle_reasons.iter().map(|v| GpuThrottleReason::try_from(*v).map(|r| r.as_str_name()).unwrap_or("unknown")).collect::<Vec<_>>(),
+                    provider_state,
+                ),
+                ts_ms: snapshot.system.as_ref().map(|s| s.ts_ms).unwrap_or(0),
+                metric: "gpu_adapter_provider_context".into(),
+                value: adapter.utilization_permille as f64 / 10.0,
+            });
+        }
+    }
+
     /// Shared resolution for diagnose + report: returns the proto incident (a
     /// real row, or a synthetic ad-hoc incident) alongside its diagnosis.
     fn resolve_and_diagnose(
@@ -1367,8 +1499,10 @@ impl QueryService {
                         end_ms: row.end_ms.unwrap_or(0),
                         peak_value: row.peak_value,
                     };
-                    let reply = diagnostics::diagnose(store, &ctx, now, mem_total)?;
-                    Ok((incident_row_to_proto(&row), reply))
+                    let mut reply = diagnostics::diagnose(store, &ctx, now, mem_total)?;
+                    let incident = incident_row_to_proto(&row);
+                    self.enrich_gpu_diagnosis(&incident, &mut reply);
+                    Ok((incident, reply))
                 }
                 None => {
                     let reply = DiagnoseReply {
@@ -1559,6 +1693,24 @@ fn health_from_snapshot(snap: &SnapshotReply) -> HealthSection {
             private_bytes: p.private_bytes,
         })
         .collect();
+    let gpu_details = snap.gpu_adapters.iter().map(|adapter| {
+        let availability = adapter.sensor_availability.iter().map(|item| format!(
+            "{}={} source={} reason={}{}",
+            GpuSensorKind::try_from(item.kind).map(|v| v.as_str_name()).unwrap_or("GPU_SENSOR_UNKNOWN"),
+            item.available,
+            GpuTelemetrySource::try_from(item.source).map(|v| v.as_str_name()).unwrap_or("GPU_SOURCE_UNKNOWN"),
+            GpuAvailabilityReason::try_from(item.reason).map(|v| v.as_str_name()).unwrap_or("GPU_AVAILABILITY_UNKNOWN"),
+            if item.detail.is_empty() { String::new() } else { format!(" detail={}", item.detail) },
+        )).collect::<Vec<_>>().join("; ");
+        format!(
+            "{} [{}] load={:.1}% temp={:?}C watts={:?} power_percent={:?} fan_rpm={:?} fan_percent={:?} core_clock={:?}MHz memory_clock={:?}MHz throttle={:?}; {}",
+            adapter.name, adapter.adapter_key, adapter.utilization_permille as f64 / 10.0,
+            adapter.temperature_c, adapter.power_w, adapter.power_percent, adapter.fan_rpm,
+            adapter.fan_percent, adapter.core_clock_mhz, adapter.memory_clock_mhz,
+            adapter.throttle_reasons.iter().map(|v| GpuThrottleReason::try_from(*v).map(|r| r.as_str_name()).unwrap_or("GPU_THROTTLE_UNKNOWN")).collect::<Vec<_>>(),
+            availability,
+        )
+    }).collect();
     HealthSection {
         ts_ms: s.map(|g| g.ts_ms).unwrap_or(0),
         cpu_permille: s.map(|g| g.cpu_permille).unwrap_or(0),
@@ -1569,6 +1721,12 @@ fn health_from_snapshot(snap: &SnapshotReply) -> HealthSection {
         process_count: s.map(|g| g.process_count).unwrap_or(0),
         thread_count: s.map(|g| g.thread_count).unwrap_or(0),
         handle_count: s.map(|g| g.handle_count).unwrap_or(0),
+        gpu_permille: s.map(|g| g.gpu_permille).unwrap_or(0),
+        gpu_dedicated_used: s.map(|g| g.gpu_dedicated_used).unwrap_or(0),
+        gpu_dedicated_budget: s.map(|g| g.gpu_dedicated_budget).unwrap_or(0),
+        gpu_shared_used: s.map(|g| g.gpu_shared_used).unwrap_or(0),
+        gpu_shared_budget: s.map(|g| g.gpu_shared_budget).unwrap_or(0),
+        gpu_details,
         top,
     }
 }
@@ -2080,6 +2238,10 @@ fn map_metric(kind: i32) -> Option<Metric> {
         MetricKind::GpuAdapterMemoryClockMhz => Metric::GpuAdapterMemoryClockMhz,
         MetricKind::GpuAdapterFanRpm => Metric::GpuAdapterFanRpm,
         MetricKind::GpuAdapterThrottling => Metric::GpuAdapterThrottling,
+        MetricKind::GpuAdapterPowerPercent => Metric::GpuAdapterPowerPercent,
+        MetricKind::GpuAdapterFanPercent => Metric::GpuAdapterFanPercent,
+        MetricKind::GpuAdapterMemoryTemperatureC => Metric::GpuAdapterMemoryTemperatureC,
+        MetricKind::GpuAdapterHotspotTemperatureC => Metric::GpuAdapterHotspotTemperatureC,
     })
 }
 
