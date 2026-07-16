@@ -18,7 +18,6 @@
 
         <!-- ===== Page heading ===== -->
         <StackPanel Grid.Row="0" Spacing="4">
-            <TextBlock Text="OBSERVE / FILE LOCK" Style="{StaticResource AtlasEyebrowStyle}" />
             <TextBlock Text="File Lock Search" Style="{StaticResource AtlasPageHeadingStyle}" />
             <TextBlock Style="{StaticResource AtlasPageDescriptionStyle}"
                        Text="Find which processes are holding a file open. Read-only inspection - release arrives via the guarded safe-action flow." />

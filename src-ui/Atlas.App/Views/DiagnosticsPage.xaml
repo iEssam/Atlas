@@ -16,7 +16,6 @@
 
         <!-- ===== Page heading ===== -->
         <StackPanel Grid.Row="0" Spacing="4">
-            <TextBlock Text="EXPLAIN / DIAGNOSTICS" Style="{StaticResource AtlasEyebrowStyle}" />
             <TextBlock Text="Diagnostics" Style="{StaticResource AtlasPageHeadingStyle}" />
             <TextBlock Style="{StaticResource AtlasPageDescriptionStyle}"
                        Text="Explains recorded incidents from measured evidence - read-only, never invented. Facts and correlations are marked apart." />

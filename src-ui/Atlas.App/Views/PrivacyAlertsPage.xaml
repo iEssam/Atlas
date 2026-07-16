@@ -23,8 +23,6 @@
             </Grid.ColumnDefinitions>
             <StackPanel Grid.Column="0" Spacing="4">
                 <StackPanel Orientation="Horizontal" Spacing="10">
-                    <TextBlock Text="OBSERVE / PRIVACY ALERTS" Style="{StaticResource AtlasEyebrowStyle}"
-                               VerticalAlignment="Center" />
                     <Border x:Name="DemoBadge" Visibility="Collapsed"
                             VerticalAlignment="Center"
                             Background="{ThemeResource AtlasAmberTintBrush}"

@@ -23,7 +23,6 @@
 
         <!-- Header -->
         <StackPanel Grid.Row="0" Spacing="4">
-            <TextBlock Text="INSPECT / PROCESS" Style="{StaticResource AtlasEyebrowStyle}" />
             <TextBlock Text="{x:Bind ViewModel.OverviewName, Mode=OneWay}"
                        Style="{StaticResource AtlasPageHeadingStyle}" />
             <TextBlock Text="{x:Bind ViewModel.HeaderText}"

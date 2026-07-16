@@ -188,7 +188,10 @@ public sealed partial class TimelinePage : Page
 
     private void DrawGridlines(Canvas canvas, double w, double h)
     {
-        var gridBrush = new SolidColorBrush(Color.FromArgb(0x22, 0x80, 0x80, 0x80));
+        var gridBrush = Application.Current.Resources.TryGetValue("AtlasLineBrush", out var lineResource)
+            && lineResource is Brush lineBrush
+                ? lineBrush
+                : new SolidColorBrush(Colors.Gray);
         for (int pct = 0; pct <= 100; pct += 25)
         {
             double y = h - pct / AxisMaxPercent * h;
@@ -208,7 +211,10 @@ public sealed partial class TimelinePage : Page
 
     private void DrawBookmarks(Canvas canvas, double w, double h, double from, double spanMs)
     {
-        var markBrush = new SolidColorBrush(Color.FromArgb(0xCC, 0xFF, 0xB9, 0x00)); // amber
+        var markBrush = Application.Current.Resources.TryGetValue("AtlasAmberBrush", out var amberResource)
+            && amberResource is Brush amberBrush
+                ? amberBrush
+                : new SolidColorBrush(Colors.Goldenrod);
         foreach (var b in ViewModel.Bookmarks)
         {
             double x = (b.TsMs - from) / spanMs * w;

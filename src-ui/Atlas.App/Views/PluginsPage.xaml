@@ -22,8 +22,6 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <StackPanel Grid.Column="0" Spacing="4">
-                <TextBlock Text="EXTEND / PLUGINS"
-                           Style="{StaticResource AtlasEyebrowStyle}" />
                 <TextBlock Text="Plugins"
                            Style="{StaticResource AtlasPageHeadingStyle}" />
                 <TextBlock Text="Signed, separately hosted extensions with explicit read-only grants."

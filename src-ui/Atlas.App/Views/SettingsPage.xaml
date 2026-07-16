@@ -12,18 +12,58 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <!-- Evidence-console heading -->
         <StackPanel Grid.Row="0" Spacing="4">
-            <TextBlock Text="SYSTEM ATLAS / SETTINGS"
-                       Style="{StaticResource AtlasEyebrowStyle}" />
             <TextBlock Text="Settings"
                        Style="{StaticResource AtlasPageHeadingStyle}" />
-            <TextBlock Text="Export support evidence and configure explicit read-only integrations."
+            <TextBlock Text="Choose how Atlas presents evidence, creates support exports, and connects to read-only integrations."
                        Style="{StaticResource AtlasPageDescriptionStyle}" />
         </StackPanel>
 
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
             <StackPanel Spacing="16" MaxWidth="820" HorizontalAlignment="Left">
+
+                <Border Style="{StaticResource AtlasPanelStyle}">
+                    <StackPanel Spacing="16">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Appearance and evidence"
+                                       Style="{StaticResource SubtitleTextBlockStyle}" />
+                            <TextBlock Text="These preferences contain no search history or collected system data."
+                                       Style="{StaticResource AtlasPageDescriptionStyle}" />
+                        </StackPanel>
+                        <Grid ColumnSpacing="20">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <ComboBox x:Name="ThemePicker"
+                                      Grid.Column="0"
+                                      Header="Theme"
+                                      HorizontalAlignment="Stretch"
+                                      AutomationProperties.Name="Application theme"
+                                      SelectionChanged="ThemePicker_SelectionChanged">
+                                <ComboBoxItem Content="Use Windows setting" Tag="System" />
+                                <ComboBoxItem Content="Light" Tag="Light" />
+                                <ComboBoxItem Content="Dark" Tag="Dark" />
+                            </ComboBox>
+                            <ComboBox x:Name="DetailLevelPicker"
+                                      Grid.Column="1"
+                                      Header="Default evidence detail"
+                                      HorizontalAlignment="Stretch"
+                                      AutomationProperties.Name="Default evidence detail"
+                                      SelectionChanged="DetailLevelPicker_SelectionChanged">
+                                <ComboBoxItem Content="Simple" Tag="Simple" />
+                                <ComboBoxItem Content="Detailed" Tag="Detailed" />
+                                <ComboBoxItem Content="Expert" Tag="Expert" />
+                            </ComboBox>
+                        </Grid>
+                        <TextBlock Text="Pages may reveal more detail for the current investigation without changing this default."
+                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                   TextWrapping="Wrap" />
+                        <InfoBar x:Name="PreferencesStatus"
+                                 IsOpen="False"
+                                 IsClosable="True" />
+                    </StackPanel>
+                </Border>
 
                 <!-- Support bundle card -->
                 <Border Style="{StaticResource AtlasPanelStyle}">
@@ -31,8 +71,6 @@
 
                         <!-- Header -->
                         <StackPanel Spacing="4">
-                            <TextBlock Text="SUPPORT EVIDENCE"
-                                       Style="{StaticResource AtlasSectionLabelStyle}" />
                             <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                             <FontIcon Glyph="&#xE7BA;" FontSize="18" VerticalAlignment="Center" />
                             <TextBlock Text="Support bundle"
@@ -74,8 +112,6 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0" Spacing="4">
-                                <TextBlock Text="READ-ONLY INTEGRATION"
-                                           Style="{StaticResource AtlasSectionLabelStyle}" />
                                 <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                                 <FontIcon Glyph="&#xE968;" FontSize="18" VerticalAlignment="Center" />
                                 <TextBlock Text="AI client integration (MCP)"
@@ -83,10 +119,9 @@
                                            VerticalAlignment="Center" />
                                 </StackPanel>
                             </StackPanel>
-                            <Border Grid.Column="1" Style="{StaticResource AtlasStatusPillStyle}">
-                                <TextBlock Text="Off by default"
-                                           Style="{StaticResource AtlasMonoMutedStyle}" />
-                            </Border>
+                            <TextBlock Grid.Column="1" Text="Off by default"
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       VerticalAlignment="Center" />
                         </Grid>
 
                         <!-- What it is -->

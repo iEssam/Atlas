@@ -24,12 +24,8 @@
             </Grid.ColumnDefinitions>
             <StackPanel Grid.Column="0" Spacing="4">
                 <StackPanel Orientation="Horizontal" Spacing="10">
-                    <TextBlock Text="CONTROL / RULES" Style="{StaticResource AtlasEyebrowStyle}"
-                               VerticalAlignment="Center" />
                     <Border x:Name="DemoBadge" Visibility="Collapsed"
-                            Style="{StaticResource AtlasStatusPillStyle}"
-                            Background="{ThemeResource AtlasAmberTintBrush}"
-                            BorderBrush="{ThemeResource AtlasAmberBrush}">
+                            Style="{StaticResource AtlasStatusPillStyle}">
                         <TextBlock Text="DEMO DATA"
                                    Style="{StaticResource AtlasSectionLabelStyle}"
                                    Foreground="{ThemeResource AtlasAmberBrush}" />
@@ -211,8 +207,6 @@
                     </StackPanel>
                     <Border HorizontalAlignment="Right" VerticalAlignment="Center"
                             Style="{StaticResource AtlasStatusPillStyle}"
-                            Background="{ThemeResource AtlasGreenTintBrush}"
-                            BorderBrush="{ThemeResource AtlasGreenBrush}"
                             Visibility="{x:Bind ViewModel.DynProtectionEnabled, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
                         <TextBlock Text="ON"
                                    Style="{StaticResource AtlasSectionLabelStyle}"

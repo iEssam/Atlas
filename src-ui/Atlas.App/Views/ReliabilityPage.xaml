@@ -17,8 +17,6 @@
 
         <!-- Title -->
         <StackPanel Grid.Row="0" Spacing="4">
-            <TextBlock Text="SYSTEM EVIDENCE / RELIABILITY"
-                       Style="{StaticResource AtlasEyebrowStyle}" />
             <TextBlock Text="Reliability"
                        Style="{StaticResource AtlasPageHeadingStyle}" />
             <TextBlock Text="Crashes, hangs and bugchecks, aligned with nearby evidence without assigning cause."

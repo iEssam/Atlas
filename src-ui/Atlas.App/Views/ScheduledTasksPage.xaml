@@ -18,7 +18,6 @@
 
         <!-- ===== Page heading ===== -->
         <StackPanel Grid.Row="0" Spacing="4">
-            <TextBlock Text="INVENTORY / SCHEDULED TASKS" Style="{StaticResource AtlasEyebrowStyle}" />
             <TextBlock Text="Scheduled Tasks" Style="{StaticResource AtlasPageHeadingStyle}" />
             <TextBlock Style="{StaticResource AtlasPageDescriptionStyle}"
                        Text="Windows Task Scheduler entries with last / next run and last result. Read-only inventory." />

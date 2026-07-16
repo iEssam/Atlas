@@ -21,7 +21,6 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <StackPanel Grid.Column="0" Spacing="4">
-                <TextBlock Text="INVENTORY / STARTUP" Style="{StaticResource AtlasEyebrowStyle}" />
                 <TextBlock Text="Startup" Style="{StaticResource AtlasPageHeadingStyle}" />
                 <TextBlock Style="{StaticResource AtlasPageDescriptionStyle}"
                            Text="What runs when Windows starts, grouped by source. Read-only - measured entries only." />

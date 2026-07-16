@@ -20,7 +20,6 @@
             <!-- ===== Page heading + refresh ===== -->
             <Grid Grid.Row="0">
                 <StackPanel Spacing="4">
-                    <TextBlock Text="OBSERVE / SENSORS" Style="{StaticResource AtlasEyebrowStyle}" />
                     <StackPanel Orientation="Horizontal" Spacing="12">
                         <TextBlock Text="Sensors" Style="{StaticResource AtlasPageHeadingStyle}" />
                         <ProgressRing IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"

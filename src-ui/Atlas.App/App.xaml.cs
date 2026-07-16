@@ -1,3 +1,4 @@
+using Atlas.App.Services;
 using Microsoft.UI.Xaml;
 
 namespace Atlas.App;
@@ -9,6 +10,8 @@ namespace Atlas.App;
 public partial class App : Application
 {
     private Window? _window;
+
+    public static IUiPreferencesStore Preferences { get; } = new UiPreferencesStore();
 
     /// <summary>
     /// The single main window, exposed so unpackaged pickers/dialogs (e.g. the

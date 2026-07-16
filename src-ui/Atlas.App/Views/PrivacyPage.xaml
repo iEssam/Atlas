@@ -21,7 +21,6 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <StackPanel Grid.Column="0" Spacing="4">
-                <TextBlock Text="OBSERVE / PRIVACY" Style="{StaticResource AtlasEyebrowStyle}" />
                 <TextBlock Text="Privacy" Style="{StaticResource AtlasPageHeadingStyle}" />
                 <TextBlock Style="{StaticResource AtlasPageDescriptionStyle}"
                            Text="Recorded camera, microphone, and location access by app. Access history only - Atlas does not change permissions." />

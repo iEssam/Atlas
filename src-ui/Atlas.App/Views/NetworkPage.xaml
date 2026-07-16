@@ -18,7 +18,6 @@
 
         <!-- ===== Page heading ===== -->
         <StackPanel Grid.Row="0" Spacing="4">
-            <TextBlock Text="INVENTORY / NETWORK" Style="{StaticResource AtlasEyebrowStyle}" />
             <TextBlock Text="Network" Style="{StaticResource AtlasPageHeadingStyle}" />
             <TextBlock Style="{StaticResource AtlasPageDescriptionStyle}"
                        Text="Active connections and listening ports, by owning process. Read-only inventory." />

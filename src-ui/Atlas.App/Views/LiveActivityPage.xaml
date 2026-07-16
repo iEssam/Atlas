@@ -17,7 +17,6 @@
 
         <!-- ===== Page heading ===== -->
         <StackPanel Grid.Row="0" Spacing="4">
-            <TextBlock Text="OBSERVE / LIVE ACTIVITY" Style="{StaticResource AtlasEyebrowStyle}" />
             <StackPanel Orientation="Horizontal" Spacing="12">
                 <TextBlock Text="Live Activity" Style="{StaticResource AtlasPageHeadingStyle}" />
                 <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Bottom" Margin="0,0,0,3">

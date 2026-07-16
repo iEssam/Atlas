@@ -17,7 +17,6 @@
 
         <!-- ===== Page heading ===== -->
         <StackPanel Grid.Row="0" Spacing="4">
-            <TextBlock Text="OBSERVE / SEARCH" Style="{StaticResource AtlasEyebrowStyle}" />
             <TextBlock Text="Search" Style="{StaticResource AtlasPageHeadingStyle}" />
             <TextBlock Style="{StaticResource AtlasPageDescriptionStyle}"
                        Text="One query across processes, events, and bookmarks. Grouped by kind." />
