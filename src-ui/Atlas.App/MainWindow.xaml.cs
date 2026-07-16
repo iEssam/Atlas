@@ -37,7 +37,10 @@ public sealed partial class MainWindow : Window
 
     public MainWindow()
     {
-        ViewModel = new ShellViewModel(DispatcherQueue);
+        var who = Environment.GetEnvironmentVariable("ATLAS_PIPE");
+        ViewModel = new ShellViewModel(
+            DispatcherQueue,
+            string.IsNullOrEmpty(who) ? null : who);
         InitializeComponent();
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(TitleBarDragRegion);
@@ -45,7 +48,22 @@ public sealed partial class MainWindow : Window
         ApplyThemePreference(App.Preferences.Current.Theme);
         ResizeForFirstRun();
         Closed += (_, _) => ViewModel.Stop();
+#if DEBUG
+        var startPage = Environment.GetEnvironmentVariable("ATLAS_START_PAGE");
+        if (string.Equals(startPage, "activity", StringComparison.OrdinalIgnoreCase))
+        {
+            // A dormant development hook used by the unpackaged smoke test.
+            // NavigationView applies its initial Overview selection after XAML
+            // construction, so select Activity once the shell is loaded.
+            Root.Loaded += StartOnActivityWhenLoaded;
+        }
+        else
+        {
+            ContentFrame.Navigate(typeof(OverviewPage));
+        }
+#else
         ContentFrame.Navigate(typeof(OverviewPage));
+#endif
     }
 
     public void ApplyThemePreference(ThemePreference preference)
@@ -57,6 +75,20 @@ public sealed partial class MainWindow : Window
             _ => ElementTheme.Default,
         };
     }
+
+#if DEBUG
+    private void StartOnActivityWhenLoaded(object sender, RoutedEventArgs e)
+    {
+        Root.Loaded -= StartOnActivityWhenLoaded;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            var activityItem = Nav.MenuItems
+                .OfType<NavigationViewItem>()
+                .First(item => string.Equals(item.Tag as string, "activity", StringComparison.Ordinal));
+            Nav.SelectedItem = activityItem;
+        });
+    }
+#endif
 
     public void NavigateToEvidence(string kind)
     {

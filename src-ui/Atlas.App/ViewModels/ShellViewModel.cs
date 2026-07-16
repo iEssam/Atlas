@@ -44,9 +44,9 @@ public sealed partial class ShellViewModel : ObservableObject
         _ => "No live source",
     };
 
-    public ShellViewModel(DispatcherQueue dispatcher)
+    public ShellViewModel(DispatcherQueue dispatcher, string? who = null)
     {
-        _metrics = new LiveMetricsService(dispatcher);
+        _metrics = new LiveMetricsService(dispatcher, who);
         _metrics.StatusChanged += OnStatusChanged;
         _metrics.Start();
     }

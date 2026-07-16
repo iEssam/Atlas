@@ -27,6 +27,7 @@ public enum MetricsSource
 /// </summary>
 public sealed class MetricsSnapshot
 {
+    public long TimestampMs { get; }
     public MetricsSource Source { get; }
     public double CpuPercent { get; }
     public double GpuPercent { get; }
@@ -44,11 +45,13 @@ public sealed class MetricsSnapshot
     public IReadOnlyList<MetricsRow> Rows { get; }
 
     public MetricsSnapshot(
-        MetricsSource source, double cpuPercent, double gpuPercent, ulong memUsed, ulong memTotal,
+        long timestampMs, MetricsSource source, double cpuPercent, double gpuPercent,
+        ulong memUsed, ulong memTotal,
         ulong commitUsed, ulong commitLimit, uint processCount, uint threadCount,
         uint handleCount, ulong gpuDedicatedUsed, ulong gpuDedicatedBudget,
         ulong gpuSharedUsed, ulong gpuSharedBudget, IReadOnlyList<MetricsRow> rows)
     {
+        TimestampMs = timestampMs;
         Source = source;
         CpuPercent = cpuPercent;
         GpuPercent = gpuPercent;
@@ -82,15 +85,19 @@ public sealed class MetricsRow
     public double GpuPercent { get; }
     public ulong WorkingSet { get; }
     public ulong PrivateBytes { get; }
+    public ulong ReadBps { get; }
+    public ulong WriteBps { get; }
     public uint ThreadCount { get; }
     public uint HandleCount { get; }
     public ulong GpuDedicatedBytes { get; }
     public ulong GpuSharedBytes { get; }
+    public string AppGroup { get; }
 
     public MetricsRow(
         uint pid, long createTime100ns, string imageName, double cpuPercent, double gpuPercent,
-        ulong workingSet, ulong privateBytes, uint threadCount, uint handleCount,
-        ulong gpuDedicatedBytes, ulong gpuSharedBytes)
+        ulong workingSet, ulong privateBytes, ulong readBps, ulong writeBps,
+        uint threadCount, uint handleCount, ulong gpuDedicatedBytes, ulong gpuSharedBytes,
+        string appGroup)
     {
         Pid = pid;
         CreateTime100ns = createTime100ns;
@@ -99,9 +106,12 @@ public sealed class MetricsRow
         GpuPercent = gpuPercent;
         WorkingSet = workingSet;
         PrivateBytes = privateBytes;
+        ReadBps = readBps;
+        WriteBps = writeBps;
         ThreadCount = threadCount;
         HandleCount = handleCount;
         GpuDedicatedBytes = gpuDedicatedBytes;
         GpuSharedBytes = gpuSharedBytes;
+        AppGroup = appGroup;
     }
 }
