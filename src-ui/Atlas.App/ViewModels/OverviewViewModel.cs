@@ -15,17 +15,21 @@ namespace Atlas.App.ViewModels;
 public sealed partial class OverviewViewModel : ObservableObject
 {
     private const int TopConsumers = 5;
+    private const long InsightRefreshIntervalMs = 15_000;
     private readonly LiveMetricsService _metrics;
     private readonly DispatcherQueue _dispatcher;
     private readonly string? _who;
     private CancellationTokenSource? _traceCts;
     private bool _traceRequested;
+    private long _nextInsightRefreshMs;
+    private int _insightRefreshActive;
 
     public ObservableCollection<ConsumerRowViewModel> TopConsumers5 { get; } = new();
     public ObservableCollection<OverviewTracePoint> CpuTrace { get; } = new();
     public ObservableCollection<OverviewTracePoint> MemoryTrace { get; } = new();
     public ObservableCollection<OverviewTracePoint> GpuTrace { get; } = new();
     public ObservableCollection<OverviewEvidenceMarker> Evidence { get; } = new();
+    public ObservableCollection<OverviewInsightViewModel> Insights { get; } = new();
 
     [ObservableProperty] private string _connectionStatus = "Disconnected";
     [ObservableProperty] private string _recencyText = "Connecting to Atlas Service";
@@ -40,6 +44,13 @@ public sealed partial class OverviewViewModel : ObservableObject
     [ObservableProperty] private string _traceAutomationSummary = "System history has not loaded yet.";
     [ObservableProperty] private string _evidenceStatus = "Loading recent evidence.";
     [ObservableProperty] private string _gpuHistoryLabel = "GPU";
+    [ObservableProperty] private bool _isInsightsLoading = true;
+    [ObservableProperty] private bool _isInsightsUnavailable;
+    [ObservableProperty] private bool _isInsightsEmpty;
+    [ObservableProperty] private bool _isInsightsStale;
+    [ObservableProperty] private bool _hasInsights;
+    [ObservableProperty] private string _insightsStatus = "Interpreting the latest measurements.";
+    [ObservableProperty] private string _insightCoverage = "CPU, memory, and GPU pressure checks.";
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CpuText))]
@@ -91,7 +102,16 @@ public sealed partial class OverviewViewModel : ObservableObject
         _metrics.SnapshotReceived += Apply;
     }
 
-    public void Start() => _metrics.Start();
+    public void Start()
+    {
+        if (_traceCts?.IsCancellationRequested == true)
+        {
+            _traceCts.Dispose();
+            _traceCts = null;
+            _traceRequested = false;
+        }
+        _metrics.Start();
+    }
 
     public void Stop()
     {
@@ -111,7 +131,12 @@ public sealed partial class OverviewViewModel : ObservableObject
         IsTraceEmpty = false;
         IsEvidenceLoading = true;
         IsEvidenceClear = false;
+        IsInsightsLoading = Insights.Count == 0;
+        IsInsightsUnavailable = false;
+        IsInsightsEmpty = false;
+        IsInsightsStale = false;
         EvidenceStatus = "Loading recent evidence.";
+        InsightsStatus = "Interpreting the latest measurements.";
         TraceStatus = "Loading the last 15 minutes of measured evidence.";
         TraceAutomationSummary = "Loading the fifteen minute system trace.";
 
@@ -119,13 +144,14 @@ public sealed partial class OverviewViewModel : ObservableObject
         var from = now - (long)TimeSpan.FromMinutes(15).TotalMilliseconds;
         TraceFromMs = from;
         TraceToMs = now;
+        _nextInsightRefreshMs = now + InsightRefreshIntervalMs;
 
         try
         {
             using var channel = AtlasChannel.Connect(_who);
             // Start every independent request together, but observe each through
             // an isolated result. One old or failing endpoint must never erase
-            // data returned by the other five endpoints.
+            // data returned by the other endpoints.
             var cpuTask = FetchAsync(
                 () => channel.QueryRangeAsync(MetricKind.SysCpuPermille, 0, from, now, 180, ct), ct);
             var memoryTask = FetchAsync(
@@ -136,6 +162,7 @@ public sealed partial class OverviewViewModel : ObservableObject
             var privacyTask = FetchAsync(() => channel.ListPrivacyEventsAsync(from, now, 12, ct), ct);
             var changesTask = FetchAsync(
                 () => channel.ListSystemChangesAsync(from, now, null, 12, ct), ct);
+            var insightsTask = FetchAsync(() => channel.ListInsightsAsync(false, 3, ct), ct);
 
             var cpu = await cpuTask.ConfigureAwait(false);
             var memory = await memoryTask.ConfigureAwait(false);
@@ -143,6 +170,7 @@ public sealed partial class OverviewViewModel : ObservableObject
             var incidents = await incidentTask.ConfigureAwait(false);
             var privacy = await privacyTask.ConfigureAwait(false);
             var changes = await changesTask.ConfigureAwait(false);
+            var insights = await insightsTask.ConfigureAwait(false);
             if (ct.IsCancellationRequested)
             {
                 return;
@@ -195,6 +223,7 @@ public sealed partial class OverviewViewModel : ObservableObject
                 IsTraceLoading = false;
                 HasEvidence = Evidence.Count > 0;
                 IsEvidenceLoading = false;
+                ApplyInsights(insights);
 
                 var metricResults = new[] { cpu, memory, gpu };
                 var availableMetricCount = metricResults.Count(result => result.HasValue);
@@ -244,6 +273,13 @@ public sealed partial class OverviewViewModel : ObservableObject
                 IsEvidenceClear = false;
                 HasEvidence = false;
                 EvidenceStatus = "Recent evidence could not be loaded.";
+                IsInsightsLoading = false;
+                IsInsightsUnavailable = Insights.Count == 0;
+                IsInsightsEmpty = false;
+                IsInsightsStale = Insights.Count > 0;
+                InsightsStatus = Insights.Count == 0
+                    ? "Insights could not be loaded."
+                    : "Could not refresh insights; showing the last result.";
                 ClearTrace();
                 TraceRefreshed?.Invoke();
             });
@@ -290,6 +326,73 @@ public sealed partial class OverviewViewModel : ObservableObject
         {
             _ = RefreshTraceAsync();
         }
+        else
+        {
+            var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            if (now >= _nextInsightRefreshMs)
+            {
+                _nextInsightRefreshMs = now + InsightRefreshIntervalMs;
+                _ = RefreshInsightsAsync(_traceCts?.Token ?? CancellationToken.None);
+            }
+        }
+    }
+
+    private async Task RefreshInsightsAsync(CancellationToken cancellationToken)
+    {
+        if (Interlocked.Exchange(ref _insightRefreshActive, 1) != 0)
+        {
+            return;
+        }
+
+        try
+        {
+            using var channel = AtlasChannel.Connect(_who);
+            var result = await FetchAsync(
+                () => channel.ListInsightsAsync(false, 3, cancellationToken),
+                cancellationToken).ConfigureAwait(false);
+            if (!cancellationToken.IsCancellationRequested)
+            {
+                Post(() => ApplyInsights(result));
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _insightRefreshActive, 0);
+        }
+    }
+
+    private void ApplyInsights(FetchResult<ListInsightsReply> result)
+    {
+        IsInsightsLoading = false;
+        if (result.HasValue)
+        {
+            var reply = result.Value!;
+            Replace(Insights, reply.Insights.Select(item => new OverviewInsightViewModel(item)));
+            HasInsights = Insights.Count > 0;
+            IsInsightsUnavailable = false;
+            IsInsightsEmpty = !HasInsights;
+            IsInsightsStale = false;
+            InsightCoverage = string.IsNullOrWhiteSpace(reply.CoverageSummary)
+                ? "CPU, memory, and GPU pressure checks."
+                : reply.CoverageSummary;
+            InsightsStatus = HasInsights
+                ? $"{Insights.Count} prioritized finding{(Insights.Count == 1 ? string.Empty : "s")}."
+                : "No finding was returned for the current measurements.";
+            return;
+        }
+
+        IsInsightsUnavailable = Insights.Count == 0;
+        IsInsightsEmpty = false;
+        IsInsightsStale = HasInsights;
+        HasInsights = Insights.Count > 0;
+        InsightsStatus = result.IsFaulted
+            ? (HasInsights
+                ? "Could not refresh insights; showing the last result."
+                : "Could not reach the insight service.")
+            : "Insights are not supported by the connected service.";
     }
 
     private static List<OverviewTracePoint> ToPercentPoints(

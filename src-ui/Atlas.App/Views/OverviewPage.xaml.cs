@@ -1,4 +1,5 @@
 using Atlas.App.ViewModels;
+using Atlas.IpcClient;
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -96,12 +97,48 @@ public sealed partial class OverviewPage : Page
             return;
         }
 
+        OpenInspector(row.Pid, row.CreateTime100ns, row.ImageName);
+    }
+
+    private void InsightAction_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: OverviewInsightViewModel insight })
+        {
+            return;
+        }
+
+        if (InsightFormatter.TryParseProcessDestination(
+            insight.Destination,
+            out var pid,
+            out var createTime100ns,
+            out var destinationImageName))
+        {
+            var imageName = string.IsNullOrWhiteSpace(destinationImageName)
+                ? insight.FactorImageName
+                : destinationImageName;
+            OpenInspector(pid, createTime100ns, imageName);
+            return;
+        }
+
+        if (insight.Destination.StartsWith("process:", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        if (App.MainWindow is MainWindow window)
+        {
+            window.NavigateToInsightDestination(insight.Destination);
+        }
+    }
+
+    private static void OpenInspector(uint pid, long createTime100ns, string imageName)
+    {
         var who = Environment.GetEnvironmentVariable("ATLAS_PIPE");
         var inspector = new InspectorWindow(
             string.IsNullOrEmpty(who) ? null : who,
-            row.Pid,
-            row.CreateTime100ns,
-            row.ImageName);
+            pid,
+            createTime100ns,
+            imageName);
         inspector.Activate();
     }
 

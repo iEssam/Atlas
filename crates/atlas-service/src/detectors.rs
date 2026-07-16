@@ -182,11 +182,16 @@ pub fn run_detection_pass(
 
     let used = load_series(store, Metric::SysGpuMemoryUsed, from_ms, to_ms, 1.0)?;
     let budgets: std::collections::HashMap<i64, f64> =
-        load_series(store, Metric::SysGpuMemoryBudget, from_ms, to_ms, 1.0)?.into_iter().collect();
-    let memory_pct: Vec<_> = used.into_iter().filter_map(|(ts, value)| {
-        let budget = budgets.get(&ts).copied().unwrap_or(0.0);
-        (budget > 0.0).then_some((ts, value / budget * 100.0))
-    }).collect();
+        load_series(store, Metric::SysGpuMemoryBudget, from_ms, to_ms, 1.0)?
+            .into_iter()
+            .collect();
+    let memory_pct: Vec<_> = used
+        .into_iter()
+        .filter_map(|(ts, value)| {
+            let budget = budgets.get(&ts).copied().unwrap_or(0.0);
+            (budget > 0.0).then_some((ts, value / budget * 100.0))
+        })
+        .collect();
     for run in detect(&memory_pct, GPU_MEMORY_PCT, GPU_MIN_DURATION_MS, MAX_GAP_MS) {
         store.upsert_incident(
             KIND_GPU_MEMORY_EXHAUSTION, run.start_ms, end_opt(run.end_ms),

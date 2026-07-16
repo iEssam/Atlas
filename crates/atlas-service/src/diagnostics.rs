@@ -26,8 +26,8 @@ use atlas_store::Store;
 use atlas_tsdb::{Metric, SYSTEM_SCOPE};
 
 use crate::detectors::{
-    CPU_SATURATION_PCT, KIND_CPU_SATURATION, KIND_GPU_MEMORY_EXHAUSTION,
-    KIND_GPU_SATURATION, KIND_GPU_THERMAL_THROTTLING, KIND_MEMORY_PRESSURE, MEM_PRESSURE_PCT,
+    CPU_SATURATION_PCT, KIND_CPU_SATURATION, KIND_GPU_MEMORY_EXHAUSTION, KIND_GPU_SATURATION,
+    KIND_GPU_THERMAL_THROTTLING, KIND_MEMORY_PRESSURE, MEM_PRESSURE_PCT,
 };
 
 /// Attribution at/above this share, sustained over most of the window, reaches
@@ -114,8 +114,14 @@ pub fn diagnose(
 
     // Resolve the resource kind (incident kinds are explicit; an ad-hoc range
     // infers from whichever resource crossed its threshold, defaulting to CPU).
-    let kind = if matches!(ctx.kind, KIND_CPU_SATURATION | KIND_MEMORY_PRESSURE |
-        KIND_GPU_SATURATION | KIND_GPU_MEMORY_EXHAUSTION | KIND_GPU_THERMAL_THROTTLING) {
+    let kind = if matches!(
+        ctx.kind,
+        KIND_CPU_SATURATION
+            | KIND_MEMORY_PRESSURE
+            | KIND_GPU_SATURATION
+            | KIND_GPU_MEMORY_EXHAUSTION
+            | KIND_GPU_THERMAL_THROTTLING
+    ) {
         ctx.kind
     } else {
         infer_kind(&sys_cpu, &sys_mem_bytes, mem_total)
@@ -151,12 +157,28 @@ pub fn diagnose(
             });
         }
     }
-    if matches!(kind, KIND_GPU_SATURATION | KIND_GPU_MEMORY_EXHAUSTION | KIND_GPU_THERMAL_THROTTLING) {
+    if matches!(
+        kind,
+        KIND_GPU_SATURATION | KIND_GPU_MEMORY_EXHAUSTION | KIND_GPU_THERMAL_THROTTLING
+    ) {
         if let Some((ts, v)) = peak_point(&sys_gpu) {
-            evidence.push(EvidenceItem { text: format!("Peak GPU activity {v:.0}% during the window"), ts_ms: ts, metric: "sys_gpu_pct".into(), value: v });
+            evidence.push(EvidenceItem {
+                text: format!("Peak GPU activity {v:.0}% during the window"),
+                ts_ms: ts,
+                metric: "sys_gpu_pct".into(),
+                value: v,
+            });
         }
         if let Some((ts, bytes)) = peak_point(&sys_gpu_mem) {
-            evidence.push(EvidenceItem { text: format!("Peak measured graphics memory {:.1} GB", bytes / (1u64 << 30) as f64), ts_ms: ts, metric: "sys_gpu_mem_bytes".into(), value: bytes });
+            evidence.push(EvidenceItem {
+                text: format!(
+                    "Peak measured graphics memory {:.1} GB",
+                    bytes / (1u64 << 30) as f64
+                ),
+                ts_ms: ts,
+                metric: "sys_gpu_mem_bytes".into(),
+                value: bytes,
+            });
         }
     }
 
@@ -194,7 +216,10 @@ pub fn diagnose(
     }
     let mut ranked: Vec<Ranked> = Vec::new();
     for t in &tops {
-        if matches!(kind, KIND_GPU_SATURATION | KIND_GPU_MEMORY_EXHAUSTION | KIND_GPU_THERMAL_THROTTLING) {
+        if matches!(
+            kind,
+            KIND_GPU_SATURATION | KIND_GPU_MEMORY_EXHAUSTION | KIND_GPU_THERMAL_THROTTLING
+        ) {
             continue; // no CPU/memory attribution is presented as GPU attribution
         }
         let (attribution, share_text) = if kind == KIND_MEMORY_PRESSURE {
@@ -421,7 +446,10 @@ fn templates(kind: i32, top_name: Option<&str>, top_pid: u32) -> (String, String
         Some(name) => format!("{name} (pid {top_pid})"),
         None => "the top consumer".to_string(),
     };
-    if matches!(kind, KIND_GPU_SATURATION | KIND_GPU_MEMORY_EXHAUSTION | KIND_GPU_THERMAL_THROTTLING) {
+    if matches!(
+        kind,
+        KIND_GPU_SATURATION | KIND_GPU_MEMORY_EXHAUSTION | KIND_GPU_THERMAL_THROTTLING
+    ) {
         (
             "Inspect the GPU page and the processes active in this window. If a workload was unexpected, close it only after saving work, then watch whether the measured GPU pressure clears.".to_string(),
             "Closing a graphics workload can lose unsaved work. The timing is correlated evidence, not proof that one process caused the incident.".to_string(),

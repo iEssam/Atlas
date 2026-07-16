@@ -23,13 +23,13 @@ use serde_json::{json, Value};
 
 use atlas_ipc::{
     CapabilitiesReply, DiagnoseReply, DiagnoseRequest, FindResourceOwnersReply,
-    FindResourceOwnersRequest, ListConnectionsReply, ListConnectionsRequest, ListIncidentsReply,
-    ListIncidentsRequest, ListListeningPortsReply, ListListeningPortsRequest, ListRulesReply,
-    ListRulesRequest, ListScheduledTasksReply, ListScheduledTasksRequest, ListServicesReply,
-    ListServicesRequest, ListStartupReply, ListStartupRequest, MetricKind, QueryRangeReply,
-    QueryRangeRequest, SearchReply, SearchRequest, SnapshotReply, SnapshotRequest, StartupSource,
-    TimeRange, GpuAvailabilityReason, GpuSensorKind, GpuTelemetrySource, GpuTemperatureKind,
-    GpuThrottleReason,
+    FindResourceOwnersRequest, GpuAvailabilityReason, GpuSensorKind, GpuTelemetrySource,
+    GpuTemperatureKind, GpuThrottleReason, ListConnectionsReply, ListConnectionsRequest,
+    ListIncidentsReply, ListIncidentsRequest, ListListeningPortsReply, ListListeningPortsRequest,
+    ListRulesReply, ListRulesRequest, ListScheduledTasksReply, ListScheduledTasksRequest,
+    ListServicesReply, ListServicesRequest, ListStartupReply, ListStartupRequest, MetricKind,
+    QueryRangeReply, QueryRangeRequest, SearchReply, SearchRequest, SnapshotReply, SnapshotRequest,
+    StartupSource, TimeRange,
 };
 
 use crate::client::Connection;
@@ -181,16 +181,38 @@ pub fn snapshot_table(reply: &SnapshotReply) -> String {
     for adapter in &reply.gpu_adapters {
         out.push_str(&format!(
             "gpu  {}  load {}  temp {}  power {} / {}  fan {} / {}  source {}\n",
-            adapter.name, permille_pct(adapter.utilization_permille),
-            adapter.temperature_c.map(|v| format!("{v:.1} C")).unwrap_or_else(|| "unavailable".into()),
-            adapter.power_w.map(|v| format!("{v:.1} W")).unwrap_or_else(|| "unavailable".into()),
-            adapter.power_percent.map(|v| format!("{v:.1}%")).unwrap_or_else(|| "unavailable".into()),
-            adapter.fan_rpm.map(|v| format!("{v} RPM")).unwrap_or_else(|| "unavailable".into()),
-            adapter.fan_percent.map(|v| format!("{v:.1}%")).unwrap_or_else(|| "unavailable".into()),
-            if adapter.sensor_source.is_empty() { "unavailable" } else { &adapter.sensor_source },
+            adapter.name,
+            permille_pct(adapter.utilization_permille),
+            adapter
+                .temperature_c
+                .map(|v| format!("{v:.1} C"))
+                .unwrap_or_else(|| "unavailable".into()),
+            adapter
+                .power_w
+                .map(|v| format!("{v:.1} W"))
+                .unwrap_or_else(|| "unavailable".into()),
+            adapter
+                .power_percent
+                .map(|v| format!("{v:.1}%"))
+                .unwrap_or_else(|| "unavailable".into()),
+            adapter
+                .fan_rpm
+                .map(|v| format!("{v} RPM"))
+                .unwrap_or_else(|| "unavailable".into()),
+            adapter
+                .fan_percent
+                .map(|v| format!("{v:.1}%"))
+                .unwrap_or_else(|| "unavailable".into()),
+            if adapter.sensor_source.is_empty() {
+                "unavailable"
+            } else {
+                &adapter.sensor_source
+            },
         ));
     }
-    if !reply.gpu_adapters.is_empty() { out.push('\n'); }
+    if !reply.gpu_adapters.is_empty() {
+        out.push('\n');
+    }
     let mut t = Table::new(&[
         "PID",
         "CPU",

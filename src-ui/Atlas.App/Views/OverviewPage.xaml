@@ -57,6 +57,7 @@
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
             <Grid Grid.Row="0" ColumnSpacing="16">
@@ -123,7 +124,114 @@
                 </StackPanel>
             </Grid>
 
-            <Grid Grid.Row="2" RowSpacing="18" ColumnSpacing="18">
+            <StackPanel Grid.Row="2" Spacing="8">
+                <StackPanel Spacing="2">
+                    <TextBlock Text="What Atlas found"
+                               Style="{StaticResource SubtitleTextBlockStyle}"
+                               AutomationProperties.HeadingLevel="Level2" />
+                    <TextBlock Text="Prioritized interpretation of the latest measured evidence"
+                               Style="{StaticResource CaptionTextBlockStyle}" />
+                </StackPanel>
+
+                <Border Style="{StaticResource AtlasPanelStyle}" Padding="20,18">
+                    <StackPanel Spacing="12">
+                        <StackPanel Orientation="Horizontal" Spacing="10"
+                                    Visibility="{x:Bind ViewModel.IsInsightsLoading, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
+                            <ProgressRing IsActive="True" Width="18" Height="18" />
+                            <TextBlock Text="Interpreting current measurements..."
+                                       Style="{StaticResource BodyStrongTextBlockStyle}"
+                                       VerticalAlignment="Center"
+                                       AutomationProperties.LiveSetting="Polite" />
+                        </StackPanel>
+
+                        <StackPanel Spacing="5"
+                                    Visibility="{x:Bind ViewModel.IsInsightsUnavailable, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
+                            <TextBlock Text="Insights are unavailable"
+                                       Style="{StaticResource BodyStrongTextBlockStyle}" />
+                            <TextBlock Text="{x:Bind ViewModel.InsightsStatus, Mode=OneWay}"
+                                       Style="{StaticResource AtlasEmptyStateBodyStyle}"
+                                       TextWrapping="Wrap"
+                                       AutomationProperties.LiveSetting="Polite" />
+                            <Button Content="Retry"
+                                    Click="RefreshTrace_Click"
+                                    HorizontalAlignment="Left" />
+                        </StackPanel>
+
+                        <TextBlock Text="{x:Bind ViewModel.InsightsStatus, Mode=OneWay}"
+                                   Style="{StaticResource AtlasEmptyStateBodyStyle}"
+                                   TextWrapping="Wrap"
+                                   Visibility="{x:Bind ViewModel.IsInsightsEmpty, Mode=OneWay, Converter={StaticResource BoolToVisibility}}" />
+
+                        <ItemsControl ItemsSource="{x:Bind ViewModel.Insights, Mode=OneWay}"
+                                      Visibility="{x:Bind ViewModel.HasInsights, Mode=OneWay, Converter={StaticResource BoolToVisibility}}"
+                                      AutomationProperties.Name="Prioritized system insights">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="vm:OverviewInsightViewModel">
+                                    <Grid ColumnSpacing="14" Margin="0,0,0,14"
+                                          AutomationProperties.Name="{x:Bind AutomationName}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="24" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <FontIcon Glyph="{x:Bind Glyph}"
+                                                  FontSize="18"
+                                                  Margin="0,2,0,0"
+                                                  HorizontalAlignment="Center"
+                                                  VerticalAlignment="Top"
+                                                  Foreground="{x:Bind SeverityToken, Converter={StaticResource SeverityToBrush}}" />
+                                        <StackPanel Grid.Column="1" Spacing="5">
+                                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                                <TextBlock Text="{x:Bind StatusText}"
+                                                           Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                                <TextBlock Text="{x:Bind ConfidenceText}"
+                                                           Style="{StaticResource CaptionTextBlockStyle}" />
+                                            </StackPanel>
+                                            <TextBlock Text="{x:Bind Title}"
+                                                       Style="{StaticResource SubtitleTextBlockStyle}"
+                                                       TextWrapping="Wrap"
+                                                       AutomationProperties.HeadingLevel="Level3" />
+                                            <TextBlock Text="{x:Bind Observation}"
+                                                       TextWrapping="Wrap" />
+                                            <TextBlock Text="{x:Bind Significance}"
+                                                       Foreground="{ThemeResource AtlasMutedBrush}"
+                                                       TextWrapping="Wrap" />
+                                            <TextBlock Text="{x:Bind EvidenceText}"
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       TextWrapping="Wrap" />
+                                            <TextBlock Text="{x:Bind ScopeText}"
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       TextWrapping="Wrap" />
+                                            <TextBlock Text="{x:Bind RecommendationText}"
+                                                       Margin="0,3,0,0"
+                                                       TextWrapping="Wrap"
+                                                       Visibility="{x:Bind HasRecommendationText, Converter={StaticResource BoolToVisibility}}" />
+                                            <Button Content="{x:Bind ActionText}"
+                                                    Style="{StaticResource AtlasGhostButtonStyle}"
+                                                    HorizontalAlignment="Left"
+                                                    Click="InsightAction_Click"
+                                                    Visibility="{x:Bind CanOpenEvidence, Converter={StaticResource BoolToVisibility}}"
+                                                    AutomationProperties.Name="{x:Bind ActionText}" />
+                                        </StackPanel>
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <TextBlock Text="{x:Bind ViewModel.InsightsStatus, Mode=OneWay}"
+                                   Foreground="{ThemeResource AtlasAmberBrush}"
+                                   TextWrapping="Wrap"
+                                   Visibility="{x:Bind ViewModel.IsInsightsStale, Mode=OneWay, Converter={StaticResource BoolToVisibility}}"
+                                   AutomationProperties.LiveSetting="Polite" />
+
+                        <TextBlock Text="{x:Bind ViewModel.InsightCoverage, Mode=OneWay}"
+                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                   TextWrapping="Wrap"
+                                   Visibility="{x:Bind ViewModel.HasInsights, Mode=OneWay, Converter={StaticResource BoolToVisibility}}" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+
+            <Grid Grid.Row="3" RowSpacing="18" ColumnSpacing="18">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
@@ -269,7 +377,7 @@
                 </StackPanel>
             </Grid>
 
-            <Border Grid.Row="3" Style="{StaticResource AtlasPanelStyle}" Padding="18,16">
+            <Border Grid.Row="4" Style="{StaticResource AtlasPanelStyle}" Padding="18,16">
                 <Grid RowSpacing="12">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />

@@ -70,6 +70,17 @@ public sealed partial class MainWindow : Window
         ContentFrame.Navigate(pageType);
     }
 
+    public void NavigateToInsightDestination(string destination)
+    {
+        var pageType = destination switch
+        {
+            "activity" => typeof(LiveActivityPage),
+            "graphics" => typeof(GpuPage),
+            _ => typeof(TimelinePage),
+        };
+        ContentFrame.Navigate(pageType);
+    }
+
     private void ResizeForFirstRun()
     {
         var handle = WinRT.Interop.WindowNative.GetWindowHandle(this);

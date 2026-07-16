@@ -323,6 +323,23 @@ public sealed class AtlasChannel : IDisposable
             cancellationToken: cancellationToken).ResponseAsync);
 
     /// <summary>
+    /// Returns a bounded, prioritized set of deterministic insights derived by
+    /// the service. Each item includes its evidence, confidence, limitations,
+    /// and a non-destructive investigation destination when one is available.
+    /// </summary>
+    public Task<RpcOutcome<ListInsightsReply>> ListInsightsAsync(
+        bool activeOnly = false,
+        uint limit = 0,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _client.ListInsightsAsync(
+            new ListInsightsRequest
+            {
+                ActiveOnly = activeOnly,
+                Limit = limit,
+            },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>
     /// Renders a report for an incident (by id) or the ad-hoc window (id 0) in the
     /// requested <paramref name="format"/>, applying <paramref name="redaction"/>
     /// server-side. Returns the content plus its MIME type.

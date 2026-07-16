@@ -20,12 +20,12 @@ use serde_json::{json, Map, Value};
 use tonic::transport::Channel;
 
 use atlas_ipc::{
-    AtlasQueryClient, Confidence, DiagnoseRequest, IncidentKind, L4Protocol,
+    AtlasQueryClient, Confidence, DiagnoseRequest, GpuAvailabilityReason, GpuSensorKind,
+    GpuTelemetrySource, GpuTemperatureKind, GpuThrottleReason, IncidentKind, L4Protocol,
     ListConnectionsRequest, ListEventsRequest, ListIncidentsRequest, ListScheduledTasksRequest,
     ListServicesRequest, ListStartupRequest, MetricKind, ProcessDetailRequest, ProcessRole,
     QueryRangeRequest, SearchRequest, ServiceStartType, ServiceState, Severity, SnapshotRequest,
-    StartupSource, TcpState, TimeRange, GpuAvailabilityReason, GpuSensorKind,
-    GpuTelemetrySource, GpuTemperatureKind, GpuThrottleReason,
+    StartupSource, TcpState, TimeRange,
 };
 
 use crate::redact::Redactor;

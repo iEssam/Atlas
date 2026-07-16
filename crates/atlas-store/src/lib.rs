@@ -926,9 +926,21 @@ impl Store {
                  pci_function = excluded.pci_function,
                  driver_date = excluded.driver_date,
                  last_seen_ms = excluded.last_seen_ms",
-            params![adapter_key, name, driver_version, active_display as i64,
-                physical_adapter_index, vendor_id, device_id, pci_domain, pci_bus, pci_device,
-                pci_function, driver_date, seen_ms],
+            params![
+                adapter_key,
+                name,
+                driver_version,
+                active_display as i64,
+                physical_adapter_index,
+                vendor_id,
+                device_id,
+                pci_domain,
+                pci_bus,
+                pci_device,
+                pci_function,
+                driver_date,
+                seen_ms
+            ],
         )?;
         Ok(self.conn.query_row(
             "SELECT id FROM gpu_adapter WHERE adapter_key = ?1",
@@ -944,14 +956,27 @@ impl Store {
                     pci_function, driver_date, first_seen_ms, last_seen_ms
              FROM gpu_adapter ORDER BY active_display DESC, id ASC",
         )?;
-        let rows = stmt.query_map([], |row| Ok(GpuAdapterRow {
-            id: row.get(0)?, adapter_key: row.get(1)?, name: row.get(2)?,
-            driver_version: row.get(3)?, active_display: row.get::<_, i64>(4)? != 0,
-            physical_adapter_index: row.get(5)?, vendor_id: row.get(6)?, device_id: row.get(7)?,
-            pci_domain: row.get(8)?, pci_bus: row.get(9)?, pci_device: row.get(10)?,
-            pci_function: row.get(11)?, driver_date: row.get(12)?,
-            first_seen_ms: row.get(13)?, last_seen_ms: row.get(14)?,
-        }))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(GpuAdapterRow {
+                    id: row.get(0)?,
+                    adapter_key: row.get(1)?,
+                    name: row.get(2)?,
+                    driver_version: row.get(3)?,
+                    active_display: row.get::<_, i64>(4)? != 0,
+                    physical_adapter_index: row.get(5)?,
+                    vendor_id: row.get(6)?,
+                    device_id: row.get(7)?,
+                    pci_domain: row.get(8)?,
+                    pci_bus: row.get(9)?,
+                    pci_device: row.get(10)?,
+                    pci_function: row.get(11)?,
+                    driver_date: row.get(12)?,
+                    first_seen_ms: row.get(13)?,
+                    last_seen_ms: row.get(14)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
 
@@ -3644,30 +3669,67 @@ mod tests {
     fn v15_migration_adds_gpu_identity_metadata_to_v14_database() {
         let store = Store::open_in_memory().unwrap();
         for column in [
-            "driver_date", "pci_function", "pci_device", "pci_bus", "pci_domain",
-            "device_id", "vendor_id", "physical_adapter_index",
+            "driver_date",
+            "pci_function",
+            "pci_device",
+            "pci_bus",
+            "pci_domain",
+            "device_id",
+            "vendor_id",
+            "physical_adapter_index",
         ] {
-            store.conn.execute_batch(&format!("ALTER TABLE gpu_adapter DROP COLUMN {column};")).unwrap();
+            store
+                .conn
+                .execute_batch(&format!("ALTER TABLE gpu_adapter DROP COLUMN {column};"))
+                .unwrap();
         }
-        store.conn.execute_batch("PRAGMA user_version = 14;").unwrap();
+        store
+            .conn
+            .execute_batch("PRAGMA user_version = 14;")
+            .unwrap();
         store.migrate().unwrap();
-        let version: i64 = store.conn.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
+        let version: i64 = store
+            .conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
         assert_eq!(version, 15);
         for column in [
-            "physical_adapter_index", "vendor_id", "device_id", "pci_domain", "pci_bus",
-            "pci_device", "pci_function", "driver_date",
+            "physical_adapter_index",
+            "vendor_id",
+            "device_id",
+            "pci_domain",
+            "pci_bus",
+            "pci_device",
+            "pci_function",
+            "driver_date",
         ] {
-            assert!(column_exists(&store.conn, "gpu_adapter", column).unwrap(), "missing {column}");
+            assert!(
+                column_exists(&store.conn, "gpu_adapter", column).unwrap(),
+                "missing {column}"
+            );
         }
     }
 
     #[test]
     fn gpu_adapter_v15_metadata_round_trips() {
         let store = Store::open_in_memory().unwrap();
-        let id = store.upsert_gpu_adapter(
-            "00000001:00000002:p1", "GPU", "32.0", true, 1, 0x10de, 0x2489,
-            0, 1, 0, 0, "2026-05-19", 1_234,
-        ).unwrap();
+        let id = store
+            .upsert_gpu_adapter(
+                "00000001:00000002:p1",
+                "GPU",
+                "32.0",
+                true,
+                1,
+                0x10de,
+                0x2489,
+                0,
+                1,
+                0,
+                0,
+                "2026-05-19",
+                1_234,
+            )
+            .unwrap();
         let rows = store.list_gpu_adapters().unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, id);

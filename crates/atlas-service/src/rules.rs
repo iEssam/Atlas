@@ -167,7 +167,7 @@ impl ResolvableRule {
             Trigger::OnAcPower => env.on_ac,
             Trigger::OnDcPower => !env.on_ac,
             Trigger::OnFullscreen => false, // decided per-process by the caller
-            Trigger::OnGpuLoad => false, // decided per-process by the caller
+            Trigger::OnGpuLoad => false,    // decided per-process by the caller
             Trigger::OnGpuThermalThrottle => env.gpu_thermal_throttling,
         }
     }
@@ -362,7 +362,9 @@ pub mod engine {
     };
     use atlas_store::{AuditRow, DynProtRow};
 
-    use super::{resolve, Affinity, EffectivePolicy, Env, Priority, ProcInput, ResolvableRule, Trigger};
+    use super::{
+        resolve, Affinity, EffectivePolicy, Env, Priority, ProcInput, ResolvableRule, Trigger,
+    };
     use crate::broker::is_protected_process;
     use crate::dynamic_protection::{is_candidate, restore_reason, DynConfig, RestoreReason};
     use crate::ipc::SharedStore;
@@ -579,7 +581,11 @@ pub mod engine {
             Env {
                 on_ac: power_is_ac().unwrap_or(true),
                 foreground_pid: foreground_pid(),
-                gpu_thermal_throttling: set.gpu.adapters.iter().any(|a| a.thermal_throttling == Some(true)),
+                gpu_thermal_throttling: set
+                    .gpu
+                    .adapters
+                    .iter()
+                    .any(|a| a.thermal_throttling == Some(true)),
             }
         }
 
@@ -654,7 +660,10 @@ pub mod engine {
             // 1. Resolve every process's effective policy (pure — applies nothing
             //    yet) and gather the facts both appliers need.
             let mut obs: Vec<Obs> = Vec::with_capacity(set.processes.len());
-            let mut gpu_streaks = match self.gpu_rule_streaks.lock() { Ok(v) => v, Err(_) => return };
+            let mut gpu_streaks = match self.gpu_rule_streaks.lock() {
+                Ok(v) => v,
+                Err(_) => return,
+            };
             for p in &set.processes {
                 let key = p.key;
                 let protected = is_protected_process(&p.image_name, key.pid, p.session_id);
@@ -664,16 +673,22 @@ pub mod engine {
                     protected,
                     gpu_permille: p.gpu_permille,
                 };
-                let eligible: Vec<_> = rules.iter().filter(|rule| {
-                    if rule.trigger != Trigger::OnGpuLoad { return true; }
-                    let streak_key = (rule.id, key);
-                    if p.gpu_permille < rule.gpu_threshold_permille {
-                        gpu_streaks.remove(&streak_key);
-                        return false;
-                    }
-                    let start = *gpu_streaks.entry(streak_key).or_insert(set.ts_ms);
-                    set.ts_ms.saturating_sub(start) >= rule.gpu_duration_seconds as i64 * 1000
-                }).cloned().collect();
+                let eligible: Vec<_> = rules
+                    .iter()
+                    .filter(|rule| {
+                        if rule.trigger != Trigger::OnGpuLoad {
+                            return true;
+                        }
+                        let streak_key = (rule.id, key);
+                        if p.gpu_permille < rule.gpu_threshold_permille {
+                            gpu_streaks.remove(&streak_key);
+                            return false;
+                        }
+                        let start = *gpu_streaks.entry(streak_key).or_insert(set.ts_ms);
+                        set.ts_ms.saturating_sub(start) >= rule.gpu_duration_seconds as i64 * 1000
+                    })
+                    .cloned()
+                    .collect();
                 let policy = resolve(&eligible, &proc, &env);
                 let governed = !policy.blocked && !policy.is_empty();
                 let foreground = env.foreground_pid != 0 && key.pid == env.foreground_pid;
@@ -1296,12 +1311,18 @@ pub mod engine {
         pub fn simulate(&self, sim: &ResolvableRule, others: &[ResolvableRule]) -> SimResult {
             let mut gpu_collector = atlas_collectors::GpuCollector::new();
             let gpu = gpu_collector.sample();
-            let gpu_by_pid: HashMap<u32, u32> = gpu.processes.iter()
-                .map(|p| (p.pid, p.utilization_permille)).collect();
+            let gpu_by_pid: HashMap<u32, u32> = gpu
+                .processes
+                .iter()
+                .map(|p| (p.pid, p.utilization_permille))
+                .collect();
             let env = Env {
                 on_ac: power_is_ac().unwrap_or(true),
                 foreground_pid: foreground_pid(),
-                gpu_thermal_throttling: gpu.adapters.iter().any(|a| a.thermal_throttling == Some(true)),
+                gpu_thermal_throttling: gpu
+                    .adapters
+                    .iter()
+                    .any(|a| a.thermal_throttling == Some(true)),
             };
             // Resolve using only the simulated rule so the "new" column reflects
             // exactly what this rule would do (conflicts are reported separately).

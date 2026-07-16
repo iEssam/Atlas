@@ -581,6 +581,72 @@ message DiagnoseReply {
   Diagnosis diagnosis = 3;
 }
 
+// ---------------------------------------------------------------------------
+// Evidence-backed insights. These are deterministic interpretations assembled
+// from measured snapshots and recorded incidents. They never execute actions;
+// destinations only deep-link the first-party UI into an existing safe flow.
+// ---------------------------------------------------------------------------
+
+enum InsightKind {
+  INSIGHT_KIND_UNSPECIFIED = 0;
+  INSIGHT_KIND_CPU_PRESSURE = 1;
+  INSIGHT_KIND_MEMORY_PRESSURE = 2;
+  INSIGHT_KIND_GPU_MEMORY_PRESSURE = 3;
+  INSIGHT_KIND_GPU_THERMAL_LIMIT = 4;
+  INSIGHT_KIND_RESOURCE_STATE_CLEAR = 5;
+}
+
+enum InsightStatus {
+  INSIGHT_STATUS_UNSPECIFIED = 0;
+  INSIGHT_STATUS_EMERGING = 1;
+  INSIGHT_STATUS_ACTIVE = 2;
+  INSIGHT_STATUS_RESOLVED = 3;
+  INSIGHT_STATUS_CLEAR = 4;
+  INSIGHT_STATUS_LIMITED = 5;
+}
+
+message InsightRecommendation {
+  string text = 1;
+  string risk = 2;
+  string reversibility = 3;
+  string verification_plan = 4;
+  // First-party route hint such as "process:4242:1337000" or "graphics".
+  // It is descriptive only and never authorizes a mutation.
+  string destination = 5;
+}
+
+message Insight {
+  // Stable deduplication identity derived from kind + affected entity.
+  string fingerprint = 1;
+  InsightKind kind = 2;
+  InsightStatus status = 3;
+  Severity severity = 4;
+  Confidence confidence = 5;
+  string title = 6;
+  string observation = 7;
+  string significance = 8;
+  TimeRange range = 9;
+  repeated EvidenceItem evidence = 10;
+  repeated ContributingFactor factors = 11;
+  repeated string alternatives = 12;
+  repeated string limitations = 13;
+  InsightRecommendation recommendation = 14;
+  int64 updated_ms = 15;
+}
+
+message ListInsightsRequest {
+  bool active_only = 1;
+  // 0 = service default (10).
+  uint32 limit = 2;
+}
+
+message ListInsightsReply {
+  repeated Insight insights = 1;
+  bool truncated = 2;
+  // Human-readable scope of the currently implemented playbooks.
+  string coverage_summary = 3;
+}
+
 enum ReportFormat {
   REPORT_FORMAT_UNSPECIFIED = 0;
   REPORT_HTML = 1;
@@ -624,6 +690,7 @@ service AtlasQuery {
   rpc ListServices(ListServicesRequest) returns (ListServicesReply);
   rpc ListIncidents(ListIncidentsRequest) returns (ListIncidentsReply);
   rpc Diagnose(DiagnoseRequest) returns (DiagnoseReply);
+  rpc ListInsights(ListInsightsRequest) returns (ListInsightsReply);
   rpc GenerateReport(GenerateReportRequest) returns (GenerateReportReply);
   rpc GetProcessDetail(ProcessDetailRequest) returns (ProcessDetailReply);
   rpc ListHandles(ListHandlesRequest) returns (ListHandlesReply);

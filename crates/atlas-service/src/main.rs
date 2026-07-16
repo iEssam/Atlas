@@ -13,6 +13,7 @@ mod diagnostics;
 mod dynamic_protection;
 #[cfg(windows)]
 mod forensics;
+mod insights;
 #[cfg(windows)]
 mod ipc;
 #[cfg(windows)]
@@ -1704,12 +1705,27 @@ fn capture_tick(set: &SampleSet) -> TickSamples {
         gpu_permille: set.system.gpu_permille,
         gpu_dedicated_used: set.system.gpu_dedicated_used,
         gpu_shared_used: set.system.gpu_shared_used,
-        gpu_memory_budget: set.system.gpu_dedicated_budget.saturating_add(set.system.gpu_shared_budget),
-        gpu_throttling: if set.gpu.adapters.iter().any(|a| a.thermal_throttling == Some(true)) {
+        gpu_memory_budget: set
+            .system
+            .gpu_dedicated_budget
+            .saturating_add(set.system.gpu_shared_budget),
+        gpu_throttling: if set
+            .gpu
+            .adapters
+            .iter()
+            .any(|a| a.thermal_throttling == Some(true))
+        {
             Some(true)
-        } else if set.gpu.adapters.iter().any(|a| a.thermal_throttling == Some(false)) {
+        } else if set
+            .gpu
+            .adapters
+            .iter()
+            .any(|a| a.thermal_throttling == Some(false))
+        {
             Some(false)
-        } else { None },
+        } else {
+            None
+        },
     };
     let procs = set
         .processes
@@ -1819,13 +1835,37 @@ impl BlockWriter {
             ts_ms,
             sys.handle_count as f64,
         );
-        let _ = self.heads.append(SeriesKey::system(Metric::SysGpuPermille), ts_ms, sys.gpu_permille as f64);
-        let _ = self.heads.append(SeriesKey::system(Metric::SysGpuDedicatedUsed), ts_ms, sys.gpu_dedicated_used as f64);
-        let _ = self.heads.append(SeriesKey::system(Metric::SysGpuSharedUsed), ts_ms, sys.gpu_shared_used as f64);
-        let _ = self.heads.append(SeriesKey::system(Metric::SysGpuMemoryUsed), ts_ms, sys.gpu_dedicated_used.saturating_add(sys.gpu_shared_used) as f64);
-        let _ = self.heads.append(SeriesKey::system(Metric::SysGpuMemoryBudget), ts_ms, sys.gpu_memory_budget as f64);
+        let _ = self.heads.append(
+            SeriesKey::system(Metric::SysGpuPermille),
+            ts_ms,
+            sys.gpu_permille as f64,
+        );
+        let _ = self.heads.append(
+            SeriesKey::system(Metric::SysGpuDedicatedUsed),
+            ts_ms,
+            sys.gpu_dedicated_used as f64,
+        );
+        let _ = self.heads.append(
+            SeriesKey::system(Metric::SysGpuSharedUsed),
+            ts_ms,
+            sys.gpu_shared_used as f64,
+        );
+        let _ = self.heads.append(
+            SeriesKey::system(Metric::SysGpuMemoryUsed),
+            ts_ms,
+            sys.gpu_dedicated_used.saturating_add(sys.gpu_shared_used) as f64,
+        );
+        let _ = self.heads.append(
+            SeriesKey::system(Metric::SysGpuMemoryBudget),
+            ts_ms,
+            sys.gpu_memory_budget as f64,
+        );
         if let Some(v) = sys.gpu_throttling {
-            let _ = self.heads.append(SeriesKey::system(Metric::SysGpuThrottling), ts_ms, if v { 1.0 } else { 0.0 });
+            let _ = self.heads.append(
+                SeriesKey::system(Metric::SysGpuThrottling),
+                ts_ms,
+                if v { 1.0 } else { 0.0 },
+            );
         }
     }
 
@@ -1856,24 +1896,59 @@ impl BlockWriter {
             ts_ms,
             m.write_bps as f64,
         );
-        let _ = self.heads.append(SeriesKey::new(Metric::GpuPermille, scope), ts_ms, m.gpu_permille as f64);
-        let _ = self.heads.append(SeriesKey::new(Metric::GpuDedicatedBytes, scope), ts_ms, m.gpu_dedicated_bytes as f64);
-        let _ = self.heads.append(SeriesKey::new(Metric::GpuSharedBytes, scope), ts_ms, m.gpu_shared_bytes as f64);
+        let _ = self.heads.append(
+            SeriesKey::new(Metric::GpuPermille, scope),
+            ts_ms,
+            m.gpu_permille as f64,
+        );
+        let _ = self.heads.append(
+            SeriesKey::new(Metric::GpuDedicatedBytes, scope),
+            ts_ms,
+            m.gpu_dedicated_bytes as f64,
+        );
+        let _ = self.heads.append(
+            SeriesKey::new(Metric::GpuSharedBytes, scope),
+            ts_ms,
+            m.gpu_shared_bytes as f64,
+        );
         self.scope_last_seen.insert(scope, ts_ms);
     }
 
-    fn append_gpu_adapter(&mut self, ts_ms: i64, scope: i64, a: &atlas_collectors::GpuAdapterSample) {
-        let mut add = |metric, value| { let _ = self.heads.append(SeriesKey::new(metric, scope), ts_ms, value); };
+    fn append_gpu_adapter(
+        &mut self,
+        ts_ms: i64,
+        scope: i64,
+        a: &atlas_collectors::GpuAdapterSample,
+    ) {
+        let mut add = |metric, value| {
+            let _ = self
+                .heads
+                .append(SeriesKey::new(metric, scope), ts_ms, value);
+        };
         add(Metric::GpuAdapterPermille, a.utilization_permille as f64);
         add(Metric::GpuAdapterDedicatedUsed, a.dedicated_used as f64);
         add(Metric::GpuAdapterSharedUsed, a.shared_used as f64);
-        if let Some(v) = a.temperature_c { add(Metric::GpuAdapterTemperatureC, v); }
-        if let Some(v) = a.power_w { add(Metric::GpuAdapterPowerW, v); }
-        if let Some(v) = a.power_percent { add(Metric::GpuAdapterPowerPercent, v); }
-        if let Some(v) = a.core_clock_mhz { add(Metric::GpuAdapterCoreClockMhz, v as f64); }
-        if let Some(v) = a.memory_clock_mhz { add(Metric::GpuAdapterMemoryClockMhz, v as f64); }
-        if let Some(v) = a.fan_rpm { add(Metric::GpuAdapterFanRpm, v as f64); }
-        if let Some(v) = a.fan_percent { add(Metric::GpuAdapterFanPercent, v); }
+        if let Some(v) = a.temperature_c {
+            add(Metric::GpuAdapterTemperatureC, v);
+        }
+        if let Some(v) = a.power_w {
+            add(Metric::GpuAdapterPowerW, v);
+        }
+        if let Some(v) = a.power_percent {
+            add(Metric::GpuAdapterPowerPercent, v);
+        }
+        if let Some(v) = a.core_clock_mhz {
+            add(Metric::GpuAdapterCoreClockMhz, v as f64);
+        }
+        if let Some(v) = a.memory_clock_mhz {
+            add(Metric::GpuAdapterMemoryClockMhz, v as f64);
+        }
+        if let Some(v) = a.fan_rpm {
+            add(Metric::GpuAdapterFanRpm, v as f64);
+        }
+        if let Some(v) = a.fan_percent {
+            add(Metric::GpuAdapterFanPercent, v);
+        }
         for temperature in &a.temperatures {
             match temperature.kind {
                 atlas_collectors::GpuTemperatureKind::Memory => {
@@ -1885,7 +1960,9 @@ impl BlockWriter {
                 _ => {}
             }
         }
-        if let Some(v) = a.thermal_throttling { add(Metric::GpuAdapterThrottling, if v { 1.0 } else { 0.0 }); }
+        if let Some(v) = a.thermal_throttling {
+            add(Metric::GpuAdapterThrottling, if v { 1.0 } else { 0.0 });
+        }
     }
 
     /// Seals heads that hit the point/age cap.
@@ -1973,10 +2050,18 @@ fn writer_thread(
             bw.append_sys(tick.ts_ms, &tick.sys);
             for adapter in &tick.gpu_adapters {
                 let scope = store.upsert_gpu_adapter(
-                    &adapter.stable_key(), &adapter.name, &adapter.driver_version,
-                    adapter.active_display, adapter.physical_index, adapter.vendor_id,
-                    adapter.device_id, adapter.pci_domain, adapter.pci_bus,
-                    adapter.pci_device, adapter.pci_function, &adapter.driver_date,
+                    &adapter.stable_key(),
+                    &adapter.name,
+                    &adapter.driver_version,
+                    adapter.active_display,
+                    adapter.physical_index,
+                    adapter.vendor_id,
+                    adapter.device_id,
+                    adapter.pci_domain,
+                    adapter.pci_bus,
+                    adapter.pci_device,
+                    adapter.pci_function,
+                    &adapter.driver_date,
                     tick.ts_ms,
                 )?;
                 bw.append_gpu_adapter(tick.ts_ms, scope, adapter);
@@ -4764,7 +4849,9 @@ fn parse_trigger(s: &str) -> Result<i32> {
         "gpu-load" | "gpu" => T::OnGpuLoad,
         "gpu-thermal" | "gpu-throttle" => T::OnGpuThermalThrottle,
         other => {
-            anyhow::bail!("unknown trigger '{other}' (while-running|ac|dc|fullscreen|gpu-load|gpu-thermal)")
+            anyhow::bail!(
+                "unknown trigger '{other}' (while-running|ac|dc|fullscreen|gpu-load|gpu-thermal)"
+            )
         }
     };
     Ok(v as i32)

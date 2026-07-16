@@ -85,8 +85,7 @@ const XPATH_BUGCHECK: &str =
 const XPATH_KERNEL_POWER: &str =
     "*[System[(Provider[@Name='Microsoft-Windows-Kernel-Power']) and (EventID=41)]]";
 /// Display 4101: Windows recovered a graphics driver after a timeout/reset.
-const XPATH_DISPLAY_RESET: &str =
-    "*[System[(Provider[@Name='Display']) and (EventID=4101)]]";
+const XPATH_DISPLAY_RESET: &str = "*[System[(Provider[@Name='Display']) and (EventID=4101)]]";
 
 /// A sensible default cap when the caller passes `max == 0`.
 const DEFAULT_MAX: usize = 200;

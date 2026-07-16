@@ -499,10 +499,14 @@ fn render_text(data: &BundleData) -> String {
         ));
         s.push_str(&format!(
             "GPU memory dedicated {}/{}, shared {}/{}\n",
-            human_bytes(h.gpu_dedicated_used), human_bytes(h.gpu_dedicated_budget),
-            human_bytes(h.gpu_shared_used), human_bytes(h.gpu_shared_budget),
+            human_bytes(h.gpu_dedicated_used),
+            human_bytes(h.gpu_dedicated_budget),
+            human_bytes(h.gpu_shared_used),
+            human_bytes(h.gpu_shared_budget),
         ));
-        for detail in &h.gpu_details { s.push_str(&format!("GPU: {detail}\n")); }
+        for detail in &h.gpu_details {
+            s.push_str(&format!("GPU: {detail}\n"));
+        }
         s.push_str("Top consumers:\n");
         if h.top.is_empty() {
             s.push_str("  (none)\n");
@@ -935,7 +939,10 @@ fn render_html(data: &BundleData) -> String {
         let gpu_details = if h.gpu_details.is_empty() {
             "<li><em>No GPU adapter details available</em></li>".to_string()
         } else {
-            h.gpu_details.iter().map(|line| format!("<li>{}</li>", esc(line))).collect::<String>()
+            h.gpu_details
+                .iter()
+                .map(|line| format!("<li>{}</li>", esc(line)))
+                .collect::<String>()
         };
         let inner = format!(
             "<p class=\"summary\">{}</p>\

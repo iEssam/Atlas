@@ -48,24 +48,24 @@ pub use v0::{
     CreateBookmarkRequest, DiagnoseReply, DiagnoseRequest, Diagnosis, EventRow, EvidenceItem,
     ExecuteActionReply, ExecuteActionRequest, FindResourceOwnersReply, FindResourceOwnersRequest,
     GenerateReportReply, GenerateReportRequest, GetBatteryStatusReply, GetBatteryStatusRequest,
-    GpuAdapterTelemetry, GpuAvailabilityReason, GpuEngineClass, GpuEngineTelemetry,
-    GpuSensorAvailability, GpuSensorKind, GpuTelemetrySource, GpuTemperatureKind,
-    GpuTemperatureTelemetry, GpuThrottleReason,
-    GetThermalReply, GetThermalRequest, HandleRow, Incident, IncidentKind, L4Protocol,
+    GetThermalReply, GetThermalRequest, GpuAdapterTelemetry, GpuAvailabilityReason, GpuEngineClass,
+    GpuEngineTelemetry, GpuSensorAvailability, GpuSensorKind, GpuTelemetrySource,
+    GpuTemperatureKind, GpuTemperatureTelemetry, GpuThrottleReason, HandleRow, Incident,
+    IncidentKind, Insight, InsightKind, InsightRecommendation, InsightStatus, L4Protocol,
     ListBookmarksReply, ListBookmarksRequest, ListBootsReply, ListBootsRequest,
     ListConnectionsReply, ListConnectionsRequest, ListEventsReply, ListEventsRequest,
     ListHandlesReply, ListHandlesRequest, ListIncidentsReply, ListIncidentsRequest,
-    ListListeningPortsReply, ListListeningPortsRequest, ListModulesReply, ListModulesRequest,
-    ListPrivacyEventsReply, ListPrivacyEventsRequest, ListPrivacyUsageReply,
-    ListPrivacyUsageRequest, ListScheduledTasksReply, ListScheduledTasksRequest, ListServicesReply,
-    ListServicesRequest, ListStartupReply, ListStartupRequest, ListThreadsReply,
-    ListThreadsRequest, ListeningPort, MetricKind, ModuleRow, PrepareActionReply,
-    PrepareActionRequest, PrivacyEvent, PrivacyUsage, ProcessActionKind, ProcessDetail,
-    ProcessDetailReply, ProcessDetailRequest, ProcessHit, ProcessRole, ProcessRow, QueryRangeReply,
-    QueryRangeRequest, RangeBucket, RedactionOptions, ReportFormat, ResourceOwner, ScheduledTask,
-    SearchHit, SearchReply, SearchRequest, ServiceEntry, ServiceStartType, ServiceState, Severity,
-    SnapshotReply, SnapshotRequest, StartupEntry, StartupSource, SystemGauges, TcpState,
-    ThermalSensor, ThreadRow, TimeRange,
+    ListInsightsReply, ListInsightsRequest, ListListeningPortsReply, ListListeningPortsRequest,
+    ListModulesReply, ListModulesRequest, ListPrivacyEventsReply, ListPrivacyEventsRequest,
+    ListPrivacyUsageReply, ListPrivacyUsageRequest, ListScheduledTasksReply,
+    ListScheduledTasksRequest, ListServicesReply, ListServicesRequest, ListStartupReply,
+    ListStartupRequest, ListThreadsReply, ListThreadsRequest, ListeningPort, MetricKind, ModuleRow,
+    PrepareActionReply, PrepareActionRequest, PrivacyEvent, PrivacyUsage, ProcessActionKind,
+    ProcessDetail, ProcessDetailReply, ProcessDetailRequest, ProcessHit, ProcessRole, ProcessRow,
+    QueryRangeReply, QueryRangeRequest, RangeBucket, RedactionOptions, ReportFormat, ResourceOwner,
+    ScheduledTask, SearchHit, SearchReply, SearchRequest, ServiceEntry, ServiceStartType,
+    ServiceState, Severity, SnapshotReply, SnapshotRequest, StartupEntry, StartupSource,
+    SystemGauges, TcpState, ThermalSensor, ThreadRow, TimeRange,
 };
 // R2 advanced privacy alerts (AtlasQuery, PRD §9.10.3).
 pub use v0::{
@@ -161,6 +161,11 @@ pub const CAP_SERVICES_INVENTORY: &str = "services_inventory";
 /// pressure) over the recorded series and serves them (`ListIncidents`,
 /// PRD §9.3.7).
 pub const CAP_INCIDENT_DETECTION: &str = "incident_detection";
+
+/// Deterministic evidence-backed interpretations over live measurements and
+/// recorded incidents. Read-only; recommendation destinations never authorize
+/// actions and still flow through the first-party consent broker.
+pub const CAP_INSIGHTS: &str = "insights";
 
 /// M8: the service builds evidence-based diagnoses of incidents from recorded
 /// data — no LLM, no fabrication (`Diagnose`, PRD §9.15).
