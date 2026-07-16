@@ -71,24 +71,24 @@ public class MetricsRingLayoutTests
     {
         // The reader uses the RingHeaderLayout constants directly; assert they
         // equal the marshalled struct offsets (both derived from shm.rs).
-        Assert.Equal((long)Marshal.OffsetOf<RingHeaderBlittable>(nameof(RingHeaderBlittable.Magic)), RingHeaderLayout.MagicOffset);
-        Assert.Equal((long)Marshal.OffsetOf<RingHeaderBlittable>(nameof(RingHeaderBlittable.LayoutVersion)), RingHeaderLayout.LayoutVersionOffset);
-        Assert.Equal((long)Marshal.OffsetOf<RingHeaderBlittable>(nameof(RingHeaderBlittable.Seq)), RingHeaderLayout.SeqOffset);
-        Assert.Equal((long)Marshal.OffsetOf<RingHeaderBlittable>(nameof(RingHeaderBlittable.TsMs)), RingHeaderLayout.TsMsOffset);
-        Assert.Equal((long)Marshal.OffsetOf<RingHeaderBlittable>(nameof(RingHeaderBlittable.CpuPermille)), RingHeaderLayout.CpuPermilleOffset);
-        Assert.Equal((long)Marshal.OffsetOf<RingHeaderBlittable>(nameof(RingHeaderBlittable.ProcessCount)), RingHeaderLayout.ProcessCountOffset);
-        Assert.Equal((long)Marshal.OffsetOf<RingHeaderBlittable>(nameof(RingHeaderBlittable.ThreadCount)), RingHeaderLayout.ThreadCountOffset);
-        Assert.Equal((long)Marshal.OffsetOf<RingHeaderBlittable>(nameof(RingHeaderBlittable.HandleCount)), RingHeaderLayout.HandleCountOffset);
-        Assert.Equal((long)Marshal.OffsetOf<RingHeaderBlittable>(nameof(RingHeaderBlittable.GpuPermille)), RingHeaderLayout.GpuPermilleOffset);
-        Assert.Equal((long)Marshal.OffsetOf<RingHeaderBlittable>(nameof(RingHeaderBlittable.MemUsed)), RingHeaderLayout.MemUsedOffset);
-        Assert.Equal((long)Marshal.OffsetOf<RingHeaderBlittable>(nameof(RingHeaderBlittable.MemTotal)), RingHeaderLayout.MemTotalOffset);
-        Assert.Equal((long)Marshal.OffsetOf<RingHeaderBlittable>(nameof(RingHeaderBlittable.CommitUsed)), RingHeaderLayout.CommitUsedOffset);
-        Assert.Equal((long)Marshal.OffsetOf<RingHeaderBlittable>(nameof(RingHeaderBlittable.CommitLimit)), RingHeaderLayout.CommitLimitOffset);
-        Assert.Equal((long)Marshal.OffsetOf<RingHeaderBlittable>(nameof(RingHeaderBlittable.GpuDedicatedUsed)), RingHeaderLayout.GpuDedicatedUsedOffset);
-        Assert.Equal((long)Marshal.OffsetOf<RingHeaderBlittable>(nameof(RingHeaderBlittable.GpuDedicatedBudget)), RingHeaderLayout.GpuDedicatedBudgetOffset);
-        Assert.Equal((long)Marshal.OffsetOf<RingHeaderBlittable>(nameof(RingHeaderBlittable.GpuSharedUsed)), RingHeaderLayout.GpuSharedUsedOffset);
-        Assert.Equal((long)Marshal.OffsetOf<RingHeaderBlittable>(nameof(RingHeaderBlittable.GpuSharedBudget)), RingHeaderLayout.GpuSharedBudgetOffset);
-        Assert.Equal((long)Marshal.OffsetOf<RingHeaderBlittable>(nameof(RingHeaderBlittable.RowCount)), RingHeaderLayout.RowCountOffset);
+        Assert.Equal(RingHeaderLayout.MagicOffset, (long)Marshal.OffsetOf<RingHeaderBlittable>(nameof(RingHeaderBlittable.Magic)));
+        Assert.Equal(RingHeaderLayout.LayoutVersionOffset, (long)Marshal.OffsetOf<RingHeaderBlittable>(nameof(RingHeaderBlittable.LayoutVersion)));
+        Assert.Equal(RingHeaderLayout.SeqOffset, (long)Marshal.OffsetOf<RingHeaderBlittable>(nameof(RingHeaderBlittable.Seq)));
+        Assert.Equal(RingHeaderLayout.TsMsOffset, (long)Marshal.OffsetOf<RingHeaderBlittable>(nameof(RingHeaderBlittable.TsMs)));
+        Assert.Equal(RingHeaderLayout.CpuPermilleOffset, (long)Marshal.OffsetOf<RingHeaderBlittable>(nameof(RingHeaderBlittable.CpuPermille)));
+        Assert.Equal(RingHeaderLayout.ProcessCountOffset, (long)Marshal.OffsetOf<RingHeaderBlittable>(nameof(RingHeaderBlittable.ProcessCount)));
+        Assert.Equal(RingHeaderLayout.ThreadCountOffset, (long)Marshal.OffsetOf<RingHeaderBlittable>(nameof(RingHeaderBlittable.ThreadCount)));
+        Assert.Equal(RingHeaderLayout.HandleCountOffset, (long)Marshal.OffsetOf<RingHeaderBlittable>(nameof(RingHeaderBlittable.HandleCount)));
+        Assert.Equal(RingHeaderLayout.GpuPermilleOffset, (long)Marshal.OffsetOf<RingHeaderBlittable>(nameof(RingHeaderBlittable.GpuPermille)));
+        Assert.Equal(RingHeaderLayout.MemUsedOffset, (long)Marshal.OffsetOf<RingHeaderBlittable>(nameof(RingHeaderBlittable.MemUsed)));
+        Assert.Equal(RingHeaderLayout.MemTotalOffset, (long)Marshal.OffsetOf<RingHeaderBlittable>(nameof(RingHeaderBlittable.MemTotal)));
+        Assert.Equal(RingHeaderLayout.CommitUsedOffset, (long)Marshal.OffsetOf<RingHeaderBlittable>(nameof(RingHeaderBlittable.CommitUsed)));
+        Assert.Equal(RingHeaderLayout.CommitLimitOffset, (long)Marshal.OffsetOf<RingHeaderBlittable>(nameof(RingHeaderBlittable.CommitLimit)));
+        Assert.Equal(RingHeaderLayout.GpuDedicatedUsedOffset, (long)Marshal.OffsetOf<RingHeaderBlittable>(nameof(RingHeaderBlittable.GpuDedicatedUsed)));
+        Assert.Equal(RingHeaderLayout.GpuDedicatedBudgetOffset, (long)Marshal.OffsetOf<RingHeaderBlittable>(nameof(RingHeaderBlittable.GpuDedicatedBudget)));
+        Assert.Equal(RingHeaderLayout.GpuSharedUsedOffset, (long)Marshal.OffsetOf<RingHeaderBlittable>(nameof(RingHeaderBlittable.GpuSharedUsed)));
+        Assert.Equal(RingHeaderLayout.GpuSharedBudgetOffset, (long)Marshal.OffsetOf<RingHeaderBlittable>(nameof(RingHeaderBlittable.GpuSharedBudget)));
+        Assert.Equal(RingHeaderLayout.RowCountOffset, (long)Marshal.OffsetOf<RingHeaderBlittable>(nameof(RingHeaderBlittable.RowCount)));
     }
 
     // ---- RingRow offsets/size ----------------------------------------------
@@ -121,16 +121,16 @@ public class MetricsRingLayoutTests
     [Fact]
     public void RingRow_OffsetConstants_MatchMarshal()
     {
-        Assert.Equal((long)Marshal.OffsetOf<RingRowBlittable>(nameof(RingRowBlittable.Pid)), RingRowLayout.PidOffset);
-        Assert.Equal((long)Marshal.OffsetOf<RingRowBlittable>(nameof(RingRowBlittable.CpuPermille)), RingRowLayout.CpuPermilleOffset);
-        Assert.Equal((long)Marshal.OffsetOf<RingRowBlittable>(nameof(RingRowBlittable.GpuPermille)), RingRowLayout.GpuPermilleOffset);
-        Assert.Equal((long)Marshal.OffsetOf<RingRowBlittable>(nameof(RingRowBlittable.WorkingSet)), RingRowLayout.WorkingSetOffset);
-        Assert.Equal((long)Marshal.OffsetOf<RingRowBlittable>(nameof(RingRowBlittable.PrivateBytes)), RingRowLayout.PrivateBytesOffset);
-        Assert.Equal((long)Marshal.OffsetOf<RingRowBlittable>(nameof(RingRowBlittable.ReadBps)), RingRowLayout.ReadBpsOffset);
-        Assert.Equal((long)Marshal.OffsetOf<RingRowBlittable>(nameof(RingRowBlittable.WriteBps)), RingRowLayout.WriteBpsOffset);
-        Assert.Equal((long)Marshal.OffsetOf<RingRowBlittable>(nameof(RingRowBlittable.GpuDedicatedBytes)), RingRowLayout.GpuDedicatedBytesOffset);
-        Assert.Equal((long)Marshal.OffsetOf<RingRowBlittable>(nameof(RingRowBlittable.GpuSharedBytes)), RingRowLayout.GpuSharedBytesOffset);
-        Assert.Equal((long)Marshal.OffsetOf<RingRowBlittable>(nameof(RingRowBlittable.Name)), RingRowLayout.NameOffset);
+        Assert.Equal(RingRowLayout.PidOffset, (long)Marshal.OffsetOf<RingRowBlittable>(nameof(RingRowBlittable.Pid)));
+        Assert.Equal(RingRowLayout.CpuPermilleOffset, (long)Marshal.OffsetOf<RingRowBlittable>(nameof(RingRowBlittable.CpuPermille)));
+        Assert.Equal(RingRowLayout.GpuPermilleOffset, (long)Marshal.OffsetOf<RingRowBlittable>(nameof(RingRowBlittable.GpuPermille)));
+        Assert.Equal(RingRowLayout.WorkingSetOffset, (long)Marshal.OffsetOf<RingRowBlittable>(nameof(RingRowBlittable.WorkingSet)));
+        Assert.Equal(RingRowLayout.PrivateBytesOffset, (long)Marshal.OffsetOf<RingRowBlittable>(nameof(RingRowBlittable.PrivateBytes)));
+        Assert.Equal(RingRowLayout.ReadBpsOffset, (long)Marshal.OffsetOf<RingRowBlittable>(nameof(RingRowBlittable.ReadBps)));
+        Assert.Equal(RingRowLayout.WriteBpsOffset, (long)Marshal.OffsetOf<RingRowBlittable>(nameof(RingRowBlittable.WriteBps)));
+        Assert.Equal(RingRowLayout.GpuDedicatedBytesOffset, (long)Marshal.OffsetOf<RingRowBlittable>(nameof(RingRowBlittable.GpuDedicatedBytes)));
+        Assert.Equal(RingRowLayout.GpuSharedBytesOffset, (long)Marshal.OffsetOf<RingRowBlittable>(nameof(RingRowBlittable.GpuSharedBytes)));
+        Assert.Equal(RingRowLayout.NameOffset, (long)Marshal.OffsetOf<RingRowBlittable>(nameof(RingRowBlittable.Name)));
     }
 
     // ---- Whole-section size ------------------------------------------------

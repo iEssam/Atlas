@@ -23,16 +23,16 @@ internal static class RingLayout
 
     /// <summary>
     /// The row array immediately follows the header. shm.rs RingHeader is
-    /// 80 bytes (see <see cref="RingHeaderLayout.Size"/>); RingRow is 8-byte
+    /// 120 bytes (see <see cref="RingHeaderLayout.Size"/>); RingRow is 8-byte
     /// aligned so no gap is inserted between header and rows.
     /// </summary>
     public const long RowsOffset = RingHeaderLayout.Size;
 
     /// <summary>
-    /// Full section size = header (80) + 64 rows × 104 = 80 + 6656 = 6736.
+    /// Full section size = header (120) + 64 rows x 128 = 8312 bytes.
     /// shm.rs: <c>pub const RING_SIZE: usize = size_of::&lt;RingLayout&gt;();</c>
     /// </summary>
-    public const long Size = RowsOffset + (long)MetricsRing.RingRows * RingRowLayout.Size;
+    public const long Size = RowsOffset + 64L * RingRowLayout.Size;
 }
 
 /// <summary>
