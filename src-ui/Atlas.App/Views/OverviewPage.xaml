@@ -5,20 +5,48 @@
     xmlns:vm="using:Atlas.App.ViewModels">
 
     <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <Grid x:Name="PageLayout" Padding="24" RowSpacing="18">
+        <Grid x:Name="PageLayout" Padding="16,48,16,16" RowSpacing="18"
+              SizeChanged="PageLayout_SizeChanged">
             <VisualStateManager.VisualStateGroups>
-                <VisualStateGroup>
-                    <VisualState x:Name="Compact" />
-                    <VisualState x:Name="Wide">
+                <VisualStateGroup x:Name="LayoutStates">
+                    <VisualState x:Name="Small" />
+                    <VisualState x:Name="Medium">
+                        <VisualState.StateTriggers>
+                            <AdaptiveTrigger MinWindowWidth="640" />
+                        </VisualState.StateTriggers>
+                        <VisualState.Setters>
+                            <Setter Target="PageLayout.Padding" Value="24,48,24,24" />
+                            <Setter Target="MetricColumn1.Width" Value="*" />
+                            <Setter Target="MetricRow1.Height" Value="Auto" />
+                            <Setter Target="GraphicsMetric.(Grid.Row)" Value="0" />
+                            <Setter Target="GraphicsMetric.(Grid.Column)" Value="1" />
+                            <Setter Target="MemoryMetric.(Grid.Row)" Value="1" />
+                            <Setter Target="MemoryMetric.(Grid.Column)" Value="0" />
+                            <Setter Target="ProcessesMetric.(Grid.Row)" Value="1" />
+                            <Setter Target="ProcessesMetric.(Grid.Column)" Value="1" />
+                        </VisualState.Setters>
+                    </VisualState>
+                    <VisualState x:Name="Large">
                         <VisualState.StateTriggers>
                             <AdaptiveTrigger MinWindowWidth="1008" />
                         </VisualState.StateTriggers>
                         <VisualState.Setters>
-                            <Setter Target="EvidencePanel.(Grid.Row)" Value="0" />
-                            <Setter Target="EvidencePanel.(Grid.Column)" Value="1" />
-                            <Setter Target="ConsumersColumn.Width" Value="3*" />
+                            <Setter Target="PageLayout.Padding" Value="24" />
+                            <Setter Target="MetricColumn1.Width" Value="*" />
+                            <Setter Target="MetricColumn2.Width" Value="*" />
+                            <Setter Target="MetricColumn3.Width" Value="*" />
+                            <Setter Target="GraphicsMetric.(Grid.Row)" Value="0" />
+                            <Setter Target="GraphicsMetric.(Grid.Column)" Value="1" />
+                            <Setter Target="MemoryMetric.(Grid.Row)" Value="0" />
+                            <Setter Target="MemoryMetric.(Grid.Column)" Value="2" />
+                            <Setter Target="ProcessesMetric.(Grid.Row)" Value="0" />
+                            <Setter Target="ProcessesMetric.(Grid.Column)" Value="3" />
                             <Setter Target="EvidenceColumn.Width" Value="2*" />
-                            <Setter Target="EvidenceRow.Height" Value="0" />
+                            <Setter Target="ConsumersColumn.Width" Value="3*" />
+                            <Setter Target="ConsumersSection.(Grid.Row)" Value="0" />
+                            <Setter Target="ConsumersSection.(Grid.Column)" Value="1" />
+                            <Setter Target="WideConsumers.Visibility" Value="Visible" />
+                            <Setter Target="CompactConsumers.Visibility" Value="Collapsed" />
                         </VisualState.Setters>
                     </VisualState>
                 </VisualStateGroup>
@@ -40,34 +68,224 @@
                     <TextBlock Text="Overview"
                                Style="{StaticResource AtlasPageHeadingStyle}"
                                AutomationProperties.HeadingLevel="Level1" />
-                    <TextBlock Text="Measured system evidence, recent changes, and the processes using resources now."
-                               Style="{StaticResource AtlasPageDescriptionStyle}" />
+                    <TextBlock Text="Live system evidence and the processes that deserve attention."
+                               Style="{StaticResource AtlasPageDescriptionStyle}"
+                               HorizontalAlignment="Left" />
                 </StackPanel>
-                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                    <FontIcon Glyph="&#xE930;" FontSize="13" Foreground="{ThemeResource AtlasCyanBrush}" />
-                    <TextBlock Text="{x:Bind ViewModel.ConnectionStatus, Mode=OneWay}"
+                <TextBlock Grid.Column="1"
+                           Text="{x:Bind ViewModel.RecencyText, Mode=OneWay}"
+                           Style="{StaticResource CaptionTextBlockStyle}"
+                           VerticalAlignment="Center"
+                           TextAlignment="Right"
+                           TextWrapping="Wrap"
+                           MaxWidth="180"
+                           AutomationProperties.LiveSetting="Polite" />
+            </Grid>
+
+            <Grid x:Name="ReadingGrid" Grid.Row="1" RowSpacing="8" ColumnSpacing="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition x:Name="MetricColumn1" Width="0" />
+                    <ColumnDefinition x:Name="MetricColumn2" Width="0" />
+                    <ColumnDefinition x:Name="MetricColumn3" Width="0" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition x:Name="MetricRow1" Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <StackPanel x:Name="ProcessorMetric" Grid.Row="0" Grid.Column="0" Spacing="2" Padding="8,6">
+                    <TextBlock Text="Processor" Style="{StaticResource CaptionTextBlockStyle}" />
+                    <TextBlock Text="{x:Bind ViewModel.CpuText, Mode=OneWay}"
+                               Style="{StaticResource AtlasMetricValueStyle}" FontSize="22" />
+                </StackPanel>
+                <StackPanel x:Name="GraphicsMetric" Grid.Row="1" Grid.Column="0" Spacing="2" Padding="8,6">
+                    <TextBlock Text="Graphics" Style="{StaticResource CaptionTextBlockStyle}" />
+                    <TextBlock Text="{x:Bind ViewModel.GpuText, Mode=OneWay}"
+                               Style="{StaticResource AtlasMetricValueStyle}" FontSize="22" />
+                </StackPanel>
+                <StackPanel x:Name="MemoryMetric" Grid.Row="2" Grid.Column="0" Spacing="2" Padding="8,6">
+                    <TextBlock Text="Memory" Style="{StaticResource CaptionTextBlockStyle}" />
+                    <TextBlock Text="{x:Bind ViewModel.MemoryText, Mode=OneWay}"
+                               Style="{StaticResource AtlasMetricValueStyle}" FontSize="18" />
+                    <TextBlock Text="{x:Bind CommitLine, Mode=OneWay}"
+                               Style="{StaticResource AtlasMonoMutedStyle}" />
+                </StackPanel>
+                <StackPanel x:Name="ProcessesMetric" Grid.Row="3" Grid.Column="0" Spacing="2" Padding="8,6">
+                    <TextBlock Text="Processes" Style="{StaticResource CaptionTextBlockStyle}" />
+                    <TextBlock Text="{x:Bind ViewModel.ProcessCount, Mode=OneWay}"
+                               Style="{StaticResource AtlasMetricValueStyle}" FontSize="22" />
+                    <TextBlock Text="{x:Bind ViewModel.CountText, Mode=OneWay}"
                                Style="{StaticResource CaptionTextBlockStyle}"
-                               VerticalAlignment="Center" />
+                               TextTrimming="CharacterEllipsis" />
                 </StackPanel>
             </Grid>
 
-            <Border Grid.Row="1" Style="{StaticResource AtlasPanelStyle}" Padding="18,16">
+            <Grid Grid.Row="2" RowSpacing="18" ColumnSpacing="18">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition x:Name="EvidenceColumn" Width="*" />
+                    <ColumnDefinition x:Name="ConsumersColumn" Width="0" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel x:Name="EvidenceSection" Grid.Row="0" Grid.Column="0" Spacing="8">
+                    <TextBlock Text="Recent evidence"
+                               Style="{StaticResource SubtitleTextBlockStyle}"
+                               AutomationProperties.HeadingLevel="Level2" />
+
+                    <Border Style="{StaticResource AtlasInsetStyle}"
+                            Visibility="{x:Bind ViewModel.HasEvidence, Mode=OneWay, Converter={StaticResource InverseBoolToVisibility}}">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <ProgressRing IsActive="{x:Bind ViewModel.IsEvidenceLoading, Mode=OneWay}"
+                                          Width="16" Height="16"
+                                          Visibility="{x:Bind ViewModel.IsEvidenceLoading, Mode=OneWay, Converter={StaticResource BoolToVisibility}}" />
+                            <FontIcon Glyph="&#xE73E;" FontSize="16"
+                                      Foreground="{ThemeResource SystemFillColorSuccessBrush}"
+                                      VerticalAlignment="Center"
+                                      Visibility="{x:Bind ViewModel.IsEvidenceClear, Mode=OneWay, Converter={StaticResource BoolToVisibility}}" />
+                            <TextBlock Text="{x:Bind ViewModel.EvidenceStatus, Mode=OneWay}"
+                                       Style="{StaticResource BodyStrongTextBlockStyle}"
+                                       TextWrapping="Wrap"
+                                       VerticalAlignment="Center"
+                                       AutomationProperties.LiveSetting="Polite" />
+                        </StackPanel>
+                    </Border>
+
+                    <ItemsControl ItemsSource="{x:Bind ViewModel.Evidence, Mode=OneWay}"
+                                  Visibility="{x:Bind ViewModel.HasEvidence, Mode=OneWay, Converter={StaticResource BoolToVisibility}}"
+                                  AutomationProperties.Name="Recent incidents, privacy activity, and system changes">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:OverviewEvidenceMarker">
+                                <Button Style="{StaticResource AtlasGhostButtonStyle}"
+                                        HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Stretch"
+                                        Click="EvidenceRow_Click"
+                                        AutomationProperties.Name="{x:Bind AutomationName}">
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="68" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="{x:Bind Kind}" Style="{StaticResource CaptionTextBlockStyle}" />
+                                        <TextBlock Grid.Column="1" Text="{x:Bind Summary}"
+                                                   TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Grid.Column="2" Text="{x:Bind TimeText}"
+                                                   Style="{StaticResource AtlasMonoMutedStyle}" />
+                                    </Grid>
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+
+                <StackPanel x:Name="ConsumersSection" Grid.Row="1" Grid.Column="0" Spacing="8">
+                    <TextBlock Text="Top consumers by CPU"
+                               Style="{StaticResource SubtitleTextBlockStyle}"
+                               AutomationProperties.HeadingLevel="Level2" />
+
+                    <StackPanel x:Name="WideConsumers" Visibility="Collapsed" Spacing="2">
+                        <Grid Padding="12,0" ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="86" />
+                                <ColumnDefinition Width="84" />
+                                <ColumnDefinition Width="112" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Process" Style="{StaticResource AtlasColumnHeaderStyle}" />
+                            <TextBlock Grid.Column="1" Text="PID" Style="{StaticResource AtlasColumnHeaderStyle}" />
+                            <TextBlock Grid.Column="2" Text="CPU" TextAlignment="Right"
+                                       Style="{StaticResource AtlasColumnHeaderStyle}" />
+                            <TextBlock Grid.Column="3" Text="Memory" TextAlignment="Right"
+                                       Style="{StaticResource AtlasColumnHeaderStyle}" />
+                        </Grid>
+                        <ItemsControl ItemsSource="{x:Bind ViewModel.TopConsumers5, Mode=OneWay}"
+                                      AutomationProperties.Name="Top CPU consumers">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="vm:ConsumerRowViewModel">
+                                    <Button Style="{StaticResource AtlasGhostButtonStyle}"
+                                            HorizontalAlignment="Stretch"
+                                            HorizontalContentAlignment="Stretch"
+                                            Click="ConsumerRow_Click"
+                                            AutomationProperties.Name="{x:Bind AutomationName}">
+                                        <Grid ColumnSpacing="12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="86" />
+                                                <ColumnDefinition Width="84" />
+                                                <ColumnDefinition Width="112" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="{x:Bind ImageName, Mode=OneWay}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="1" Text="{x:Bind PidText, Mode=OneWay}"
+                                                       Style="{StaticResource AtlasMonoMutedStyle}" />
+                                            <TextBlock Grid.Column="2" Text="{x:Bind CpuText, Mode=OneWay}"
+                                                       TextAlignment="Right" Style="{StaticResource AtlasMonoStyle}" />
+                                            <TextBlock Grid.Column="3" Text="{x:Bind WorkingSetText, Mode=OneWay}"
+                                                       TextAlignment="Right" Style="{StaticResource AtlasMonoMutedStyle}" />
+                                        </Grid>
+                                    </Button>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+
+                    <ItemsControl x:Name="CompactConsumers"
+                                  ItemsSource="{x:Bind ViewModel.TopConsumers5, Mode=OneWay}"
+                                  AutomationProperties.Name="Top CPU consumers">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:ConsumerRowViewModel">
+                                <Button Style="{StaticResource AtlasGhostButtonStyle}"
+                                        HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Stretch"
+                                        Click="ConsumerRow_Click"
+                                        AutomationProperties.Name="{x:Bind AutomationName}">
+                                    <Grid ColumnSpacing="12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="{x:Bind ImageName, Mode=OneWay}" TextTrimming="CharacterEllipsis" />
+                                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                                <TextBlock Text="{x:Bind PidText, Mode=OneWay}"
+                                                           Style="{StaticResource AtlasMonoMutedStyle}" />
+                                                <TextBlock Text="{x:Bind WorkingSetText, Mode=OneWay}"
+                                                           Style="{StaticResource AtlasMonoMutedStyle}" />
+                                            </StackPanel>
+                                        </StackPanel>
+                                        <TextBlock Grid.Column="1" Text="{x:Bind CpuText, Mode=OneWay}"
+                                                   Style="{StaticResource AtlasMonoStyle}"
+                                                   VerticalAlignment="Center" />
+                                    </Grid>
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Grid>
+
+            <Border Grid.Row="3" Style="{StaticResource AtlasPanelStyle}" Padding="18,16">
                 <Grid RowSpacing="12">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="220" />
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
-                    <Grid>
+                    <Grid ColumnSpacing="12">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <StackPanel>
-                            <TextBlock Text="System trace"
+                            <TextBlock Text="Last 15 minutes"
                                        Style="{StaticResource SubtitleTextBlockStyle}"
                                        AutomationProperties.HeadingLevel="Level2" />
-                            <TextBlock Text="CPU, memory, and GPU over the last 15 minutes"
+                            <TextBlock Text="Measured averages and recorded min/max ranges"
                                        Style="{StaticResource CaptionTextBlockStyle}" />
                         </StackPanel>
                         <Button Grid.Column="1"
@@ -82,18 +300,54 @@
                         </Button>
                     </Grid>
 
-                    <Grid Grid.Row="1">
+                    <Grid Grid.Row="1" ColumnSpacing="8" RowSpacing="4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="32" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Grid Grid.Row="0" Grid.Column="0">
+                            <TextBlock Text="100%" Style="{StaticResource CaptionTextBlockStyle}"
+                                       FontSize="10" VerticalAlignment="Top" />
+                            <TextBlock Text="0%" Style="{StaticResource CaptionTextBlockStyle}"
+                                       FontSize="10" VerticalAlignment="Bottom" />
+                        </Grid>
                         <Canvas x:Name="TraceCanvas"
+                                Grid.Row="0" Grid.Column="1"
                                 Background="Transparent"
-                                AutomationProperties.Name="Fifteen minute system trace"
+                                AutomationProperties.Name="{x:Bind ViewModel.TraceAutomationSummary, Mode=OneWay}"
                                 SizeChanged="TraceCanvas_SizeChanged" />
-                        <StackPanel HorizontalAlignment="Center"
-                                    VerticalAlignment="Center"
-                                    Spacing="6"
-                                    Visibility="{x:Bind ViewModel.IsTraceUnavailable, Mode=OneWay}">
-                            <FontIcon Glyph="&#xE7BA;" FontSize="24" HorizontalAlignment="Center" />
+                        <TextBlock Grid.Row="1" Grid.Column="1" Text="15 min ago"
+                                   Style="{StaticResource CaptionTextBlockStyle}" FontSize="10" />
+                        <TextBlock Grid.Row="1" Grid.Column="1" Text="Now"
+                                   Style="{StaticResource CaptionTextBlockStyle}" FontSize="10"
+                                   HorizontalAlignment="Right" />
+
+                        <StackPanel Grid.Row="0" Grid.Column="1"
+                                    HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="6"
+                                    Visibility="{x:Bind ViewModel.IsTraceLoading, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
+                            <ProgressRing IsActive="True" Width="20" Height="20" />
+                            <TextBlock Text="Loading system trace..." Style="{StaticResource CaptionTextBlockStyle}" />
+                        </StackPanel>
+                        <StackPanel Grid.Row="0" Grid.Column="1"
+                                    HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="6"
+                                    Visibility="{x:Bind ViewModel.IsTraceEmpty, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
+                            <TextBlock Text="Recording has just started."
+                                       Style="{StaticResource AtlasEmptyStateTitleStyle}" />
+                            <TextBlock Text="Historical samples will appear here as Atlas records them."
+                                       Style="{StaticResource AtlasEmptyStateBodyStyle}" />
+                        </StackPanel>
+                        <StackPanel Grid.Row="0" Grid.Column="1"
+                                    HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="6"
+                                    Visibility="{x:Bind ViewModel.IsTraceUnavailable, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
                             <TextBlock Text="Historical evidence unavailable"
                                        Style="{StaticResource AtlasEmptyStateTitleStyle}" />
+                            <TextBlock Text="{x:Bind ViewModel.TraceStatus, Mode=OneWay}"
+                                       Style="{StaticResource AtlasEmptyStateBodyStyle}" />
+                            <Button Content="Retry" Click="RefreshTrace_Click" HorizontalAlignment="Center" />
                         </StackPanel>
                     </Grid>
 
@@ -103,135 +357,20 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <StackPanel Orientation="Horizontal" Spacing="16">
-                            <TextBlock Text="CPU" Foreground="{ThemeResource AtlasCyanBrush}"
+                            <TextBlock Text="CPU · solid" Foreground="{ThemeResource AtlasCyanBrush}"
                                        Style="{StaticResource CaptionTextBlockStyle}" />
-                            <TextBlock Text="Memory" Foreground="{ThemeResource AtlasGreenBrush}"
+                            <TextBlock Text="Memory · dotted" Foreground="{ThemeResource AtlasGreenBrush}"
                                        Style="{StaticResource CaptionTextBlockStyle}" />
-                            <TextBlock Text="GPU" Foreground="{ThemeResource AtlasAmberBrush}"
+                            <TextBlock Text="{x:Bind ViewModel.GpuHistoryLabel, Mode=OneWay}"
+                                       Foreground="{ThemeResource AtlasAmberBrush}"
                                        Style="{StaticResource CaptionTextBlockStyle}" />
                         </StackPanel>
-                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
-                            <ProgressRing IsActive="{x:Bind ViewModel.IsTraceLoading, Mode=OneWay}"
-                                          Width="14" Height="14" />
-                            <TextBlock Text="{x:Bind ViewModel.TraceStatus, Mode=OneWay}"
-                                       Style="{StaticResource CaptionTextBlockStyle}"
-                                       TextTrimming="CharacterEllipsis"
-                                       MaxWidth="460" />
-                        </StackPanel>
+                        <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.TraceStatus, Mode=OneWay}"
+                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                   TextTrimming="CharacterEllipsis" MaxWidth="460" />
                     </Grid>
                 </Grid>
             </Border>
-
-            <Grid Grid.Row="2" x:Name="ReadingGrid" ColumnSpacing="8">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
-                <StackPanel Grid.Column="0" Spacing="2" Padding="8,4">
-                    <TextBlock Text="Processor" Style="{StaticResource CaptionTextBlockStyle}" />
-                    <TextBlock Text="{x:Bind ViewModel.CpuText, Mode=OneWay}"
-                               Style="{StaticResource AtlasMetricValueStyle}" FontSize="22" />
-                </StackPanel>
-                <StackPanel Grid.Column="1" Spacing="2" Padding="8,4">
-                    <TextBlock Text="Graphics" Style="{StaticResource CaptionTextBlockStyle}" />
-                    <TextBlock Text="{x:Bind ViewModel.GpuText, Mode=OneWay}"
-                               Style="{StaticResource AtlasMetricValueStyle}" FontSize="22" />
-                </StackPanel>
-                <StackPanel Grid.Column="2" Spacing="2" Padding="8,4">
-                    <TextBlock Text="Memory" Style="{StaticResource CaptionTextBlockStyle}" />
-                    <TextBlock Text="{x:Bind ViewModel.MemoryText, Mode=OneWay}"
-                               Style="{StaticResource AtlasMetricValueStyle}" FontSize="18" />
-                    <TextBlock Text="{x:Bind CommitLine, Mode=OneWay}"
-                               Style="{StaticResource AtlasMonoMutedStyle}" />
-                </StackPanel>
-                <StackPanel Grid.Column="3" Spacing="2" Padding="8,4">
-                    <TextBlock Text="System inventory" Style="{StaticResource CaptionTextBlockStyle}" />
-                    <TextBlock Text="{x:Bind ViewModel.ProcessCount, Mode=OneWay}"
-                               Style="{StaticResource AtlasMetricValueStyle}" FontSize="22" />
-                    <TextBlock Text="{x:Bind ViewModel.CountText, Mode=OneWay}"
-                               Style="{StaticResource CaptionTextBlockStyle}"
-                               TextTrimming="CharacterEllipsis" />
-                </StackPanel>
-            </Grid>
-
-            <Grid Grid.Row="3" RowSpacing="18" ColumnSpacing="18">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition x:Name="EvidenceRow" Height="Auto" />
-                </Grid.RowDefinitions>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition x:Name="ConsumersColumn" Width="*" />
-                    <ColumnDefinition x:Name="EvidenceColumn" Width="0" />
-                </Grid.ColumnDefinitions>
-
-                <StackPanel Grid.Row="0" Grid.Column="0" Spacing="8">
-                    <TextBlock Text="Top consumers by CPU"
-                               Style="{StaticResource SubtitleTextBlockStyle}"
-                               AutomationProperties.HeadingLevel="Level2" />
-                    <ListView ItemsSource="{x:Bind ViewModel.TopConsumers5, Mode=OneWay}"
-                              SelectionMode="None"
-                              AutomationProperties.Name="Top CPU consumers">
-                        <ListView.ItemContainerStyle>
-                            <Style TargetType="ListViewItem" BasedOn="{StaticResource AtlasRowContainerStyle}" />
-                        </ListView.ItemContainerStyle>
-                        <ListView.ItemTemplate>
-                            <DataTemplate x:DataType="vm:ConsumerRowViewModel">
-                                <Grid ColumnSpacing="12">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="84" />
-                                        <ColumnDefinition Width="112" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Text="{x:Bind ImageName, Mode=OneWay}"
-                                               TextTrimming="CharacterEllipsis" />
-                                    <TextBlock Grid.Column="1" Text="{x:Bind PidText, Mode=OneWay}"
-                                               Style="{StaticResource AtlasMonoMutedStyle}" />
-                                    <TextBlock Grid.Column="2" Text="{x:Bind CpuText, Mode=OneWay}"
-                                               HorizontalTextAlignment="Right"
-                                               Style="{StaticResource AtlasMonoStyle}" />
-                                    <TextBlock Grid.Column="3" Text="{x:Bind WorkingSetText, Mode=OneWay}"
-                                               HorizontalTextAlignment="Right"
-                                               Style="{StaticResource AtlasMonoMutedStyle}" />
-                                </Grid>
-                            </DataTemplate>
-                        </ListView.ItemTemplate>
-                    </ListView>
-                </StackPanel>
-
-                <StackPanel x:Name="EvidencePanel" Grid.Row="1" Grid.Column="0" Spacing="8">
-                    <TextBlock Text="Recent evidence"
-                               Style="{StaticResource SubtitleTextBlockStyle}"
-                               AutomationProperties.HeadingLevel="Level2" />
-                    <ListView ItemsSource="{x:Bind ViewModel.Evidence, Mode=OneWay}"
-                              SelectionMode="None"
-                              IsItemClickEnabled="True"
-                              ItemClick="Evidence_ItemClick"
-                              AutomationProperties.Name="Recent incidents, privacy activity, and system changes">
-                        <ListView.ItemContainerStyle>
-                            <Style TargetType="ListViewItem" BasedOn="{StaticResource AtlasRowContainerStyle}" />
-                        </ListView.ItemContainerStyle>
-                        <ListView.ItemTemplate>
-                            <DataTemplate x:DataType="vm:OverviewEvidenceMarker">
-                                <Grid ColumnSpacing="10">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="68" />
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Text="{x:Bind Kind}" Style="{StaticResource CaptionTextBlockStyle}" />
-                                    <TextBlock Grid.Column="1" Text="{x:Bind Summary}"
-                                               TextTrimming="CharacterEllipsis" />
-                                    <TextBlock Grid.Column="2" Text="{x:Bind TimeText}"
-                                               Style="{StaticResource AtlasMonoMutedStyle}" />
-                                </Grid>
-                            </DataTemplate>
-                        </ListView.ItemTemplate>
-                    </ListView>
-                </StackPanel>
-            </Grid>
         </Grid>
     </ScrollViewer>
 </Page>

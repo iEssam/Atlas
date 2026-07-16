@@ -14,28 +14,38 @@ public sealed partial class ConsumerRowViewModel : ObservableObject
 {
     private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 
-    [ObservableProperty] private string _imageName = string.Empty;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(AutomationName))]
+    private string _imageName = string.Empty;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(PidText))]
+    [NotifyPropertyChangedFor(nameof(AutomationName))]
     private uint _pid;
+
+    [ObservableProperty] private long _createTime100ns;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CpuText))]
+    [NotifyPropertyChangedFor(nameof(AutomationName))]
     private double _cpuPercent;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(WorkingSetText))]
+    [NotifyPropertyChangedFor(nameof(AutomationName))]
     private double _workingSetMb;
 
     public string CpuText => CpuPercent.ToString("F1", Inv) + " %";
     public string WorkingSetText => WorkingSetMb.ToString("F0", Inv) + " MB";
     public string PidText => "PID " + Pid.ToString(Inv);
+    public string AutomationName =>
+        $"{ImageName}, {PidText}, CPU {CpuText}, memory {WorkingSetText}. Open process inspector.";
 
     public void Update(MetricsRow row)
     {
         ImageName = row.ImageName;
         Pid = row.Pid;
+        CreateTime100ns = row.CreateTime100ns;
         CpuPercent = row.CpuPercent;
         WorkingSetMb = row.WorkingSet / (1024.0 * 1024.0);
     }

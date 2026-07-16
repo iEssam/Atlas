@@ -47,12 +47,62 @@ public sealed partial class OverviewPage : Page
     private void RefreshTrace_Click(object sender, RoutedEventArgs e) => _ = ViewModel.RefreshTraceAsync();
     private void TraceCanvas_SizeChanged(object sender, SizeChangedEventArgs e) => RenderTrace();
 
-    private void Evidence_ItemClick(object sender, ItemClickEventArgs e)
+    private void PageLayout_SizeChanged(object sender, SizeChangedEventArgs e)
     {
-        if (e.ClickedItem is OverviewEvidenceMarker marker && App.MainWindow is MainWindow window)
+        // AdaptiveTrigger is retained in XAML as the layout contract. Apply the
+        // same values explicitly because some unpackaged Windows App SDK hosts
+        // do not reevaluate page-level adaptive triggers after Frame navigation.
+        var large = e.NewSize.Width >= 1008;
+        var medium = !large && e.NewSize.Width >= 640;
+
+        PageLayout.Padding = large
+            ? new Thickness(24)
+            : medium
+                ? new Thickness(24, 48, 24, 24)
+                : new Thickness(16, 48, 16, 16);
+
+        MetricColumn1.Width = medium || large ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
+        MetricColumn2.Width = large ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
+        MetricColumn3.Width = large ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
+
+        Grid.SetRow(GraphicsMetric, medium || large ? 0 : 1);
+        Grid.SetColumn(GraphicsMetric, medium || large ? 1 : 0);
+        Grid.SetRow(MemoryMetric, large ? 0 : medium ? 1 : 2);
+        Grid.SetColumn(MemoryMetric, large ? 2 : 0);
+        Grid.SetRow(ProcessesMetric, large ? 0 : medium ? 1 : 3);
+        Grid.SetColumn(ProcessesMetric, large ? 3 : medium ? 1 : 0);
+
+        EvidenceColumn.Width = new GridLength(large ? 2 : 1, GridUnitType.Star);
+        ConsumersColumn.Width = large ? new GridLength(3, GridUnitType.Star) : new GridLength(0);
+        Grid.SetRow(ConsumersSection, large ? 0 : 1);
+        Grid.SetColumn(ConsumersSection, large ? 1 : 0);
+        WideConsumers.Visibility = large ? Visibility.Visible : Visibility.Collapsed;
+        CompactConsumers.Visibility = large ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void EvidenceRow_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: OverviewEvidenceMarker marker } &&
+            App.MainWindow is MainWindow window)
         {
             window.NavigateToEvidence(marker.Kind);
         }
+    }
+
+    private void ConsumerRow_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: ConsumerRowViewModel row })
+        {
+            return;
+        }
+
+        var who = Environment.GetEnvironmentVariable("ATLAS_PIPE");
+        var inspector = new InspectorWindow(
+            string.IsNullOrEmpty(who) ? null : who,
+            row.Pid,
+            row.CreateTime100ns,
+            row.ImageName);
+        inspector.Activate();
     }
 
     private void RenderTrace()
@@ -67,9 +117,30 @@ public sealed partial class OverviewPage : Page
         }
 
         DrawReferenceLines(width, height);
-        DrawSeries(ViewModel.CpuTrace, GetBrush("AtlasCyanBrush", Colors.Teal), width, height, span);
-        DrawSeries(ViewModel.MemoryTrace, GetBrush("AtlasGreenBrush", Colors.ForestGreen), width, height, span);
-        DrawSeries(ViewModel.GpuTrace, GetBrush("AtlasAmberBrush", Colors.Goldenrod), width, height, span);
+        DrawSeries(
+            ViewModel.CpuTrace,
+            GetBrush("AtlasCyanBrush", Colors.Teal),
+            GetBrush("AtlasCyanTintBrush", Colors.Transparent),
+            null,
+            width,
+            height,
+            span);
+        DrawSeries(
+            ViewModel.MemoryTrace,
+            GetBrush("AtlasGreenBrush", Colors.ForestGreen),
+            GetBrush("AtlasGreenTintBrush", Colors.Transparent),
+            new DoubleCollection { 1, 3 },
+            width,
+            height,
+            span);
+        DrawSeries(
+            ViewModel.GpuTrace,
+            GetBrush("AtlasAmberBrush", Colors.Goldenrod),
+            GetBrush("AtlasAmberTintBrush", Colors.Transparent),
+            new DoubleCollection { 6, 4 },
+            width,
+            height,
+            span);
         DrawEvidenceTicks(width, height, span);
     }
 
@@ -93,27 +164,99 @@ public sealed partial class OverviewPage : Page
 
     private void DrawSeries(
         IEnumerable<OverviewTracePoint> source,
-        Brush brush,
+        Brush lineBrush,
+        Brush bandBrush,
+        DoubleCollection? dashPattern,
         double width,
         double height,
         double span)
     {
-        var points = new PointCollection();
-        foreach (var point in source)
+        var points = source.OrderBy(point => point.TimestampMs).ToList();
+        if (points.Count == 0)
         {
-            var x = (point.TimestampMs - ViewModel.TraceFromMs) / span * width;
-            var y = height - Math.Clamp(point.Percent / 100.0, 0, 1) * height;
-            points.Add(new Point(x, y));
+            return;
         }
-        if (points.Count >= 2)
+
+        var expectedStep = span / 180.0;
+        int segmentStart = 0;
+        for (int index = 1; index <= points.Count; index++)
         {
-            TraceCanvas.Children.Add(new Polyline
+            var endsSegment = index == points.Count ||
+                points[index].TimestampMs - points[index - 1].TimestampMs > expectedStep * 1.75;
+            if (!endsSegment)
             {
-                Points = points,
-                Stroke = brush,
-                StrokeThickness = 1.75,
-            });
+                continue;
+            }
+
+            DrawSeriesSegment(
+                points,
+                segmentStart,
+                index - 1,
+                lineBrush,
+                bandBrush,
+                dashPattern,
+                width,
+                height,
+                span);
+            segmentStart = index;
         }
+    }
+
+    private void DrawSeriesSegment(
+        IReadOnlyList<OverviewTracePoint> points,
+        int start,
+        int end,
+        Brush lineBrush,
+        Brush bandBrush,
+        DoubleCollection? dashPattern,
+        double width,
+        double height,
+        double span)
+    {
+        double X(OverviewTracePoint point) =>
+            (point.TimestampMs - ViewModel.TraceFromMs) / span * width;
+        double Y(double percent) => height - Math.Clamp(percent / 100.0, 0, 1) * height;
+
+        var band = new PointCollection();
+        for (int index = start; index <= end; index++)
+        {
+            band.Add(new Point(X(points[index]), Y(points[index].MaxPercent)));
+        }
+        for (int index = end; index >= start; index--)
+        {
+            band.Add(new Point(X(points[index]), Y(points[index].MinPercent)));
+        }
+        if (band.Count >= 3)
+        {
+            TraceCanvas.Children.Add(new Polygon { Points = band, Fill = bandBrush });
+        }
+
+        var average = new PointCollection();
+        for (int index = start; index <= end; index++)
+        {
+            average.Add(new Point(X(points[index]), Y(points[index].AveragePercent)));
+        }
+
+        if (average.Count == 1)
+        {
+            var dot = new Ellipse { Width = 4, Height = 4, Fill = lineBrush };
+            Canvas.SetLeft(dot, average[0].X - 2);
+            Canvas.SetTop(dot, average[0].Y - 2);
+            TraceCanvas.Children.Add(dot);
+            return;
+        }
+
+        var line = new Polyline
+        {
+            Points = average,
+            Stroke = lineBrush,
+            StrokeThickness = 1.75,
+        };
+        if (dashPattern is not null)
+        {
+            line.StrokeDashArray = dashPattern;
+        }
+        TraceCanvas.Children.Add(line);
     }
 
     private void DrawEvidenceTicks(double width, double height, double span)
