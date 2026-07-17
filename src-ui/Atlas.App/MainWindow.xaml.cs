@@ -50,12 +50,13 @@ public sealed partial class MainWindow : Window
         Closed += (_, _) => ViewModel.Stop();
 #if DEBUG
         var startPage = Environment.GetEnvironmentVariable("ATLAS_START_PAGE");
-        if (string.Equals(startPage, "activity", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(startPage, "activity", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(startPage, "graphics", StringComparison.OrdinalIgnoreCase))
         {
             // A dormant development hook used by the unpackaged smoke test.
             // NavigationView applies its initial Overview selection after XAML
-            // construction, so select Activity once the shell is loaded.
-            Root.Loaded += StartOnActivityWhenLoaded;
+            // construction, so select the requested smoke-test page once the shell is loaded.
+            Root.Loaded += StartOnRequestedPageWhenLoaded;
         }
         else
         {
@@ -77,15 +78,21 @@ public sealed partial class MainWindow : Window
     }
 
 #if DEBUG
-    private void StartOnActivityWhenLoaded(object sender, RoutedEventArgs e)
+    private void StartOnRequestedPageWhenLoaded(object sender, RoutedEventArgs e)
     {
-        Root.Loaded -= StartOnActivityWhenLoaded;
+        Root.Loaded -= StartOnRequestedPageWhenLoaded;
         DispatcherQueue.TryEnqueue(() =>
         {
-            var activityItem = Nav.MenuItems
+            string requestedSection = string.Equals(
+                Environment.GetEnvironmentVariable("ATLAS_START_PAGE"),
+                "graphics",
+                StringComparison.OrdinalIgnoreCase)
+                ? "performance"
+                : "activity";
+            var requestedItem = Nav.MenuItems
                 .OfType<NavigationViewItem>()
-                .First(item => string.Equals(item.Tag as string, "activity", StringComparison.Ordinal));
-            Nav.SelectedItem = activityItem;
+                .First(item => string.Equals(item.Tag as string, requestedSection, StringComparison.Ordinal));
+            Nav.SelectedItem = requestedItem;
         });
     }
 #endif

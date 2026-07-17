@@ -114,7 +114,9 @@
             </NavigationView.FooterMenuItems>
 
             <NavigationView.PaneFooter>
-                <StackPanel Spacing="2" Margin="12,8,12,12">
+                <StackPanel Spacing="2"
+                            Margin="12,8,12,12"
+                            Visibility="{Binding IsPaneOpen, ElementName=Nav, Converter={StaticResource BoolToVisibility}}">
                     <TextBlock Text="{x:Bind ViewModel.DeviceName}"
                                Style="{StaticResource CaptionTextBlockStyle}"
                                TextTrimming="CharacterEllipsis" />
