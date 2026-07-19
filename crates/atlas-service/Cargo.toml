@@ -3,12 +3,13 @@ name = "atlas-service"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+publish.workspace = true
 
 [dependencies]
-atlas-collectors = { path = "../atlas-collectors" }
-atlas-store = { path = "../atlas-store" }
-atlas-tsdb = { path = "../atlas-tsdb" }
-atlas-ipc = { path = "../atlas-ipc" }
+atlas-collectors = { path = "../atlas-collectors", version = "=0.3.0" }
+atlas-store = { path = "../atlas-store", version = "=0.3.0" }
+atlas-tsdb = { path = "../atlas-tsdb", version = "=0.3.0" }
+atlas-ipc = { path = "../atlas-ipc", version = "=0.3.0" }
 anyhow = { workspace = true }
 clap = { workspace = true }
 serde_json = { workspace = true }

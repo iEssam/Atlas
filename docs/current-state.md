@@ -32,6 +32,15 @@ The UI contract suite guards authored XAML parsing, XAML event-handler wiring, s
 
 Performance validation remains separate in `perf.yml`: hosted CI enforces the working-set budget and a short soak, while idle CPU is advisory because hosted runners are noisy. The authoritative 72-hour soak and bare-metal performance gate remain open.
 
+Supply-chain validation is enforced in separate workflows:
+
+- RustSec and `cargo-deny` reject known advisories, yanked crates, wildcard dependencies, unapproved licenses, and dependencies from unknown registries or Git sources. Duplicate transitive versions are reported as warnings.
+- NuGet restores direct and transitive dependencies with all advisory severities treated as errors. Five committed `packages.lock.json` files make restore drift fail in CI.
+- Dependabot proposes weekly Cargo, NuGet, and GitHub Actions updates.
+- `release-sbom.yml` generates and attaches a CycloneDX JSON SBOM when a future GitHub release is published. It does not retroactively add an SBOM to the existing `v0.3.0-rc.1` release.
+
+Rust+C# CodeQL and pull-request dependency-review jobs are configured but entitlement-gated. This is currently a private, personal GitHub repository, where GitHub Code Security is not available. Those jobs run if the repository becomes public or `ENABLE_GITHUB_CODE_SECURITY=true` is defined after moving to an entitled organization. Until then, `cargo-audit`, `cargo-deny`, and fail-closed NuGet auditing provide the active advisory gates, while Clippy and the .NET compiler remain the active static analyzers.
+
 ## Release readiness
 
 System Atlas is still a release candidate. The stable release remains blocked by at least:

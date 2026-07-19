@@ -16,9 +16,9 @@ jobs:
       - name: Format
         run: cargo fmt --all --check
       - name: Lint
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --workspace --locked
 
   windows-ui:
     runs-on: windows-latest
@@ -34,7 +34,7 @@ jobs:
         run: ./scripts/validate-docs.ps1
 
       - name: Restore .NET solution
-        run: dotnet restore src-ui/Atlas.sln -p:Platform=x64
+        run: dotnet restore src-ui/Atlas.sln -p:Platform=x64 --locked-mode
 
       - name: Build WinUI app
         run: dotnet build src-ui/Atlas.App/Atlas.App.csproj -c Debug -p:Platform=x64 --no-restore

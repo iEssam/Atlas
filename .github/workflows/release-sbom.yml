@@ -1,0 +1,26 @@
+name: Release SBOM
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  cyclonedx:
+    name: Publish CycloneDX SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+      - uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: cyclonedx-json
+          artifact-name: system-atlas-${{ github.event.release.tag_name }}.cdx.json
+          output-file: system-atlas-${{ github.event.release.tag_name }}.cdx.json
+          upload-artifact: true
+          upload-release-assets: true

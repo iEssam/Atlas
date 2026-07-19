@@ -3,6 +3,7 @@ name = "atlas-collectors"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+publish.workspace = true
 
 [[bin]]
 name = "atlas-gpu-vendor-host"

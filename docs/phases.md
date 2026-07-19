@@ -27,6 +27,8 @@ Until those gates close, System Atlas is a release candidate for evaluation, not
 - [x] Cargo workspace per tech-stack §9.1 (crates: collectors, store, tsdb, service)
 - [x] Phase tracker (this file), README
 - [x] CI workflow: Rust format/Clippy/workspace tests plus .NET restore, x64 WinUI build, UI Automation launch/navigation smoke, IPC-client tests, and UI contract tests (`.github/workflows/ci.yml`)
+- [x] Active supply-chain CI: RustSec, `cargo-deny`, fail-closed transitive NuGet audit with committed locks, weekly Dependabot updates, and CycloneDX attachment for future published releases
+- [~] GitHub Code Security coverage: Rust+C# CodeQL and pull-request dependency review are configured but entitlement-gated while this repository remains private and personal
 - [x] IPC contract sketch ([proto/atlas.proto](../proto/atlas.proto)) — codegen deferred to M4
 
 **Exit criteria:** repo builds and tests green locally. ✅

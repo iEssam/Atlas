@@ -1,0 +1,44 @@
+# Supply-chain policy for every dependency reachable on supported Windows targets.
+# Exceptions must include a reason and should be removed as soon as an upgrade exists.
+[graph]
+all-features = true
+targets = [
+    "x86_64-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
+]
+
+[advisories]
+# cargo-deny rejects vulnerabilities, unsoundness notices, unmaintained crates,
+# and yanked versions by default. Keep exceptions explicit and reviewable.
+ignore = []
+
+[licenses]
+allow = [
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "MIT",
+    "Unicode-3.0",
+    "Unlicense",
+]
+confidence-threshold = 0.93
+
+[licenses.private]
+# Atlas workspace crates are explicitly publish=false. Their eventual product
+# license is a release/legal decision, not something CI should invent.
+ignore = true
+
+[bans]
+# Existing duplicates are visible debt, but not all can be collapsed by Atlas.
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+deny = []
+skip = []
+skip-tree = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

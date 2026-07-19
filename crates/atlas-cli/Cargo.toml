@@ -3,6 +3,7 @@ name = "atlas-cli"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+publish.workspace = true
 
 # The binary is `atlas` (the scriptable CLI), not `atlas-cli`.
 [[bin]]
@@ -13,7 +14,7 @@ path = "src/main.rs"
 # Read-only contract client + named-pipe transport. atlas-cli builds the
 # AtlasQuery client for every query and the AtlasRules client ONLY to call the
 # read-only ListRules RPC — it never invokes a mutating RPC on either service.
-atlas-ipc = { path = "../atlas-ipc" }
+atlas-ipc = { path = "../atlas-ipc", version = "=0.3.0" }
 anyhow = { workspace = true }
 clap = { workspace = true }
 # JSON output is built by hand over serde_json (prost types aren't Serialize),
