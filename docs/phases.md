@@ -11,7 +11,7 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 
 - [x] First x64 release candidate published for evaluation
 - [x] Elevated RC validation and MSI install/upgrade/removal lifecycle recorded in the [v0.3.0-rc.1 release notes](releases/v0.3.0-rc.1.md)
-- [ ] Production code signing for the MSI and packaged binaries
+- [ ] Production code signing for the MSI and shipped binaries
 - [ ] Staged update channel and signed release manifests
 - [ ] Full 72-hour soak on representative hardware
 - [ ] Stable-release review of every remaining `[~]` and `[ ]` item below, either completed or explicitly removed from the release scope
@@ -26,7 +26,7 @@ Until those gates close, System Atlas is a release candidate for evaluation, not
 - [x] git repository, `.gitignore` / `.gitattributes`
 - [x] Cargo workspace per tech-stack §9.1 (crates: collectors, store, tsdb, service)
 - [x] Phase tracker (this file), README
-- [x] CI workflow: `cargo fmt --check`, `clippy -D warnings`, `cargo test` (`.github/workflows/ci.yml`)
+- [x] CI workflow: Rust format/Clippy/workspace tests plus .NET restore, x64 WinUI build, UI Automation launch/navigation smoke, IPC-client tests, and UI contract tests (`.github/workflows/ci.yml`)
 - [x] IPC contract sketch ([proto/atlas.proto](../proto/atlas.proto)) — codegen deferred to M4
 
 **Exit criteria:** repo builds and tests green locally. ✅
@@ -71,7 +71,7 @@ Until those gates close, System Atlas is a release candidate for evaluation, not
 
 ### M5 — UI shell (WinUI 3) `[~]`
 
-- [x] .NET 10.0.301 SDK installed; `src-ui/Atlas.sln` — Atlas.IpcClient (gRPC-over-pipe via ConnectCallback, proto codegen, 15 tests), Atlas.DevCli (console interop proof), Atlas.App (WinUI 3, Windows App SDK 1.6, unpackaged; builds with PackageReferences only — no VS workloads needed)
+- [x] .NET 10 SDK installed; `src-ui/Atlas.sln` — Atlas.IpcClient (gRPC-over-pipe via ConnectCallback and proto codegen), Atlas.DevCli (console interop proof), Atlas.App (WinUI 3, Windows App SDK 1.6, unpackaged), and dedicated IPC/UI contract test projects; builds with PackageReferences only
 - [x] Live Activity page: NavigationView + Mica shell, virtualized process table updated in place at ~1 Hz from StreamSnapshots; verified running against `serve` at ~181 MB WS (budget < 200 MB)
 - [x] C# `MetricsRing` seqlock reader over the shared-mem ring (layout offsets pinned by tests against shm.rs); Live Activity + Overview prefer the ring, fall back to the gRPC stream, re-probe every ~15 s. Ring rows carry no thread/handle counts (layout v1) — those columns are stream-only
 - [x] Overview page v0 (gauge cards + top-5 consumers, measured values only)

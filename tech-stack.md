@@ -1,9 +1,11 @@
 # System Atlas — Technology Stack & Technical Design Document
 
 **Companion document to:** [project.md](project.md) (Product Requirements Document)
-**Document status:** Proposed technical baseline v1.0
+**Document status:** Proposed target technical baseline v1.0
 **Date:** 2026-07-12
 **Scope:** Language and framework selection, per-component technology mapping, Windows API strategy, IPC design, storage design, security architecture, packaging, testing, and performance-budget engineering for the MVP through Release 3.
+
+> This document includes target-state architecture and should not be read as an inventory of shipped components. See [docs/current-state.md](docs/current-state.md) for the current source-tree baseline and [docs/phases.md](docs/phases.md) for implementation and release-gate status. In particular, NativeAOT UI publishing, sparse-MSIX Explorer integration, ARM64 release artifacts, signed updates, and the full test matrix below remain partially or wholly deferred.
 
 ---
 
@@ -345,9 +347,9 @@ CREATE INDEX ix_event_time_kind ON event(ts_ns, kind);
 
 ---
 
-# 8. Packaging, Distribution, Updates
+# 8. Packaging, Distribution, Updates (target state)
 
-* **Installer:** WiX (v5/v6) per-machine MSI containing: service (+ recovery/restart config), UI (NativeAOT, per-arch), tray helper, emergency UI, sparse MSIX (shell extension identity), CLI (R3). x64 and **ARM64** first-class from day one (Copilot+ momentum; Rust and .NET both cross-compile cleanly; vendor GPU libs feature-flagged per arch).
+* **Installer target:** WiX (v5/v6) per-machine MSI containing: service (+ recovery/restart config), UI (NativeAOT, per-arch), tray helper, emergency UI, sparse MSIX (shell extension identity), CLI (R3). x64 and **ARM64** are target architectures; the current RC is x64 only and carries an unpackaged, self-contained, non-NativeAOT WinUI payload.
 * **Channels:** winget manifest, direct download, enterprise MSI with admin-template (ADMX) settings; Microsoft Store deferred (service + sparse-package composition is awkward under Store packaging today).
 * **Updates:** the updater scheduled task checks the signed manifest daily/idle, downloads delta or full MSI, applies with service-drain (flush + stop → upgrade → start); UI prompts, never force-restarts a session (PRD "no surprise disruptions" ethos); release notes shown pre-apply (§14.3).
 * **Crash reporting:** WER LocalDumps registered for all our processes + in-process minidump writer; **opt-in** upload (Sentry Native or self-hosted equivalent) with the same redaction gate; symbol server retained per release.
@@ -356,7 +358,7 @@ CREATE INDEX ix_event_time_kind ON event(ts_ns, kind);
 
 # 9. Repository, Toolchain, CI/CD, Testing
 
-## 9.1 Monorepo layout
+## 9.1 Target monorepo layout
 
 ```
 system-atlas/
@@ -380,9 +382,9 @@ system-atlas/
 └─ docs/                     # this file, ADRs, playbook specs
 ```
 
-Build orchestration with `just` (or Nuke): `just build`, `just test`, `just package` drive cargo + dotnet + wix coherently.
+Target build orchestration uses `just` (or Nuke) to drive cargo, dotnet, and WiX coherently. The current repository uses direct `cargo`, `dotnet`, and PowerShell commands; no `just` or Nuke entry point has landed.
 
-## 9.2 Testing strategy (mapped to PRD §19 metrics)
+## 9.2 Testing strategy (target, mapped to PRD §19 metrics)
 
 | Layer | Approach |
 |---|---|
@@ -397,11 +399,11 @@ Build orchestration with `just` (or Nuke): `just build`, `just test`, `just pack
 | Compatibility | Hyper-V matrix: Win11 23H2 / 24H2 / 25H2 / current Insider, x64 + ARM64; ConsentStore/SRUM/undocumented-API canary tests run here first (PRD §21.3 mitigation) |
 | Security | CodeQL, clippy pedantic, `cargo-deny`; periodic external review of the broker + updater before 1.0 (PRD §21.4) |
 
-CI: GitHub Actions — hosted Windows runners for build/unit, self-hosted for perf/soak/HW-sensor jobs; release pipeline produces signed MSI + SBOM + symbols.
+**Current automation:** GitHub-hosted Windows runners execute Rust formatting, Clippy, and workspace tests; restore and build the x64 WinUI app; run IPC-client and source-level UI contract tests; and launch the real unpackaged app for a UI Automation shell/navigation smoke. `perf.yml` separately enforces hosted-runner working set and a short soak, with idle CPU advisory. FlaUI breadth, screenshot diffs, the 72-hour bare-metal soak, the compatibility matrix, signed release production, SBOM publication, and hardware-sensor jobs remain target work.
 
 ---
 
-# 10. Performance Budget Engineering (PRD §12)
+# 10. Performance Budget Engineering (PRD §12, target budgets)
 
 | Budget | Design tactic | Verified by |
 |---|---|---|

@@ -29,6 +29,10 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      - name: Validate documentation links
+        shell: pwsh
+        run: ./scripts/validate-docs.ps1
+
       - name: Restore .NET solution
         run: dotnet restore src-ui/Atlas.sln -p:Platform=x64
 

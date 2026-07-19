@@ -8,6 +8,8 @@
 **Product category:** System monitoring, process management, performance optimization, diagnostics, privacy visibility, startup management, service management, and troubleshooting
 **Primary audience:** General users, gamers, developers, IT professionals, support engineers, system administrators, security-conscious users, and power users
 
+> This is a requirements document, not a claim that every described capability is implemented. See [docs/current-state.md](docs/current-state.md) for the current as-built baseline and [docs/phases.md](docs/phases.md) for itemized status.
+
 ---
 
 # 1. Product Summary
