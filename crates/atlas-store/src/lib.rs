@@ -524,6 +524,27 @@ pub struct GpuAdapterRow {
     pub last_seen_ms: i64,
 }
 
+/// Metadata used to register or refresh a GPU adapter.
+///
+/// Keeping the adapter fields together prevents call sites from accidentally
+/// swapping adjacent numeric identifiers while the schema evolves.
+#[derive(Debug, Clone, Copy)]
+pub struct GpuAdapterUpsert<'a> {
+    pub adapter_key: &'a str,
+    pub name: &'a str,
+    pub driver_version: &'a str,
+    pub active_display: bool,
+    pub physical_adapter_index: u32,
+    pub vendor_id: u32,
+    pub device_id: u32,
+    pub pci_domain: u32,
+    pub pci_bus: u32,
+    pub pci_device: u32,
+    pub pci_function: u32,
+    pub driver_date: &'a str,
+    pub seen_ms: i64,
+}
+
 /// One row per flush window recording Atlas's own overhead (PRD §12.2).
 #[derive(Debug, Clone, Copy)]
 pub struct SelfSampleRow {
@@ -891,22 +912,7 @@ impl Store {
 
     /// Registers or refreshes a GPU adapter and returns the stable row id used
     /// as the scope for adapter-specific time series.
-    pub fn upsert_gpu_adapter(
-        &self,
-        adapter_key: &str,
-        name: &str,
-        driver_version: &str,
-        active_display: bool,
-        physical_adapter_index: u32,
-        vendor_id: u32,
-        device_id: u32,
-        pci_domain: u32,
-        pci_bus: u32,
-        pci_device: u32,
-        pci_function: u32,
-        driver_date: &str,
-        seen_ms: i64,
-    ) -> Result<i64> {
+    pub fn upsert_gpu_adapter(&self, adapter: &GpuAdapterUpsert<'_>) -> Result<i64> {
         self.conn.execute(
             "INSERT INTO gpu_adapter
                  (adapter_key, name, driver_version, active_display, first_seen_ms, last_seen_ms,
@@ -927,24 +933,24 @@ impl Store {
                  driver_date = excluded.driver_date,
                  last_seen_ms = excluded.last_seen_ms",
             params![
-                adapter_key,
-                name,
-                driver_version,
-                active_display as i64,
-                physical_adapter_index,
-                vendor_id,
-                device_id,
-                pci_domain,
-                pci_bus,
-                pci_device,
-                pci_function,
-                driver_date,
-                seen_ms
+                adapter.adapter_key,
+                adapter.name,
+                adapter.driver_version,
+                adapter.active_display as i64,
+                adapter.physical_adapter_index,
+                adapter.vendor_id,
+                adapter.device_id,
+                adapter.pci_domain,
+                adapter.pci_bus,
+                adapter.pci_device,
+                adapter.pci_function,
+                adapter.driver_date,
+                adapter.seen_ms
             ],
         )?;
         Ok(self.conn.query_row(
             "SELECT id FROM gpu_adapter WHERE adapter_key = ?1",
-            params![adapter_key],
+            params![adapter.adapter_key],
             |row| row.get(0),
         )?)
     }
@@ -3714,21 +3720,21 @@ mod tests {
     fn gpu_adapter_v15_metadata_round_trips() {
         let store = Store::open_in_memory().unwrap();
         let id = store
-            .upsert_gpu_adapter(
-                "00000001:00000002:p1",
-                "GPU",
-                "32.0",
-                true,
-                1,
-                0x10de,
-                0x2489,
-                0,
-                1,
-                0,
-                0,
-                "2026-05-19",
-                1_234,
-            )
+            .upsert_gpu_adapter(&GpuAdapterUpsert {
+                adapter_key: "00000001:00000002:p1",
+                name: "GPU",
+                driver_version: "32.0",
+                active_display: true,
+                physical_adapter_index: 1,
+                vendor_id: 0x10de,
+                device_id: 0x2489,
+                pci_domain: 0,
+                pci_bus: 1,
+                pci_device: 0,
+                pci_function: 0,
+                driver_date: "2026-05-19",
+                seen_ms: 1_234,
+            })
             .unwrap();
         let rows = store.list_gpu_adapters().unwrap();
         assert_eq!(rows.len(), 1);

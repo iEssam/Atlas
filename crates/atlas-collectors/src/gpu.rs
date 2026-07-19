@@ -385,7 +385,7 @@ pub fn normalize(
     }
     adapters.sort_by_key(|a| (a.luid.high, a.luid.low, a.physical_index));
     let mut processes: Vec<_> = processes.into_values().collect();
-    processes.sort_by(|a, b| b.utilization_permille.cmp(&a.utilization_permille));
+    processes.sort_by_key(|process| std::cmp::Reverse(process.utilization_permille));
     aggregate_snapshot(adapters, processes)
 }
 
@@ -437,7 +437,7 @@ mod platform {
     use super::*;
     use crate::gpu_vendor::VendorSupervisor;
     use std::{
-        collections::{HashMap, HashSet},
+        collections::{hash_map::Entry, HashMap, HashSet},
         ffi::c_void,
         mem::{size_of, zeroed},
         ptr::{null, null_mut},
@@ -769,7 +769,7 @@ mod platform {
         {
             return String::new();
         }
-        let mut buffer = vec![0u16; (bytes as usize + 1) / 2];
+        let mut buffer = vec![0u16; (bytes as usize).div_ceil(2)];
         if RegQueryValueExW(
             key,
             value_name.as_ptr(),
@@ -1069,11 +1069,10 @@ mod platform {
 
         fn query_wddm(&mut self, adapter: &mut GpuAdapterSample) {
             let luid = adapter.luid;
-            if !self.handles.contains_key(&luid) {
-                match KmtAdapter::open(luid) {
-                    Ok(handle) => {
-                        self.handles.insert(luid, handle);
-                    }
+            let handle = match self.handles.entry(luid) {
+                Entry::Occupied(entry) => entry.into_mut(),
+                Entry::Vacant(entry) => match KmtAdapter::open(luid) {
+                    Ok(handle) => entry.insert(handle),
                     Err(status) => {
                         adapter.sensor_unavailable_reason = format!(
                             "D3DKMT adapter open failed (NTSTATUS 0x{:08x}).",
@@ -1087,13 +1086,10 @@ mod platform {
                         );
                         return;
                     }
-                }
-            }
-            let Some(handle) = self.handles.get(&luid) else {
-                return;
+                },
             };
             let adapter_id = adapter.id();
-            if !self.kmt_static.contains_key(&adapter_id) {
+            let static_data = *self.kmt_static.entry(adapter_id).or_insert_with(|| {
                 let mut entry = KmtStaticInfo::default();
                 let mut address = AdapterAddress::default();
                 if handle.query(KMT_ADAPTER_ADDRESS_RENDER, &mut address) >= 0 {
@@ -1106,13 +1102,8 @@ mod platform {
                 if handle.query(KMT_ADAPTER_PERFDATA_CAPS, &mut caps) >= 0 {
                     entry.caps = Some(caps);
                 }
-                self.kmt_static.insert(adapter_id, entry);
-            }
-            let static_data = self
-                .kmt_static
-                .get(&adapter_id)
-                .copied()
-                .unwrap_or_default();
+                entry
+            });
             if let Some(address) = static_data.address {
                 if address.bus <= 0xff && address.device <= 0x1f && address.function <= 0x7 {
                     adapter.pci_bus = address.bus;

@@ -39,7 +39,8 @@ use clap::{Parser, Subcommand};
 
 use atlas_collectors::{CadenceController, ProcKey, ProcSample, SampleSet, Sampler, Tick};
 use atlas_store::{
-    ProcEventRow, ProcIdentity, SelfSampleRow, Store, PROC_EVENT_START, PROC_EVENT_STOP,
+    GpuAdapterUpsert, ProcEventRow, ProcIdentity, SelfSampleRow, Store, PROC_EVENT_START,
+    PROC_EVENT_STOP,
 };
 use atlas_tsdb::{HeadBlocks, Metric, SeriesKey, SYSTEM_SCOPE};
 
@@ -2049,21 +2050,22 @@ fn writer_thread(
             }
             bw.append_sys(tick.ts_ms, &tick.sys);
             for adapter in &tick.gpu_adapters {
-                let scope = store.upsert_gpu_adapter(
-                    &adapter.stable_key(),
-                    &adapter.name,
-                    &adapter.driver_version,
-                    adapter.active_display,
-                    adapter.physical_index,
-                    adapter.vendor_id,
-                    adapter.device_id,
-                    adapter.pci_domain,
-                    adapter.pci_bus,
-                    adapter.pci_device,
-                    adapter.pci_function,
-                    &adapter.driver_date,
-                    tick.ts_ms,
-                )?;
+                let adapter_key = adapter.stable_key();
+                let scope = store.upsert_gpu_adapter(&GpuAdapterUpsert {
+                    adapter_key: &adapter_key,
+                    name: &adapter.name,
+                    driver_version: &adapter.driver_version,
+                    active_display: adapter.active_display,
+                    physical_adapter_index: adapter.physical_index,
+                    vendor_id: adapter.vendor_id,
+                    device_id: adapter.device_id,
+                    pci_domain: adapter.pci_domain,
+                    pci_bus: adapter.pci_bus,
+                    pci_device: adapter.pci_device,
+                    pci_function: adapter.pci_function,
+                    driver_date: &adapter.driver_date,
+                    seen_ms: tick.ts_ms,
+                })?;
                 bw.append_gpu_adapter(tick.ts_ms, scope, adapter);
             }
             for (identity, metrics) in &tick.procs {
