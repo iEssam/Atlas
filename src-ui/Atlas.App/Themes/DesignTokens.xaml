@@ -185,25 +185,26 @@
         </ResourceDictionary>
 
         <ResourceDictionary x:Key="HighContrast">
-            <StaticResource x:Key="AtlasVoidBrush" ResourceKey="SystemColorWindowBrush" />
-            <StaticResource x:Key="AtlasGraphiteBrush" ResourceKey="SystemColorWindowBrush" />
-            <StaticResource x:Key="AtlasPanelBrush" ResourceKey="SystemColorWindowBrush" />
-            <StaticResource x:Key="AtlasPanel2Brush" ResourceKey="SystemColorWindowBrush" />
-            <StaticResource x:Key="AtlasLineBrush" ResourceKey="SystemColorWindowTextBrush" />
-            <StaticResource x:Key="AtlasLineStrongBrush" ResourceKey="SystemColorWindowTextBrush" />
-            <StaticResource x:Key="AtlasInkBrush" ResourceKey="SystemColorWindowTextBrush" />
-            <StaticResource x:Key="AtlasMutedBrush" ResourceKey="SystemColorWindowTextBrush" />
-            <StaticResource x:Key="AtlasDimBrush" ResourceKey="SystemColorWindowTextBrush" />
-            <StaticResource x:Key="AtlasLabelBrush" ResourceKey="SystemColorWindowTextBrush" />
-            <StaticResource x:Key="AtlasCyanBrush" ResourceKey="SystemColorHighlightBrush" />
-            <StaticResource x:Key="AtlasCyanLightBrush" ResourceKey="SystemColorHighlightBrush" />
-            <StaticResource x:Key="AtlasCyanDarkBrush" ResourceKey="SystemColorHighlightBrush" />
-            <StaticResource x:Key="AtlasCyanTintBrush" ResourceKey="SystemColorWindowBrush" />
-            <StaticResource x:Key="AtlasAmberBrush" ResourceKey="SystemColorWindowTextBrush" />
-            <StaticResource x:Key="AtlasAmberTintBrush" ResourceKey="SystemColorWindowBrush" />
-            <StaticResource x:Key="AtlasRedBrush" ResourceKey="SystemColorWindowTextBrush" />
-            <StaticResource x:Key="AtlasGreenBrush" ResourceKey="SystemColorWindowTextBrush" />
-            <StaticResource x:Key="AtlasGreenTintBrush" ResourceKey="SystemColorWindowBrush" />
+            <!-- High Contrast aliases use WinUI's real SystemColor*ColorBrush keys. -->
+            <StaticResource x:Key="AtlasVoidBrush" ResourceKey="SystemColorWindowColorBrush" />
+            <StaticResource x:Key="AtlasGraphiteBrush" ResourceKey="SystemColorWindowColorBrush" />
+            <StaticResource x:Key="AtlasPanelBrush" ResourceKey="SystemColorWindowColorBrush" />
+            <StaticResource x:Key="AtlasPanel2Brush" ResourceKey="SystemColorWindowColorBrush" />
+            <StaticResource x:Key="AtlasLineBrush" ResourceKey="SystemColorWindowTextColorBrush" />
+            <StaticResource x:Key="AtlasLineStrongBrush" ResourceKey="SystemColorWindowTextColorBrush" />
+            <StaticResource x:Key="AtlasInkBrush" ResourceKey="SystemColorWindowTextColorBrush" />
+            <StaticResource x:Key="AtlasMutedBrush" ResourceKey="SystemColorWindowTextColorBrush" />
+            <StaticResource x:Key="AtlasDimBrush" ResourceKey="SystemColorWindowTextColorBrush" />
+            <StaticResource x:Key="AtlasLabelBrush" ResourceKey="SystemColorWindowTextColorBrush" />
+            <StaticResource x:Key="AtlasCyanBrush" ResourceKey="SystemColorHotlightColorBrush" />
+            <StaticResource x:Key="AtlasCyanLightBrush" ResourceKey="SystemColorHotlightColorBrush" />
+            <StaticResource x:Key="AtlasCyanDarkBrush" ResourceKey="SystemColorHotlightColorBrush" />
+            <StaticResource x:Key="AtlasCyanTintBrush" ResourceKey="SystemColorWindowColorBrush" />
+            <StaticResource x:Key="AtlasAmberBrush" ResourceKey="SystemColorWindowTextColorBrush" />
+            <StaticResource x:Key="AtlasAmberTintBrush" ResourceKey="SystemColorWindowColorBrush" />
+            <StaticResource x:Key="AtlasRedBrush" ResourceKey="SystemColorWindowTextColorBrush" />
+            <StaticResource x:Key="AtlasGreenBrush" ResourceKey="SystemColorWindowTextColorBrush" />
+            <StaticResource x:Key="AtlasGreenTintBrush" ResourceKey="SystemColorWindowColorBrush" />
         </ResourceDictionary>
     </ResourceDictionary.ThemeDictionaries>
 

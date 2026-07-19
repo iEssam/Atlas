@@ -7,7 +7,41 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
 
-    <Grid Padding="24" RowSpacing="16">
+    <Grid x:Name="LayoutRoot" Padding="12" RowSpacing="16">
+        <VisualStateManager.VisualStateGroups>
+            <VisualStateGroup x:Name="WindowWidthStates">
+                <VisualState x:Name="Compact">
+                    <VisualState.Setters>
+                        <Setter Target="PathBox.(Grid.ColumnSpan)" Value="3" />
+                        <Setter Target="BrowseButton.(Grid.Row)" Value="1" />
+                        <Setter Target="BrowseButton.(Grid.Column)" Value="0" />
+                        <Setter Target="SearchButton.(Grid.Row)" Value="1" />
+                        <Setter Target="SearchButton.(Grid.Column)" Value="2" />
+                    </VisualState.Setters>
+                </VisualState>
+                <VisualState x:Name="Medium">
+                    <VisualState.StateTriggers>
+                        <AdaptiveTrigger MinWindowWidth="640" />
+                    </VisualState.StateTriggers>
+                    <VisualState.Setters>
+                        <Setter Target="LayoutRoot.Padding" Value="20" />
+                        <Setter Target="PathBox.(Grid.ColumnSpan)" Value="1" />
+                        <Setter Target="BrowseButton.(Grid.Row)" Value="0" />
+                        <Setter Target="BrowseButton.(Grid.Column)" Value="1" />
+                        <Setter Target="SearchButton.(Grid.Row)" Value="0" />
+                        <Setter Target="SearchButton.(Grid.Column)" Value="2" />
+                    </VisualState.Setters>
+                </VisualState>
+                <VisualState x:Name="Wide">
+                    <VisualState.StateTriggers>
+                        <AdaptiveTrigger MinWindowWidth="1008" />
+                    </VisualState.StateTriggers>
+                    <VisualState.Setters>
+                        <Setter Target="LayoutRoot.Padding" Value="24" />
+                    </VisualState.Setters>
+                </VisualState>
+            </VisualStateGroup>
+        </VisualStateManager.VisualStateGroups>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -24,7 +58,11 @@
         </StackPanel>
 
         <!-- ===== Path input row ===== -->
-        <Grid Grid.Row="1" ColumnSpacing="8">
+        <Grid Grid.Row="1" ColumnSpacing="8" RowSpacing="8">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
@@ -37,7 +75,7 @@
                      FontFamily="{ThemeResource AtlasMonoFontFamily}"
                      Text="{x:Bind ViewModel.PathInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                      KeyDown="OnPathKeyDown" />
-            <Button Grid.Column="1" Click="OnBrowseClick"
+            <Button x:Name="BrowseButton" Grid.Column="1" Click="OnBrowseClick"
                     Style="{StaticResource AtlasGhostButtonStyle}"
                     AutomationProperties.Name="Browse for a file">
                 <StackPanel Orientation="Horizontal" Spacing="8">
@@ -45,7 +83,7 @@
                     <TextBlock Text="Browse…" />
                 </StackPanel>
             </Button>
-            <Button Grid.Column="2" Style="{StaticResource AccentButtonStyle}"
+            <Button x:Name="SearchButton" Grid.Column="2" Style="{StaticResource AccentButtonStyle}"
                     Click="OnSearchClick"
                     AutomationProperties.Name="Search for file owners">
                 <StackPanel Orientation="Horizontal" Spacing="8">
