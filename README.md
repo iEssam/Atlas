@@ -4,7 +4,7 @@ A Windows system intelligence and control application: one coherent replacement 
 
 > Observe → Record → Detect → Explain → Recommend → Act → Verify → Reverse
 
-**Status:** all three PRD phases (MVP / R2 / R3) are complete. First release candidate — **[v0.3.0-rc.1](https://github.com/iEssam/System-Atlas/releases/tag/v0.3.0-rc.1)** — is published with a per-machine MSI. See [docs/phases.md](docs/phases.md) for the milestone tracker.
+**Status:** the first release candidate, **[v0.3.0-rc.1](https://github.com/iEssam/System-Atlas/releases/tag/v0.3.0-rc.1)**, is published for evaluation with a per-machine MSI. The planned MVP, R2, and R3 feature slices are substantially implemented, but the project is **not production-ready**: the milestone tracker still contains open and deferred work, the release artifact is unsigned, and the stable distribution/update path is not complete. See [docs/phases.md](docs/phases.md) for implementation status and release gates.
 
 ## What it does
 

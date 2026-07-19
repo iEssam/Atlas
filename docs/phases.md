@@ -5,6 +5,19 @@ References: [project.md](../project.md) (PRD), [tech-stack.md](../tech-stack.md)
 
 Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 
+> **Status semantics:** these checkboxes track implementation coverage, not approval to ship. “Landed” means the named code path exists and has the validation recorded beside it. It does not mean the containing phase is complete or the product is production-ready while child items or release gates remain open.
+
+## Release readiness
+
+- [x] First x64 release candidate published for evaluation
+- [x] Elevated RC validation and MSI install/upgrade/removal lifecycle recorded in the [v0.3.0-rc.1 release notes](releases/v0.3.0-rc.1.md)
+- [ ] Production code signing for the MSI and packaged binaries
+- [ ] Staged update channel and signed release manifests
+- [ ] Full 72-hour soak on representative hardware
+- [ ] Stable-release review of every remaining `[~]` and `[ ]` item below, either completed or explicitly removed from the release scope
+
+Until those gates close, System Atlas is a release candidate for evaluation, not a production-ready release.
+
 ---
 
 ## Phase 0 — Foundation ✅ (completed 2026-07-13)
@@ -91,14 +104,14 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 
 ### M9 — Hardening & packaging `[~]`
 
-- [x] Windows service host (`service_ctl.rs`, hand-written advapi32 FFI, no crate): `service install/uninstall/run/status`; pure unit-tested state machine; crash-restart failure actions (restart ×3, 5 s, 1-day reset). record/serve refactored into stop-flag cores the service reuses. **Needs one elevated run** to validate live install/start/stop/crash-restart
+- [x] Windows service host (`service_ctl.rs`, hand-written advapi32 FFI, no crate): `service install/uninstall/run/status`; pure unit-tested state machine; crash-restart failure actions (restart ×3, 5 s, 1-day reset). record/serve refactored into stop-flag cores the service reuses. Elevated install/start/crash-restart/uninstall validation passed for v0.3.0-rc.1
 - [x] Perf gate: `overhead --json` (stable machine-readable line) + `.github/workflows/perf.yml` — hard working-set gate (<100 MB), idle-CPU advisory (hosted CI is noisy; hard gate belongs on self-hosted bare metal), soak on every run
 - [x] Soak harness (`soak.rs`): runs the real pipeline watching its own RSS slope (least-squares, warmup-excluded, materiality floor) + handle growth; PASS/FAIL verdict; short in CI, 72 h manual
 - [x] WiX v5 MSI installer (`installer/`): ServiceInstall/Control (SystemAtlas), harvested WinUI payload, %ProgramData%\SystemAtlas ACL, MajorUpgrade, ProductCore/DesktopApp features; compiles to a valid MSI here. Binary/installer identity reconciled (name, args, data path) and verified
 - [ ] Code signing (EV/Azure Trusted Signing) + staged-update channel wiring — documented stubs in `installer/README.md`; needs a cert + a policy-exempt build machine
-- [ ] Elevated live validation: `service install` + start + crash-restart; live ETW; a real long soak. All gated on an admin terminal / App Control exemption
+- [~] Elevated live validation: the 14-check RC suite passed in an admin, WDAC-exempt session, including service lifecycle, live ETW, incident/report, and plugin enforcement paths. A full 72-hour soak on representative hardware remains open
 
-**Phase 1 exit criteria:** PRD §20 items 1–6, 9–11, 13–17 demonstrable end-to-end — **functionally complete**; the remaining gaps are elevated-run validation and code-signing, both environment/infra rather than code.
+**Phase 1 status:** the core PRD §20 items 1–6, 9–11, 13–17 have demonstrable end-to-end implementations. The phase remains **in progress** because M5–M9 retain open items, including release engineering and validation work. This is an implementation assessment, not a shipping-readiness determination.
 
 ---
 
@@ -116,7 +129,7 @@ Deep inspector (handles/modules/threads on-demand snapshots) · Restart-Manager 
 - [x] **Read-only MCP server (`atlas-mcp`)** — the plan-pivot flagship (see the 2026-07-13 MCP decision note + tech-stack §4.7). Standalone binary, JSON-RPC 2.0 over stdio (hand-rolled on serde_json, no deps), 11 grounded tools mapping 1:1 onto read-only `AtlasQuery` RPCs. Read-only by construction (only AtlasQueryClient is built; a test asserts no tool maps to a mutating RPC and no tool name carries a mutating verb). Every result carries a `grounding` block + the RPC's honesty markers; MCP-strict redaction default-ON (paths/users/host/domains/command-lines/app-names, each `--no-redact-*`). **Live-verified end-to-end**: a `top_consumers` tools/call returned real data through the boundary with `image_name` redacted to `<APP>` and grounding present. Honest limitation documented: citation-ready evidence, not a guarantee the client's answer is cited
 - [x] **Advanced privacy alerts (PRD §9.10.3)** — the deferred M7 ConsentStore change-watcher (`RegNotifyChangeKeyValue` subtree notify → re-enumerate → pure `diff_transitions`; foreground + session-locked hints), finally populating the `privacy_event` history. Alert-rule engine (any-use / background / while-locked / unknown-app / longer-than) with FACTUAL, never-accusatory detail. Store schema v9; 5 AtlasQuery RPCs + `CAP_PRIVACY_ALERTS`; watcher+evaluator in serve. UI: privacy-alert CRUD + recent-alerts + the MCP settings/boundary page. CRUD + evaluator→store path verified; live mic/cam hardware trigger needs an interactive capture session
 
-**Phase 2 (R2) exit:** deep inspector · file locks · rules engine + profiles · network/tasks/boot/battery/thermal monitors · MCP server · advanced privacy alerts — **all landed**. Deferred to a later pass: Explorer sparse-MSIX context menu, before/after experiments (§9.15.3), catalog-signed detection done in-session, dynamic responsiveness protection (R3).
+**Phase 2 (R2) status:** the named R2 feature slice landed: deep inspector · file locks · rules engine + profiles · network/tasks/boot/battery/thermal monitors · MCP server · advanced privacy alerts. R2 is **not complete against the full phase description**: the Explorer sparse-MSIX context menu and before/after experiments (§9.15.3) remain deferred. Dynamic responsiveness protection moved to R3 and landed there.
 
 **R2 — MCP integration (deliverable detail).** `atlas-mcp` is a separate opt-in Rust process: MCP (JSON-RPC 2.0 / stdio) to the client, **read-only** `AtlasQuery` RPCs to the service (no `AtlasControl` — a tool call can never suspend/kill or change config). Tools: `query_timeline`, `top_consumers`, `find_events`, `diff_periods`, `explain_process`, `get_incident`, `get_playbook_result`, `list_system_changes`, `find_crashes`. Every result is self-describing (evidence IDs, time range, process identities, metrics/events, confidence, missing-data + retention/sensor markers). Privacy: disabled by default, explicit enable, redaction default-ON and stricter than local views, size/time caps, per-tool audit of the exact returned payload, instant revoke, clear "data leaves Atlas's boundary" warning. Honest limitation: Atlas guarantees *citation-ready evidence*, not that the client's final answer is fully cited (Atlas controls tool results, not the conversation). See tech-stack §4.7. The in-app deterministic "ask a question" box (template/playbook matching, fully local, no model) stays and is unaffected.
 
@@ -136,7 +149,7 @@ Dynamic responsiveness protection · extended retention tiers + optional Parquet
 - [x] **Expert security metadata (PRD §9.4.1/§9.4.6)** — `GetSecurityMetadata` deepens the inspector: file SHA-256 (CNG BCrypt, streamed), the signing **certificate chain** leaf→root (subject/issuer/thumbprint/validity, walked from the live WinTrust provider state), token **privileges** (name + enabled) / groups / app-container capabilities / integrity / elevation, and process **mitigation policies** (DEP/ASLR+high-entropy/CFG/dynamic-code/image-load/child-process). Cross-user/protected degrade via limited / available+reason. All hand-written FFI, clippy-clean. UI: Inspector Security tab, factual framing (unsigned = caution, held privilege = information). **Live-verified** on explorer.exe: real hash + full Microsoft 3-cert chain + SeChangeNotifyPrivilege + DEP/ASLR/CFG
 - [x] **Kernel-driver decision gate** — resolved as [ADR-0001](adr/0001-kernel-driver-decision-gate.md): ship **no** first-party kernel driver; the no-driver mode is the permanent default; honest sensor labeling (PRD §9.6.7) covers the narrow CPU-package-temp/fan gap; a sandboxed *existing* signed driver (PawnIO-model) is the only pre-approved path if the gate is ever reopened, behind hard guardrails (read-only, HVCI-signed, opt-in, security-reviewed). Rationale: BYOVD attack-surface + BSOD blast radius outweigh a minority sensor feature.
 
-**Phase 3 (R3) exit — all landed:** system changes · crash correlation · CLI + PowerShell · dynamic responsiveness protection · extended retention tiers · remote support bundle · signed plugin framework · expert security metadata · kernel-driver decision gate (ADR). **All three PRD phases (MVP / R2 / R3) are complete.**
+**Phase 3 (R3) status:** the listed R3 feature slice landed: system changes · crash correlation · CLI + PowerShell · dynamic responsiveness protection · extended retention tiers · remote support bundle · signed plugin framework · expert security metadata · kernel-driver decision gate (ADR). This does **not** close the open items elsewhere in the tracker or the release-readiness gates above.
 
 ---
 
