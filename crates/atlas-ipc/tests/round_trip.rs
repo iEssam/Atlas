@@ -204,6 +204,31 @@ impl AtlasQuery for FakeQuery {
         }))
     }
 
+    async fn create_experiment(
+        &self,
+        req: Request<atlas_ipc::CreateExperimentRequest>,
+    ) -> Result<Response<atlas_ipc::CreateExperimentReply>, Status> {
+        Ok(Response::new(atlas_ipc::CreateExperimentReply {
+            experiment: req.into_inner().experiment,
+        }))
+    }
+
+    async fn list_experiments(
+        &self,
+        _req: Request<atlas_ipc::ListExperimentsRequest>,
+    ) -> Result<Response<atlas_ipc::ListExperimentsReply>, Status> {
+        Ok(Response::new(atlas_ipc::ListExperimentsReply {
+            experiments: vec![],
+        }))
+    }
+
+    async fn compare_experiment(
+        &self,
+        _req: Request<atlas_ipc::CompareExperimentRequest>,
+    ) -> Result<Response<atlas_ipc::CompareExperimentReply>, Status> {
+        Ok(Response::new(atlas_ipc::CompareExperimentReply::default()))
+    }
+
     // The M7 privacy/startup/services RPCs are not exercised by this transport
     // test; return empty replies so the fake satisfies the (frozen) trait.
     async fn list_privacy_usage(

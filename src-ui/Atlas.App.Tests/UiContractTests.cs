@@ -106,6 +106,7 @@ public sealed class UiContractTests
 
     [Theory]
     [InlineData("DiagnosticsPage.xaml")]
+    [InlineData("ExperimentsPage.xaml")]
     [InlineData("FileLockPage.xaml")]
     [InlineData("NetworkPage.xaml")]
     [InlineData("ReliabilityPage.xaml")]
@@ -150,6 +151,20 @@ public sealed class UiContractTests
         Assert.True(dark.SetEquals(dictionaries["Light"]), "Light and Dark Atlas brush keys differ.");
         Assert.True(dark.SetEquals(dictionaries["HighContrast"]),
             "High Contrast must define every Atlas brush used by the app.");
+    }
+
+    [Fact]
+    public void ExperimentsExposeRealActionsResponsiveStatesAndEvidenceCaveat()
+    {
+        var xamlPath = Path.Combine(AppRoot, "Views", "ExperimentsPage.xaml");
+        var xaml = File.ReadAllText(xamlPath);
+        var code = File.ReadAllText(xamlPath + ".cs");
+
+        Assert.Contains("Click=\"NewExperiment_Click\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Click=\"Export_Click\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("SelectionChanged=\"ExperimentList_SelectionChanged\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("result.Caveat", code, StringComparison.Ordinal);
+        Assert.Contains("ExperimentInsufficientData", code, StringComparison.Ordinal);
     }
 
     [Theory]

@@ -21,7 +21,7 @@ public sealed partial class MainWindow : Window
             ["performance"] = new("performance", "Performance",
                 [new("Graphics", typeof(GpuPage)), new("Sensors", typeof(SensorsPage)), new("Network", typeof(NetworkPage))]),
             ["investigate"] = new("investigate", "Investigate",
-                [new("Diagnostics", typeof(DiagnosticsPage)), new("System Changes", typeof(SystemChangesPage)), new("Reliability", typeof(ReliabilityPage)), new("File Locks", typeof(FileLockPage))]),
+                [new("Diagnostics", typeof(DiagnosticsPage)), new("Experiments", typeof(ExperimentsPage)), new("System Changes", typeof(SystemChangesPage)), new("Reliability", typeof(ReliabilityPage)), new("File Locks", typeof(FileLockPage))]),
             ["system"] = new("system", "System",
                 [new("Startup", typeof(StartupPage)), new("Services", typeof(ServicesPage)), new("Scheduled Tasks", typeof(ScheduledTasksPage))]),
             ["automation"] = new("automation", "Automation",
@@ -51,7 +51,8 @@ public sealed partial class MainWindow : Window
 #if DEBUG
         var startPage = Environment.GetEnvironmentVariable("ATLAS_START_PAGE");
         if (string.Equals(startPage, "activity", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(startPage, "graphics", StringComparison.OrdinalIgnoreCase))
+            || string.Equals(startPage, "graphics", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(startPage, "experiments", StringComparison.OrdinalIgnoreCase))
         {
             // A dormant development hook used by the unpackaged smoke test.
             // NavigationView applies its initial Overview selection after XAML
@@ -83,6 +84,14 @@ public sealed partial class MainWindow : Window
         Root.Loaded -= StartOnRequestedPageWhenLoaded;
         DispatcherQueue.TryEnqueue(() =>
         {
+            if (string.Equals(
+                Environment.GetEnvironmentVariable("ATLAS_START_PAGE"),
+                "experiments",
+                StringComparison.OrdinalIgnoreCase))
+            {
+                ContentFrame.Navigate(typeof(ExperimentsPage));
+                return;
+            }
             string requestedSection = string.Equals(
                 Environment.GetEnvironmentVariable("ATLAS_START_PAGE"),
                 "graphics",
@@ -119,6 +128,8 @@ public sealed partial class MainWindow : Window
         };
         ContentFrame.Navigate(pageType);
     }
+
+    public void NavigateToExperiments() => ContentFrame.Navigate(typeof(ExperimentsPage));
 
     private void ResizeForFirstRun()
     {

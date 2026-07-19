@@ -481,6 +481,25 @@ CREATE TABLE IF NOT EXISTS gpu_adapter (
 CREATE INDEX IF NOT EXISTS ix_gpu_adapter_last_seen ON gpu_adapter(last_seen_ms);
 "#;
 
+// Additive v16 before/after experiment definitions. Results are deliberately
+// recomputed from retained evidence so the UI never presents a stale snapshot
+// as if it were a current measurement.
+const SCHEMA_V16_EXPERIMENT: &str = r#"
+CREATE TABLE IF NOT EXISTS experiment (
+    id                 INTEGER PRIMARY KEY,
+    name               TEXT    NOT NULL,
+    change_description TEXT    NOT NULL,
+    metric             INTEGER NOT NULL,
+    threshold          REAL    NOT NULL,
+    baseline_from_ms   INTEGER NOT NULL,
+    baseline_to_ms     INTEGER NOT NULL,
+    followup_from_ms   INTEGER NOT NULL,
+    followup_to_ms     INTEGER NOT NULL,
+    created_ms         INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_experiment_created ON experiment(created_ms DESC);
+"#;
+
 /// Whether `table` already has a column named `column`, via `PRAGMA table_info`.
 /// Used to make the v3 `ADD COLUMN` migration idempotent (SQLite lacks
 /// `ADD COLUMN IF NOT EXISTS`).
@@ -674,6 +693,21 @@ pub struct BookmarkRow {
     pub id: i64,
     pub ts_ms: i64,
     pub label: String,
+    pub created_ms: i64,
+}
+
+/// A persisted before/after experiment definition (PRD §9.3.5/§9.15.3).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExperimentRow {
+    pub id: i64,
+    pub name: String,
+    pub change_description: String,
+    pub metric: i32,
+    pub threshold: f64,
+    pub baseline_from_ms: i64,
+    pub baseline_to_ms: i64,
+    pub followup_from_ms: i64,
+    pub followup_to_ms: i64,
     pub created_ms: i64,
 }
 
@@ -1087,6 +1121,10 @@ impl Store {
                 }
             }
             self.conn.execute_batch("PRAGMA user_version = 15;")?;
+        }
+        if version < 16 {
+            self.conn.execute_batch(SCHEMA_V16_EXPERIMENT)?;
+            self.conn.execute_batch("PRAGMA user_version = 16;")?;
         }
         // FTS5 objects are built (idempotently, IF NOT EXISTS) on every open
         // once the module is confirmed present, independent of user_version: a
@@ -2007,6 +2045,57 @@ impl Store {
             params![ts_ms, label, created_ms],
         )?;
         Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Persists a before/after experiment definition and returns its row id.
+    pub fn create_experiment(&self, experiment: &ExperimentRow) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO experiment
+                (name, change_description, metric, threshold, baseline_from_ms,
+                 baseline_to_ms, followup_from_ms, followup_to_ms, created_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                experiment.name,
+                experiment.change_description,
+                experiment.metric,
+                experiment.threshold,
+                experiment.baseline_from_ms,
+                experiment.baseline_to_ms,
+                experiment.followup_from_ms,
+                experiment.followup_to_ms,
+                experiment.created_ms,
+            ],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Returns one experiment definition, or `None` when the id is unknown.
+    pub fn get_experiment(&self, id: i64) -> Result<Option<ExperimentRow>> {
+        self.conn
+            .query_row(
+                "SELECT id, name, change_description, metric, threshold,
+                        baseline_from_ms, baseline_to_ms, followup_from_ms,
+                        followup_to_ms, created_ms
+                   FROM experiment WHERE id = ?1",
+                params![id],
+                map_experiment_row,
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    /// Lists experiment definitions newest first.
+    pub fn list_experiments(&self, limit: u32) -> Result<Vec<ExperimentRow>> {
+        let limit = if limit == 0 { 100 } else { limit };
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, change_description, metric, threshold,
+                    baseline_from_ms, baseline_to_ms, followup_from_ms,
+                    followup_to_ms, created_ms
+               FROM experiment ORDER BY created_ms DESC, id DESC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit], map_experiment_row)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
     }
 
     /// Lists bookmarks whose `ts_ms` falls in `[from_ms, to_ms]`, ascending by
@@ -3298,6 +3387,21 @@ fn like_pattern(q: &str) -> String {
     format!("%{escaped}%")
 }
 
+fn map_experiment_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ExperimentRow> {
+    Ok(ExperimentRow {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        change_description: row.get(2)?,
+        metric: row.get::<_, i64>(3)? as i32,
+        threshold: row.get(4)?,
+        baseline_from_ms: row.get(5)?,
+        baseline_to_ms: row.get(6)?,
+        followup_from_ms: row.get(7)?,
+        followup_to_ms: row.get(8)?,
+        created_ms: row.get(9)?,
+    })
+}
+
 /// Whether `t` falls inside any of the merged `[start, end]` intervals. Used by
 /// the cross-tier query to skip a roll-up bucket whose time a finer tier already
 /// served (finest-tier-wins). Linear over `intervals`, which stays tiny because
@@ -3476,7 +3580,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 15, "migration walks v1 up to the current schema");
+        assert_eq!(version, 16, "migration walks v1 up to the current schema");
 
         store
             .write_self_sample(&SelfSampleRow {
@@ -3552,7 +3656,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 15, "migration walks a v2 db to the current schema");
+        assert_eq!(version, 16, "migration walks a v2 db to the current schema");
         assert!(column_exists(&store.conn, "process_instance", "exit_status").unwrap());
 
         // Pre-existing row survived and has a NULL exit_status.
@@ -3662,13 +3766,13 @@ mod tests {
     }
 
     #[test]
-    fn fresh_database_is_v15() {
+    fn fresh_database_is_v16() {
         let store = Store::open_in_memory().unwrap();
         let version: i64 = store
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 15);
+        assert_eq!(version, 16);
     }
 
     #[test]
@@ -3698,7 +3802,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 15);
+        assert_eq!(version, 16);
         for column in [
             "physical_adapter_index",
             "vendor_id",
@@ -4627,5 +4731,36 @@ mod tests {
         assert_eq!(summary.consumed_blocks, 0);
         assert_eq!(summary.produced_blocks, 0);
         assert_eq!(store.block_counts_by_tier().unwrap(), [1, 0, 0]);
+    }
+
+    #[test]
+    fn experiment_definitions_round_trip_newest_first() {
+        let store = Store::open_in_memory().unwrap();
+        let first = ExperimentRow {
+            id: 0,
+            name: "Before driver update".into(),
+            change_description: "Updated the display driver".into(),
+            metric: 20,
+            threshold: 700.0,
+            baseline_from_ms: 1_000,
+            baseline_to_ms: 2_000,
+            followup_from_ms: 3_000,
+            followup_to_ms: 4_000,
+            created_ms: 10,
+        };
+        let first_id = store.create_experiment(&first).unwrap();
+        let mut second = first.clone();
+        second.name = "After startup cleanup".into();
+        second.created_ms = 20;
+        let second_id = store.create_experiment(&second).unwrap();
+
+        assert_eq!(
+            store.get_experiment(first_id).unwrap().unwrap().name,
+            first.name
+        );
+        let rows = store.list_experiments(10).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].id, second_id);
+        assert_eq!(rows[1].id, first_id);
     }
 }

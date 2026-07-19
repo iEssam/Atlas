@@ -32,41 +32,43 @@ use atlas_collectors::{
 use atlas_ipc::v0::atlas_query_server::AtlasQuery;
 use atlas_ipc::{
     BatteryStatus as ProtoBatteryStatus, Bookmark, BootRecord as ProtoBootRecord,
-    CapabilitiesReply, CapabilitiesRequest, CapabilityKind, CertInfo,
-    Connection as ProtoConnection, CrashRecord as ProtoCrashRecord, CreateBookmarkReply,
-    CreateBookmarkRequest, CreatePrivacyAlertRuleReply, CreatePrivacyAlertRuleRequest,
-    DeletePrivacyAlertRuleReply, DeletePrivacyAlertRuleRequest, DiagnoseReply, DiagnoseRequest,
-    EventRow, EvidenceItem, FindResourceOwnersReply, FindResourceOwnersRequest, FiredAlert,
-    GenerateReportReply, GenerateReportRequest, GetBatteryStatusReply, GetBatteryStatusRequest,
+    CapabilitiesReply, CapabilitiesRequest, CapabilityKind, CertInfo, CompareExperimentReply,
+    CompareExperimentRequest, Connection as ProtoConnection, CrashRecord as ProtoCrashRecord,
+    CreateBookmarkReply, CreateBookmarkRequest, CreateExperimentReply, CreateExperimentRequest,
+    CreatePrivacyAlertRuleReply, CreatePrivacyAlertRuleRequest, DeletePrivacyAlertRuleReply,
+    DeletePrivacyAlertRuleRequest, DiagnoseReply, DiagnoseRequest, EventRow, EvidenceItem,
+    Experiment as ProtoExperiment, ExperimentPeriodSummary, ExperimentVerdict,
+    FindResourceOwnersReply, FindResourceOwnersRequest, FiredAlert, GenerateReportReply,
+    GenerateReportRequest, GetBatteryStatusReply, GetBatteryStatusRequest,
     GetSecurityMetadataReply, GetSecurityMetadataRequest, GetThermalReply, GetThermalRequest,
     GpuAdapterTelemetry, GpuAvailabilityReason, GpuEngineClass, GpuEngineTelemetry,
     GpuSensorAvailability, GpuSensorKind, GpuTelemetrySource, GpuTemperatureKind,
     GpuTemperatureTelemetry, GpuThrottleReason, HandleRow, Incident, IncidentKind, InsightStatus,
     L4Protocol, ListBookmarksReply, ListBookmarksRequest, ListBootsReply, ListBootsRequest,
     ListConnectionsReply, ListConnectionsRequest, ListCrashesReply, ListCrashesRequest,
-    ListEventsReply, ListEventsRequest, ListFiredAlertsReply, ListFiredAlertsRequest,
-    ListHandlesReply, ListHandlesRequest, ListIncidentsReply, ListIncidentsRequest,
-    ListInsightsReply, ListInsightsRequest, ListListeningPortsReply, ListListeningPortsRequest,
-    ListModulesReply, ListModulesRequest, ListPrivacyAlertRulesReply, ListPrivacyAlertRulesRequest,
-    ListPrivacyEventsReply, ListPrivacyEventsRequest, ListPrivacyUsageReply,
-    ListPrivacyUsageRequest, ListScheduledTasksReply, ListScheduledTasksRequest, ListServicesReply,
-    ListServicesRequest, ListStartupReply, ListStartupRequest, ListSystemChangesReply,
-    ListSystemChangesRequest, ListThreadsReply, ListThreadsRequest,
-    ListeningPort as ProtoListeningPort, MetricKind, ModuleRow, PrivacyAlertRule, PrivacyEvent,
-    PrivacyUsage, ProcessDetail as ProtoProcessDetail, ProcessDetailReply, ProcessDetailRequest,
-    ProcessHit, ProcessRole, ProcessRow, QueryRangeReply, QueryRangeRequest, RangeBucket,
-    ReportFormat, ResourceOwner as ProtoResourceOwner, RingUpdate, RingWriter, RowInput,
-    ScheduledTask as ProtoScheduledTask, SearchHit, SearchReply, SearchRequest,
-    SecurityMetadata as ProtoSecurityMetadata, ServiceEntry, ServiceStartType, ServiceState,
-    SnapshotReply, SnapshotRequest, StartupEntry, StartupSource, SupportBundleReply,
+    ListEventsReply, ListEventsRequest, ListExperimentsReply, ListExperimentsRequest,
+    ListFiredAlertsReply, ListFiredAlertsRequest, ListHandlesReply, ListHandlesRequest,
+    ListIncidentsReply, ListIncidentsRequest, ListInsightsReply, ListInsightsRequest,
+    ListListeningPortsReply, ListListeningPortsRequest, ListModulesReply, ListModulesRequest,
+    ListPrivacyAlertRulesReply, ListPrivacyAlertRulesRequest, ListPrivacyEventsReply,
+    ListPrivacyEventsRequest, ListPrivacyUsageReply, ListPrivacyUsageRequest,
+    ListScheduledTasksReply, ListScheduledTasksRequest, ListServicesReply, ListServicesRequest,
+    ListStartupReply, ListStartupRequest, ListSystemChangesReply, ListSystemChangesRequest,
+    ListThreadsReply, ListThreadsRequest, ListeningPort as ProtoListeningPort, MetricKind,
+    ModuleRow, PrivacyAlertRule, PrivacyEvent, PrivacyUsage, ProcessDetail as ProtoProcessDetail,
+    ProcessDetailReply, ProcessDetailRequest, ProcessHit, ProcessRole, ProcessRow, QueryRangeReply,
+    QueryRangeRequest, RangeBucket, ReportFormat, ResourceOwner as ProtoResourceOwner, RingUpdate,
+    RingWriter, RowInput, ScheduledTask as ProtoScheduledTask, SearchHit, SearchReply,
+    SearchRequest, SecurityMetadata as ProtoSecurityMetadata, ServiceEntry, ServiceStartType,
+    ServiceState, SnapshotReply, SnapshotRequest, StartupEntry, StartupSource, SupportBundleReply,
     SupportBundleRequest, SystemChange as ProtoSystemChange, SystemGauges, TcpState,
     ThermalSensor as ProtoThermalSensor, ThreadRow, TimeRange, TokenPrivilege,
     UpdatePrivacyAlertRuleReply, UpdatePrivacyAlertRuleRequest, CAP_BATTERY_STATUS,
     CAP_BOOT_ANALYSIS, CAP_CRASH_ANALYSIS, CAP_DIAGNOSTICS, CAP_DYNAMIC_PROTECTION,
-    CAP_FTS5_SEARCH, CAP_GPU_CORE_TELEMETRY, CAP_GPU_PROCESS_MEMORY, CAP_GPU_RULE_TRIGGERS,
-    CAP_GPU_VENDOR_SENSORS, CAP_GPU_WDDM_SENSORS, CAP_HISTORY_QUERIES, CAP_INCIDENT_DETECTION,
-    CAP_INSIGHTS, CAP_NETWORK_INSPECTOR, CAP_PLUGINS, CAP_PRIVACY_ALERTS, CAP_PRIVACY_EVENTS,
-    CAP_PROCESS_INSPECTOR, CAP_PROCESS_SNAPSHOTS, CAP_PROFILES, CAP_REPORTS,
+    CAP_EXPERIMENTS, CAP_FTS5_SEARCH, CAP_GPU_CORE_TELEMETRY, CAP_GPU_PROCESS_MEMORY,
+    CAP_GPU_RULE_TRIGGERS, CAP_GPU_VENDOR_SENSORS, CAP_GPU_WDDM_SENSORS, CAP_HISTORY_QUERIES,
+    CAP_INCIDENT_DETECTION, CAP_INSIGHTS, CAP_NETWORK_INSPECTOR, CAP_PLUGINS, CAP_PRIVACY_ALERTS,
+    CAP_PRIVACY_EVENTS, CAP_PROCESS_INSPECTOR, CAP_PROCESS_SNAPSHOTS, CAP_PROFILES, CAP_REPORTS,
     CAP_RESOURCE_OWNERSHIP, CAP_RULES_ENGINE, CAP_SAFE_ACTIONS, CAP_SCHEDULED_TASKS,
     CAP_SECURITY_METADATA, CAP_SERVICES_INVENTORY, CAP_STARTUP_INVENTORY, CAP_SUPPORT_BUNDLE,
     CAP_SYSTEM_CHANGES, CAP_THERMAL_SENSORS, RING_ROWS,
@@ -79,8 +81,10 @@ use crate::support_bundle::{
     self, BundleData, ConsumerRow, CrashesSection, DeviceSection, HealthSection, IncidentEntry,
     SelfMetricsSection,
 };
-use atlas_store::Store;
+use atlas_store::{ExperimentRow, Store};
 use atlas_tsdb::Metric;
+
+use crate::experiments::{self, PeriodEvidence, Verdict};
 
 /// Shared handle to the local store for the read path (history queries and
 /// bookmarks) and the broker's audit log. The writer/`record` path owns writes
@@ -622,6 +626,7 @@ impl AtlasQuery for QueryService {
         let mut flags = vec![
             CAP_PROCESS_SNAPSHOTS.to_string(),
             CAP_HISTORY_QUERIES.to_string(),
+            CAP_EXPERIMENTS.to_string(),
             CAP_SAFE_ACTIONS.to_string(),
         ];
         if self.has_fts5 {
@@ -906,6 +911,109 @@ impl AtlasQuery for QueryService {
                     created_ms: b.created_ms,
                 })
                 .collect(),
+        }))
+    }
+
+    async fn create_experiment(
+        &self,
+        req: Request<CreateExperimentRequest>,
+    ) -> Result<Response<CreateExperimentReply>, Status> {
+        let input = req
+            .into_inner()
+            .experiment
+            .ok_or_else(|| Status::invalid_argument("experiment is required"))?;
+        let row = validate_experiment(input).map_err(|status| *status)?;
+        let store = self.store.lock().map_err(|_| poisoned())?;
+        let id = store
+            .create_experiment(&row)
+            .map_err(|e| Status::internal(format!("create_experiment: {e}")))?;
+        let saved = store
+            .get_experiment(id)
+            .map_err(|e| Status::internal(format!("get_experiment: {e}")))?
+            .ok_or_else(|| Status::internal("created experiment was not found"))?;
+        Ok(Response::new(CreateExperimentReply {
+            experiment: Some(experiment_to_proto(saved)),
+        }))
+    }
+
+    async fn list_experiments(
+        &self,
+        req: Request<ListExperimentsRequest>,
+    ) -> Result<Response<ListExperimentsReply>, Status> {
+        let store = self.store.lock().map_err(|_| poisoned())?;
+        let rows = store
+            .list_experiments(req.into_inner().limit)
+            .map_err(|e| Status::internal(format!("list_experiments: {e}")))?;
+        Ok(Response::new(ListExperimentsReply {
+            experiments: rows.into_iter().map(experiment_to_proto).collect(),
+        }))
+    }
+
+    async fn compare_experiment(
+        &self,
+        req: Request<CompareExperimentRequest>,
+    ) -> Result<Response<CompareExperimentReply>, Status> {
+        const TARGET_BUCKETS: u32 = 240;
+        const EVENT_LIMIT: u32 = 5_000;
+        let id = req.into_inner().id;
+        let store = self.store.lock().map_err(|_| poisoned())?;
+        let row = store
+            .get_experiment(id)
+            .map_err(|e| Status::internal(format!("get_experiment: {e}")))?
+            .ok_or_else(|| Status::not_found("experiment not found"))?;
+        let metric = map_metric(row.metric).ok_or_else(|| {
+            Status::failed_precondition("experiment metric is no longer supported")
+        })?;
+        let baseline = load_period_evidence(
+            &store,
+            metric,
+            row.baseline_from_ms,
+            row.baseline_to_ms,
+            TARGET_BUCKETS,
+            EVENT_LIMIT,
+        )
+        .map_err(|status| *status)?;
+        let followup = load_period_evidence(
+            &store,
+            metric,
+            row.followup_from_ms,
+            row.followup_to_ms,
+            TARGET_BUCKETS,
+            EVENT_LIMIT,
+        )
+        .map_err(|status| *status)?;
+        let result = experiments::compare(
+            &baseline,
+            &followup,
+            row.baseline_to_ms - row.baseline_from_ms,
+            row.followup_to_ms - row.followup_from_ms,
+            row.threshold,
+            TARGET_BUCKETS,
+        );
+        let summary = match result.verdict {
+            Verdict::Insufficient => "Not enough retained evidence to judge this experiment.",
+            Verdict::Improved => "The follow-up average measured at least 5% lower.",
+            Verdict::Regressed => "The follow-up average measured at least 5% higher.",
+            Verdict::NoClearChange => "The measured average stayed within the 5% noise band.",
+        };
+        Ok(Response::new(CompareExperimentReply {
+            experiment: Some(experiment_to_proto(row)),
+            verdict: match result.verdict {
+                Verdict::Insufficient => ExperimentVerdict::ExperimentInsufficientData as i32,
+                Verdict::Improved => ExperimentVerdict::ExperimentImproved as i32,
+                Verdict::Regressed => ExperimentVerdict::ExperimentRegressed as i32,
+                Verdict::NoClearChange => ExperimentVerdict::ExperimentNoClearChange as i32,
+            },
+            summary: summary.to_string(),
+            baseline: Some(period_to_proto(result.baseline)),
+            followup: Some(period_to_proto(result.followup)),
+            average_delta_percent: result.delta_percent,
+            new_processes: result.new_processes,
+            removed_processes: result.removed_processes,
+            incomplete: result.incomplete,
+            data_quality: result.data_quality,
+            caveat: "This is an observational comparison. It does not prove the named change caused the result."
+                .to_string(),
         }))
     }
 
@@ -2303,6 +2411,126 @@ fn get_thermal_impl() -> GetThermalReply {
         available: false,
         unavailable_reason: "thermal sensors are Windows-only".to_string(),
         sensors: Vec::new(),
+    }
+}
+
+fn validate_experiment(input: ProtoExperiment) -> Result<ExperimentRow, Box<Status>> {
+    let name = input.name.trim();
+    let change = input.change_description.trim();
+    if name.is_empty() || name.len() > 120 {
+        return Err(Box::new(Status::invalid_argument(
+            "name must contain 1 to 120 characters",
+        )));
+    }
+    if change.is_empty() || change.len() > 1_000 {
+        return Err(Box::new(Status::invalid_argument(
+            "change description must contain 1 to 1000 characters",
+        )));
+    }
+    let metric = MetricKind::try_from(input.metric)
+        .map_err(|_| Box::new(Status::invalid_argument("unknown metric")))?;
+    if !matches!(
+        metric,
+        MetricKind::SysCpuPermille
+            | MetricKind::SysMemUsed
+            | MetricKind::SysCommitUsed
+            | MetricKind::SysProcessCount
+            | MetricKind::SysGpuPermille
+    ) {
+        return Err(Box::new(Status::invalid_argument(
+            "experiments support system CPU, memory, commit, process count, or GPU",
+        )));
+    }
+    if !input.threshold.is_finite() || input.threshold < 0.0 {
+        return Err(Box::new(Status::invalid_argument(
+            "threshold must be a finite non-negative number",
+        )));
+    }
+    let (baseline_from_ms, baseline_to_ms) = range_bounds(&input.baseline);
+    let (followup_from_ms, followup_to_ms) = range_bounds(&input.followup);
+    if baseline_from_ms >= baseline_to_ms || followup_from_ms >= followup_to_ms {
+        return Err(Box::new(Status::invalid_argument(
+            "both periods must have a positive duration",
+        )));
+    }
+    Ok(ExperimentRow {
+        id: 0,
+        name: name.to_string(),
+        change_description: change.to_string(),
+        metric: input.metric,
+        threshold: input.threshold,
+        baseline_from_ms,
+        baseline_to_ms,
+        followup_from_ms,
+        followup_to_ms,
+        created_ms: crate::now_ms(),
+    })
+}
+
+fn experiment_to_proto(row: ExperimentRow) -> ProtoExperiment {
+    ProtoExperiment {
+        id: row.id,
+        name: row.name,
+        change_description: row.change_description,
+        metric: row.metric,
+        threshold: row.threshold,
+        baseline: Some(TimeRange {
+            from_ms: row.baseline_from_ms,
+            to_ms: row.baseline_to_ms,
+        }),
+        followup: Some(TimeRange {
+            from_ms: row.followup_from_ms,
+            to_ms: row.followup_to_ms,
+        }),
+        created_ms: row.created_ms,
+    }
+}
+
+fn load_period_evidence(
+    store: &Store,
+    metric: Metric,
+    from_ms: i64,
+    to_ms: i64,
+    buckets: u32,
+    event_limit: u32,
+) -> Result<PeriodEvidence, Box<Status>> {
+    let metric_buckets = store
+        .query_range(metric, 0, from_ms, to_ms, buckets)
+        .map_err(|e| Box::new(Status::internal(format!("query experiment metrics: {e}"))))?;
+    let (events, events_truncated) = store
+        .list_events(from_ms, to_ms, &[0], event_limit)
+        .map_err(|e| Box::new(Status::internal(format!("query experiment events: {e}"))))?;
+    let process_starts = events
+        .into_iter()
+        .filter(|event| !event.image_name.is_empty())
+        .map(|event| event.image_name.to_ascii_lowercase())
+        .collect();
+    let (crashes, crashes_truncated) = store
+        .list_crashes(from_ms, to_ms, &[], event_limit)
+        .map_err(|e| Box::new(Status::internal(format!("query experiment crashes: {e}"))))?;
+    let (changes, changes_truncated) = store
+        .list_system_changes(from_ms, to_ms, &[], event_limit)
+        .map_err(|e| Box::new(Status::internal(format!("query experiment changes: {e}"))))?;
+    Ok(PeriodEvidence {
+        buckets: metric_buckets,
+        process_starts,
+        events_truncated,
+        crashes: crashes.len(),
+        crashes_truncated,
+        system_changes: changes.len(),
+        changes_truncated,
+    })
+}
+
+fn period_to_proto(value: experiments::PeriodSummary) -> ExperimentPeriodSummary {
+    ExperimentPeriodSummary {
+        average: value.average,
+        peak: value.peak,
+        duration_above_threshold_ms: value.duration_above_threshold_ms,
+        samples: value.samples,
+        populated_buckets: value.populated_buckets,
+        crashes: value.crashes,
+        system_changes: value.system_changes,
     }
 }
 

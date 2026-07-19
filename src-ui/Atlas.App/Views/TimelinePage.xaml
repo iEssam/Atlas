@@ -46,6 +46,9 @@
             <AppBarButton Label="Bookmark now" Click="BookmarkNow_Click">
                 <AppBarButton.Icon><FontIcon Glyph="&#xE8A4;" /></AppBarButton.Icon>
             </AppBarButton>
+            <AppBarButton Label="Compare periods" Click="ComparePeriods_Click">
+                <AppBarButton.Icon><FontIcon Glyph="&#xE8AB;" /></AppBarButton.Icon>
+            </AppBarButton>
         </CommandBar>
 
         <!-- Status line -->

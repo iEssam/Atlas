@@ -11,6 +11,7 @@ mod broker;
 mod detectors;
 mod diagnostics;
 mod dynamic_protection;
+mod experiments;
 #[cfg(windows)]
 mod forensics;
 mod insights;

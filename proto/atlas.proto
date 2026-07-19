@@ -348,6 +348,58 @@ message ListBookmarksReply {
   repeated Bookmark bookmarks = 1;
 }
 
+// A persisted comparison definition. The named change is context supplied by
+// the user; Atlas reports correlation only and never claims the change caused
+// the measured result.
+message Experiment {
+  int64 id = 1;
+  string name = 2;
+  string change_description = 3;
+  MetricKind metric = 4;
+  double threshold = 5;
+  TimeRange baseline = 6;
+  TimeRange followup = 7;
+  int64 created_ms = 8;
+}
+
+message CreateExperimentRequest { Experiment experiment = 1; }
+message CreateExperimentReply { Experiment experiment = 1; }
+message ListExperimentsRequest { uint32 limit = 1; }
+message ListExperimentsReply { repeated Experiment experiments = 1; }
+message CompareExperimentRequest { int64 id = 1; }
+
+message ExperimentPeriodSummary {
+  double average = 1;
+  double peak = 2;
+  uint64 duration_above_threshold_ms = 3;
+  uint64 samples = 4;
+  uint32 populated_buckets = 5;
+  uint32 crashes = 6;
+  uint32 system_changes = 7;
+}
+
+enum ExperimentVerdict {
+  EXPERIMENT_VERDICT_UNSPECIFIED = 0;
+  EXPERIMENT_INSUFFICIENT_DATA = 1;
+  EXPERIMENT_IMPROVED = 2;
+  EXPERIMENT_REGRESSED = 3;
+  EXPERIMENT_NO_CLEAR_CHANGE = 4;
+}
+
+message CompareExperimentReply {
+  Experiment experiment = 1;
+  ExperimentVerdict verdict = 2;
+  string summary = 3;
+  ExperimentPeriodSummary baseline = 4;
+  ExperimentPeriodSummary followup = 5;
+  double average_delta_percent = 6;
+  repeated string new_processes = 7;
+  repeated string removed_processes = 8;
+  bool incomplete = 9;
+  string data_quality = 10;
+  string caveat = 11;
+}
+
 // ---------------------------------------------------------------------------
 // M7: privacy activity, startup inventory, services (read-only surface).
 // ---------------------------------------------------------------------------
@@ -684,6 +736,9 @@ service AtlasQuery {
   rpc Search(SearchRequest) returns (SearchReply);
   rpc CreateBookmark(CreateBookmarkRequest) returns (CreateBookmarkReply);
   rpc ListBookmarks(ListBookmarksRequest) returns (ListBookmarksReply);
+  rpc CreateExperiment(CreateExperimentRequest) returns (CreateExperimentReply);
+  rpc ListExperiments(ListExperimentsRequest) returns (ListExperimentsReply);
+  rpc CompareExperiment(CompareExperimentRequest) returns (CompareExperimentReply);
   rpc ListPrivacyUsage(ListPrivacyUsageRequest) returns (ListPrivacyUsageReply);
   rpc ListPrivacyEvents(ListPrivacyEventsRequest) returns (ListPrivacyEventsReply);
   rpc ListStartup(ListStartupRequest) returns (ListStartupReply);

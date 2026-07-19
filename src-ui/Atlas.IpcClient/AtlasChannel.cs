@@ -223,6 +223,30 @@ public sealed class AtlasChannel : IDisposable
             new ListBookmarksRequest { Range = new TimeRange { FromMs = fromMs, ToMs = toMs } },
             cancellationToken: cancellationToken).ResponseAsync);
 
+    /// <summary>Persists a before/after experiment definition.</summary>
+    public Task<RpcOutcome<CreateExperimentReply>> CreateExperimentAsync(
+        Experiment experiment,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _client.CreateExperimentAsync(
+            new CreateExperimentRequest { Experiment = experiment },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>Lists saved experiment definitions, newest first.</summary>
+    public Task<RpcOutcome<ListExperimentsReply>> ListExperimentsAsync(
+        uint limit = 100,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _client.ListExperimentsAsync(
+            new ListExperimentsRequest { Limit = limit },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>Recomputes one comparison from currently retained evidence.</summary>
+    public Task<RpcOutcome<CompareExperimentReply>> CompareExperimentAsync(
+        long id,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _client.CompareExperimentAsync(
+            new CompareExperimentRequest { Id = id },
+            cancellationToken: cancellationToken).ResponseAsync);
+
     // ----------------------------------------------------------------------
     // M7: privacy activity, startup inventory, services (AtlasQuery). Same
     // Unimplemented→Unsupported guard so the new pages degrade gracefully

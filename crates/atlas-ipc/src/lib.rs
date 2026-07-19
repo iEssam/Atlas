@@ -67,6 +67,12 @@ pub use v0::{
     ServiceState, Severity, SnapshotReply, SnapshotRequest, StartupEntry, StartupSource,
     SystemGauges, TcpState, ThermalSensor, ThreadRow, TimeRange,
 };
+// Before/after experiments (AtlasQuery, PRD §9.3.5/§9.15.3).
+pub use v0::{
+    CompareExperimentReply, CompareExperimentRequest, CreateExperimentReply,
+    CreateExperimentRequest, Experiment, ExperimentPeriodSummary, ExperimentVerdict,
+    ListExperimentsReply, ListExperimentsRequest,
+};
 // R2 advanced privacy alerts (AtlasQuery, PRD §9.10.3).
 pub use v0::{
     CreatePrivacyAlertRuleReply, CreatePrivacyAlertRuleRequest, DeletePrivacyAlertRuleReply,
@@ -134,6 +140,9 @@ pub const CAP_GPU_RULE_TRIGGERS: &str = "gpu_rule_triggers";
 /// M6: the service answers historical range/event/search/bookmark queries from
 /// the local store (AtlasQuery's read surface).
 pub const CAP_HISTORY_QUERIES: &str = "history_queries";
+
+/// The service persists and evaluates before/after experiment definitions.
+pub const CAP_EXPERIMENTS: &str = "before_after_experiments";
 
 /// M6: the service exposes the safe-action broker (AtlasControl). Present only
 /// when the store is available (audit trail) — the UI hides the action ladder

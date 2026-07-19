@@ -1,0 +1,159 @@
+<Page
+    x:Class="Atlas.App.Views.ExperimentsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:proto="using:Atlas.V0">
+
+    <Grid x:Name="RootGrid" Padding="24" RowSpacing="16">
+        <VisualStateManager.VisualStateGroups>
+            <VisualStateGroup>
+                <VisualState x:Name="Compact">
+                    <VisualState.StateTriggers><AdaptiveTrigger MinWindowWidth="0" /></VisualState.StateTriggers>
+                    <VisualState.Setters>
+                        <Setter Target="RootGrid.Padding" Value="12" />
+                        <Setter Target="MasterColumn.Width" Value="1*" />
+                        <Setter Target="DetailColumn.Width" Value="0" />
+                        <Setter Target="MasterRow.Height" Value="220" />
+                        <Setter Target="DetailRow.Height" Value="1*" />
+                        <Setter Target="ExperimentList.(Grid.Row)" Value="0" />
+                        <Setter Target="DetailScroll.(Grid.Row)" Value="1" />
+                        <Setter Target="DetailScroll.(Grid.Column)" Value="0" />
+                    </VisualState.Setters>
+                </VisualState>
+                <VisualState x:Name="Medium">
+                    <VisualState.StateTriggers><AdaptiveTrigger MinWindowWidth="640" /></VisualState.StateTriggers>
+                    <VisualState.Setters>
+                        <Setter Target="MasterColumn.Width" Value="1*" />
+                        <Setter Target="DetailColumn.Width" Value="0" />
+                        <Setter Target="MasterRow.Height" Value="240" />
+                        <Setter Target="DetailRow.Height" Value="1*" />
+                        <Setter Target="ExperimentList.(Grid.Row)" Value="0" />
+                        <Setter Target="DetailScroll.(Grid.Row)" Value="1" />
+                        <Setter Target="DetailScroll.(Grid.Column)" Value="0" />
+                    </VisualState.Setters>
+                </VisualState>
+                <VisualState x:Name="Wide">
+                    <VisualState.StateTriggers><AdaptiveTrigger MinWindowWidth="1008" /></VisualState.StateTriggers>
+                    <VisualState.Setters>
+                        <Setter Target="MasterColumn.Width" Value="320" />
+                        <Setter Target="DetailColumn.Width" Value="1*" />
+                        <Setter Target="MasterRow.Height" Value="1*" />
+                        <Setter Target="DetailRow.Height" Value="0" />
+                        <Setter Target="ExperimentList.(Grid.Row)" Value="0" />
+                        <Setter Target="DetailScroll.(Grid.Row)" Value="0" />
+                        <Setter Target="DetailScroll.(Grid.Column)" Value="1" />
+                    </VisualState.Setters>
+                </VisualState>
+            </VisualStateGroup>
+        </VisualStateManager.VisualStateGroups>
+
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Spacing="4">
+            <TextBlock x:Name="ExperimentsHeading" Text="Before-and-after experiments"
+                       AutomationProperties.Name="Before-and-after experiments"
+                       Style="{StaticResource AtlasPageHeadingStyle}" />
+            <TextBlock Text="Measure two retained evidence windows around a change without claiming causation."
+                       Style="{StaticResource AtlasPageDescriptionStyle}" TextWrapping="Wrap" />
+        </StackPanel>
+
+        <CommandBar Grid.Row="1" Background="Transparent" DefaultLabelPosition="Right">
+            <AppBarButton Label="New experiment" Click="NewExperiment_Click">
+                <AppBarButton.Icon><FontIcon Glyph="&#xE710;" /></AppBarButton.Icon>
+            </AppBarButton>
+            <AppBarButton Label="Refresh" Click="Refresh_Click">
+                <AppBarButton.Icon><FontIcon Glyph="&#xE72C;" /></AppBarButton.Icon>
+            </AppBarButton>
+            <AppBarButton x:Name="ExportButton" Label="Export result" Click="Export_Click" IsEnabled="False">
+                <AppBarButton.Icon><FontIcon Glyph="&#xE74E;" /></AppBarButton.Icon>
+            </AppBarButton>
+        </CommandBar>
+
+        <InfoBar x:Name="StatusBar" Grid.Row="2" IsOpen="False" IsClosable="False" />
+
+        <Grid x:Name="BodyGrid" Grid.Row="3" ColumnSpacing="16" RowSpacing="16">
+            <Grid.ColumnDefinitions><ColumnDefinition x:Name="MasterColumn" Width="320" /><ColumnDefinition x:Name="DetailColumn" Width="*" /></Grid.ColumnDefinitions>
+            <Grid.RowDefinitions><RowDefinition x:Name="MasterRow" Height="*" /><RowDefinition x:Name="DetailRow" Height="0" /></Grid.RowDefinitions>
+
+            <ListView x:Name="ExperimentList" Grid.Column="0"
+                      ItemsSource="{x:Bind Experiments}" SelectionChanged="ExperimentList_SelectionChanged"
+                      AutomationProperties.Name="Saved experiments" SelectionMode="Single">
+                <ListView.ItemTemplate>
+                    <DataTemplate x:DataType="proto:Experiment">
+                        <StackPanel Padding="4" Spacing="3">
+                            <TextBlock Text="{x:Bind Name}" Style="{StaticResource AtlasCardTitleStyle}" TextTrimming="CharacterEllipsis" />
+                            <TextBlock Text="{x:Bind ChangeDescription}" Style="{StaticResource AtlasPageDescriptionStyle}"
+                                       MaxLines="2" TextTrimming="CharacterEllipsis" />
+                        </StackPanel>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+            </ListView>
+
+            <ScrollViewer x:Name="DetailScroll" Grid.Column="1" VerticalScrollBarVisibility="Auto">
+                <Grid>
+                    <StackPanel x:Name="EmptyState" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
+                        <TextBlock Text="No experiment selected" Style="{StaticResource AtlasEmptyStateTitleStyle}" HorizontalAlignment="Center" />
+                        <TextBlock Text="Create or select an experiment to compare its evidence windows."
+                                   Style="{StaticResource AtlasEmptyStateBodyStyle}" TextAlignment="Center" TextWrapping="Wrap" />
+                    </StackPanel>
+
+                    <StackPanel x:Name="ResultPanel" Visibility="Collapsed" Spacing="16">
+                        <StackPanel Spacing="4">
+                            <TextBlock x:Name="ResultName" Style="{StaticResource AtlasSectionHeadingStyle}" TextWrapping="Wrap" />
+                            <TextBlock x:Name="ResultChange" Style="{StaticResource AtlasPageDescriptionStyle}" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <InfoBar x:Name="VerdictBar" IsOpen="True" IsClosable="False" />
+
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="1.2*" /><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
+                            <TextBlock Text="Measure" FontWeight="SemiBold" />
+                            <TextBlock Grid.Column="1" Text="Baseline" FontWeight="SemiBold" />
+                            <TextBlock Grid.Column="2" Text="Follow-up" FontWeight="SemiBold" />
+                        </Grid>
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="1.2*" /><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
+                            <TextBlock Text="Average" />
+                            <TextBlock x:Name="BaselineAverage" Grid.Column="1" />
+                            <TextBlock x:Name="FollowupAverage" Grid.Column="2" />
+                        </Grid>
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="1.2*" /><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
+                            <TextBlock Text="Peak" />
+                            <TextBlock x:Name="BaselinePeak" Grid.Column="1" />
+                            <TextBlock x:Name="FollowupPeak" Grid.Column="2" />
+                        </Grid>
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="1.2*" /><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
+                            <TextBlock Text="Above threshold" />
+                            <TextBlock x:Name="BaselineAbove" Grid.Column="1" />
+                            <TextBlock x:Name="FollowupAbove" Grid.Column="2" />
+                        </Grid>
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="1.2*" /><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
+                            <TextBlock Text="Crashes" />
+                            <TextBlock x:Name="BaselineCrashes" Grid.Column="1" />
+                            <TextBlock x:Name="FollowupCrashes" Grid.Column="2" />
+                        </Grid>
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="1.2*" /><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
+                            <TextBlock Text="System changes" />
+                            <TextBlock x:Name="BaselineChanges" Grid.Column="1" />
+                            <TextBlock x:Name="FollowupChanges" Grid.Column="2" />
+                        </Grid>
+
+                        <TextBlock Text="Process-start differences" Style="{StaticResource AtlasSectionHeadingStyle}" Margin="0,8,0,0" />
+                        <TextBlock x:Name="NewProcesses" TextWrapping="Wrap" />
+                        <TextBlock x:Name="RemovedProcesses" TextWrapping="Wrap" />
+                        <TextBlock x:Name="QualityText" Style="{StaticResource AtlasPageDescriptionStyle}" TextWrapping="Wrap" />
+                        <TextBlock x:Name="CaveatText" Style="{StaticResource AtlasWarningTextStyle}" TextWrapping="Wrap" />
+                    </StackPanel>
+                </Grid>
+            </ScrollViewer>
+        </Grid>
+    </Grid>
+</Page>

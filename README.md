@@ -12,6 +12,7 @@ A Windows system intelligence and control application: one coherent replacement 
 - **Storage:** SQLite (WAL) for entities/events plus a custom Gorilla-compressed time-series store with tiered T0/T1/T2 roll-ups that preserve peaks and honor bookmark pins.
 - **Intelligence:** threshold+duration incident detection (CPU saturation, memory pressure), evidence-based diagnosis with confidence-laddered contributing factors (no LLM), and a fully redacted support bundle.
 - **Control:** a rules engine (priority / affinity / EcoQoS) with guaranteed reversibility, named rule profiles, and a dynamic responsiveness-protection watchdog that dampens a runaway process and auto-restores it.
+- **Experiments:** save two evidence windows around a change and compare resource averages, peaks, threshold duration, process starts, crashes, and system changes with explicit data-quality and causation caveats.
 - **Privacy:** live camera / microphone / location usage alerts sourced from the ConsentStore.
 - **Forensics:** system-change tracking, crash correlation, and boot analysis.
 - **Extensibility (read-only):** a [read-only MCP server](crates/atlas-mcp/README.md) exposing grounded query tools to your own MCP client, and a signed, capability-scoped plugin framework (plugins are Authenticode-verified, registered disabled until explicitly enabled, and every call is scope-checked; mutations are always denied).

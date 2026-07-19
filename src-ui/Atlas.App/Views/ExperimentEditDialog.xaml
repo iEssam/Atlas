@@ -1,0 +1,57 @@
+<ContentDialog
+    x:Class="Atlas.App.Views.ExperimentEditDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="New before-and-after experiment"
+    PrimaryButtonText="Create and compare"
+    CloseButtonText="Cancel"
+    DefaultButton="Primary"
+    PrimaryButtonClick="PrimaryButton_Click">
+
+    <ScrollViewer MaxHeight="560" VerticalScrollBarVisibility="Auto">
+        <StackPanel MaxWidth="480" Spacing="12">
+            <TextBlock Text="Describe the change, then choose two evidence windows. Atlas reports correlation, not causation."
+                       TextWrapping="Wrap"
+                       Style="{StaticResource AtlasPageDescriptionStyle}" />
+            <TextBox x:Name="NameBox" Header="Experiment name" MaxLength="120"
+                     AutomationProperties.Name="Experiment name" />
+            <TextBox x:Name="ChangeBox" Header="What changed" MaxLength="1000"
+                     AcceptsReturn="True" TextWrapping="Wrap" MinHeight="72"
+                     AutomationProperties.Name="Change description" />
+            <ComboBox x:Name="MetricBox" Header="Metric" SelectedIndex="0"
+                      AutomationProperties.Name="Experiment metric">
+                <ComboBoxItem Content="System CPU" Tag="20" />
+                <ComboBoxItem Content="System GPU" Tag="24" />
+            </ComboBox>
+            <NumberBox x:Name="ThresholdBox" Header="Threshold (%)" Value="70"
+                       Minimum="0" Maximum="100" SpinButtonPlacementMode="Compact"
+                       AutomationProperties.Name="Threshold percent" />
+
+            <TextBlock Text="Baseline period" Style="{StaticResource AtlasSectionHeadingStyle}" Margin="0,8,0,0" />
+            <Grid ColumnSpacing="12">
+                <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
+                <DatePicker x:Name="BaselineFromDate" Header="From date" />
+                <TimePicker x:Name="BaselineFromTime" Grid.Column="1" Header="From time" ClockIdentifier="24HourClock" />
+            </Grid>
+            <Grid ColumnSpacing="12">
+                <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
+                <DatePicker x:Name="BaselineToDate" Header="To date" />
+                <TimePicker x:Name="BaselineToTime" Grid.Column="1" Header="To time" ClockIdentifier="24HourClock" />
+            </Grid>
+
+            <TextBlock Text="Follow-up period" Style="{StaticResource AtlasSectionHeadingStyle}" Margin="0,8,0,0" />
+            <Grid ColumnSpacing="12">
+                <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
+                <DatePicker x:Name="FollowupFromDate" Header="From date" />
+                <TimePicker x:Name="FollowupFromTime" Grid.Column="1" Header="From time" ClockIdentifier="24HourClock" />
+            </Grid>
+            <Grid ColumnSpacing="12">
+                <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
+                <DatePicker x:Name="FollowupToDate" Header="To date" />
+                <TimePicker x:Name="FollowupToTime" Grid.Column="1" Header="To time" ClockIdentifier="24HourClock" />
+            </Grid>
+            <InfoBar x:Name="ValidationBar" IsOpen="False" Severity="Error"
+                     Title="Check the experiment" IsClosable="False" />
+        </StackPanel>
+    </ScrollViewer>
+</ContentDialog>

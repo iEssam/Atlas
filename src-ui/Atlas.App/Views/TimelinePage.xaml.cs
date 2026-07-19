@@ -53,6 +53,14 @@ public sealed partial class TimelinePage : Page
 
     private void Refresh_Click(object sender, RoutedEventArgs e) => _ = ViewModel.RefreshAsync();
 
+    private void ComparePeriods_Click(object sender, RoutedEventArgs e)
+    {
+        if (App.MainWindow is MainWindow window)
+        {
+            window.NavigateToExperiments();
+        }
+    }
+
     private void ChartCanvas_SizeChanged(object sender, SizeChangedEventArgs e) => Render();
 
     private async void BookmarkNow_Click(object sender, RoutedEventArgs e)
