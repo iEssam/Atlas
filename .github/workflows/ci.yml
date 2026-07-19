@@ -20,5 +20,30 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
+  windows-ui:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore .NET solution
+        run: dotnet restore src-ui/Atlas.sln -p:Platform=x64
+
+      - name: Build WinUI app
+        run: dotnet build src-ui/Atlas.App/Atlas.App.csproj -c Debug -p:Platform=x64 --no-restore
+
+      - name: Smoke-test WinUI shell and navigation
+        shell: pwsh
+        run: ./scripts/ui-smoke.ps1 -StartPage graphics -ExpectedElementName Graphics
+
+      - name: Test IPC client
+        run: dotnet test src-ui/Atlas.IpcClient.Tests/Atlas.IpcClient.Tests.csproj -c Debug --no-restore
+
+      - name: Test UI contracts
+        run: dotnet test src-ui/Atlas.App.Tests/Atlas.App.Tests.csproj -c Debug --no-restore
+
   # M9 adds perf gates here (idle CPU, RSS, cold start, disk writes/hour)
   # on a self-hosted runner — see tech-stack.md §10.
