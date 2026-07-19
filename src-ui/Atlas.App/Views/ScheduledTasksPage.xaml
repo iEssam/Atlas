@@ -38,7 +38,7 @@
                        Text="{x:Bind ViewModel.StatusText, Mode=OneWay}" />
             <TextBlock Style="{StaticResource AtlasMonoMutedStyle}"
                        VerticalAlignment="Center"
-                       ToolTipService.ToolTip="Enabling, disabling and running tasks is coming soon."
+                       ToolTipService.ToolTip="Task actions are not available from this read-only inventory."
                        Text="· READ-ONLY" />
         </StackPanel>
 

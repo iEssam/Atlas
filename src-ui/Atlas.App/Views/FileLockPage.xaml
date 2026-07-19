@@ -20,7 +20,7 @@
         <StackPanel Grid.Row="0" Spacing="4">
             <TextBlock Text="File Lock Search" Style="{StaticResource AtlasPageHeadingStyle}" />
             <TextBlock Style="{StaticResource AtlasPageDescriptionStyle}"
-                       Text="Find which processes are holding a file open. Read-only inspection - release arrives via the guarded safe-action flow." />
+                       Text="Find which processes are holding a file open. Atlas reports owners without closing their file handles." />
         </StackPanel>
 
         <!-- ===== Path input row ===== -->
@@ -64,13 +64,13 @@
                        Text="{x:Bind ViewModel.StatusText, Mode=OneWay}" />
         </StackPanel>
 
-        <!-- ===== Guarded-release notice (the safe-action flow) ===== -->
+        <!-- ===== Read-only capability notice ===== -->
         <InfoBar Grid.Row="3"
-                 IsOpen="{x:Bind ViewModel.ShowReleaseHint, Mode=OneWay}"
+                 IsOpen="{x:Bind ViewModel.ShowReadOnlyNotice, Mode=OneWay}"
                  IsClosable="False"
                  Severity="Informational"
                  Title="Read-only"
-                 Message="Releasing or closing a file through Atlas will arrive via the safe-action flow. For now, this shows you what is holding the file." />
+                 Message="Atlas can identify the owning processes, but it does not close or release their file handles. Inspect an owner for more evidence." />
 
         <!-- ===== Results / states ===== -->
         <Grid Grid.Row="4">
@@ -122,7 +122,6 @@
                                     <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
-                                    <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
 
                                 <FontIcon Grid.Column="0" Glyph="&#xE9F5;" FontSize="18"
@@ -148,20 +147,7 @@
                                                ToolTipService.ToolTip="{x:Bind ImagePath}" />
                                 </StackPanel>
 
-                                <!-- Guarded release action (caution - arrives via safe-action flow, disabled for now) -->
-                                <Button Grid.Column="2" IsEnabled="False" VerticalAlignment="Center"
-                                        Style="{StaticResource AtlasGhostButtonStyle}"
-                                        BorderBrush="{ThemeResource AtlasAmberBrush}"
-                                        Foreground="{ThemeResource AtlasAmberBrush}"
-                                        AutomationProperties.Name="Release file (coming soon)"
-                                        ToolTipService.ToolTip="Closing or releasing a file will arrive via the safe-action flow.">
-                                    <StackPanel Orientation="Horizontal" Spacing="6">
-                                        <FontIcon Glyph="&#xE785;" FontSize="14" />
-                                        <TextBlock Text="Release…" />
-                                    </StackPanel>
-                                </Button>
-
-                                <Button Grid.Column="3" VerticalAlignment="Center"
+                                <Button Grid.Column="2" VerticalAlignment="Center"
                                         Style="{StaticResource AtlasGhostButtonStyle}"
                                         Click="OnInspectOwnerClick"
                                         AutomationProperties.Name="Inspect this process">

@@ -12,9 +12,8 @@ namespace Atlas.App.ViewModels;
 /// <summary>
 /// Drives the File-Lock Search page — "find what is using this file" (R2, PRD
 /// §9.5). The user enters (or picks) a path; FindResourceOwners returns the
-/// processes holding it open (Restart Manager first). Read-only this milestone —
-/// the future "close / release" safe-action is present only as a disabled,
-/// tooltip-explained hint (task brief §3).
+/// processes holding it open (Restart Manager first). The surface is read-only:
+/// it states that limitation as content and exposes no inert mutation control.
 ///
 /// <para>
 /// The three outcomes are kept <b>distinct</b> so the answer is never ambiguous:
@@ -42,9 +41,9 @@ public sealed partial class FileLockViewModel : ObservableObject
     [ObservableProperty] private string _emptyText = string.Empty;
     [ObservableProperty] private string _statusText = string.Empty;
 
-    /// <summary>True once a search returns at least one owner, so the read-only
-    /// safe-release hint appears next to the results.</summary>
-    [ObservableProperty] private bool _showReleaseHint;
+    /// <summary>True once a search returns at least one owner, so the page can
+    /// explain its read-only boundary without presenting a disabled action.</summary>
+    [ObservableProperty] private bool _showReadOnlyNotice;
 
     public ObservableCollection<ResourceOwnerItem> Owners { get; } = new();
 
@@ -72,7 +71,7 @@ public sealed partial class FileLockViewModel : ObservableObject
         IsSearching = true;
         IsUnavailable = false;
         IsEmpty = false;
-        ShowReleaseHint = false;
+        ShowReadOnlyNotice = false;
         StatusText = "Searching…";
 
         try
@@ -129,7 +128,7 @@ public sealed partial class FileLockViewModel : ObservableObject
                 }
                 else
                 {
-                    ShowReleaseHint = true;
+                    ShowReadOnlyNotice = true;
                     StatusText = string.Format(
                         Inv,
                         "{0} process{1} using this file.",

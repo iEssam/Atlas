@@ -46,7 +46,7 @@
                        Text="{x:Bind ViewModel.StatusText, Mode=OneWay}" />
             <TextBlock Style="{StaticResource AtlasMonoMutedStyle}"
                        VerticalAlignment="Center"
-                       ToolTipService.ToolTip="Enabling and disabling startup entries is coming soon."
+                       ToolTipService.ToolTip="Startup entries are currently read-only."
                        Text="· READ-ONLY" />
         </StackPanel>
 
