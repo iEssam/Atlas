@@ -175,6 +175,15 @@ public sealed class UiContractTests
         Assert.Contains("if (ThresholdPanel is null)", code, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void RuleDialogGuardsSelectionChangedDuringXamlInitialization()
+    {
+        var code = File.ReadAllText(Path.Combine(AppRoot, "Views", "RuleEditDialog.xaml.cs"));
+
+        Assert.Contains("if (CustomMaskPanel is null)", code, StringComparison.Ordinal);
+        Assert.Contains("if (GpuThresholdPanel is null)", code, StringComparison.Ordinal);
+    }
+
     [Theory]
     [MemberData(nameof(XamlFiles))]
     public void IconOnlyButtonsHaveAccessibleNames(string path)

@@ -108,6 +108,13 @@ public sealed partial class RuleEditDialog : ContentDialog
 
     private void UpdateCustomMaskVisibility()
     {
+        // SelectedIndex is applied while InitializeComponent is still building the
+        // dialog, so SelectionChanged can run before this later panel exists.
+        if (CustomMaskPanel is null)
+        {
+            return;
+        }
+
         var tag = (AffinityBox.SelectedItem as ComboBoxItem)?.Tag as string;
         CustomMaskPanel.Visibility = tag == "custom"
             ? Microsoft.UI.Xaml.Visibility.Visible
