@@ -232,15 +232,6 @@ public sealed partial class GamingPage : Page
     private void StartSession_Click(object sender, RoutedEventArgs e) => _ = ViewModel.StartSessionAsync();
     private void StopSession_Click(object sender, RoutedEventArgs e) => _ = ViewModel.StopSessionAsync();
 
-    private async void Session_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (e.AddedItems.FirstOrDefault() is GamingSessionDisplay item)
-        {
-            await ViewModel.LoadTraceAsync(item.Session);
-            ProofTrack.SetTrace(ViewModel.Trace, ViewModel.IsRecording);
-        }
-    }
-
     private static string FriendlyObjective(GamingObjective objective) => objective == GamingObjective.SmoothCompetitive
         ? "Smooth competitive"
         : "Competitive latency";

@@ -47,6 +47,19 @@ public sealed class GamingWorkspaceContractTests
     }
 
     [Fact]
+    public void RecordedSessionSelectionUsesTheDisplayedSessionTypeAndLoadsFromTheViewModel()
+    {
+        var xaml = File.ReadAllText(Path.Combine(RepositoryRoot, "src-ui", "Atlas.App", "Views", "GamingPage.xaml"));
+        var viewModel = File.ReadAllText(Path.Combine(RepositoryRoot, "src-ui", "Atlas.App", "ViewModels", "GamingViewModel.cs"));
+
+        Assert.Contains("SelectedItem=\"{x:Bind ViewModel.SelectedSession, Mode=TwoWay}\"", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("SelectionChanged=\"Session_SelectionChanged\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("private GamingSessionDisplay? _selectedSession", viewModel, StringComparison.Ordinal);
+        Assert.Contains("partial void OnSelectedSessionChanged(GamingSessionDisplay? value)", viewModel, StringComparison.Ordinal);
+        Assert.Contains("SelectedSession = Sessions.FirstOrDefault", viewModel, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void PlanConfirmationSurfacesBeforeAfterRollbackAndVerification()
     {
         var code = File.ReadAllText(Path.Combine(RepositoryRoot, "src-ui", "Atlas.App", "Views", "GamingPage.xaml.cs"));

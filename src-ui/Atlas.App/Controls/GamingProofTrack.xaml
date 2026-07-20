@@ -25,7 +25,7 @@
                   Visibility="Collapsed" />
         </Canvas>
         <TextBlock x:Name="EmptyText"
-                   Text="Record or select a session to populate the synchronized trace."
+                   Text="{x:Bind EmptyMessage, Mode=OneWay}"
                    TextWrapping="Wrap"
                    TextAlignment="Center"
                    HorizontalAlignment="Center"

@@ -51,6 +51,7 @@ public sealed partial class GamingViewModel : ObservableObject
 {
     private readonly string? _who;
     private CancellationTokenSource? _refreshCts;
+    private CancellationTokenSource? _traceCts;
 
     public ObservableCollection<GameInstall> Games { get; } = new();
     public ObservableCollection<GamingFact> Facts { get; } = new();
@@ -72,7 +73,7 @@ public sealed partial class GamingViewModel : ObservableObject
     private GameInstall? _selectedGame;
 
     [ObservableProperty] private GamingObjectiveOption _selectedObjectiveOption;
-    [ObservableProperty] private GameSession? _selectedSession;
+    [ObservableProperty] private GamingSessionDisplay? _selectedSession;
     [ObservableProperty] private GamingReadiness? _readiness;
     [ObservableProperty] private GamingPlan? _currentPlan;
     [ObservableProperty] private bool _isBusy;
@@ -85,6 +86,7 @@ public sealed partial class GamingViewModel : ObservableObject
     [ObservableProperty] private string _readinessSummary = "Select a detected game to begin the ready check.";
     [ObservableProperty] private string _coverageSummary = "Sensor coverage will appear after the ready check.";
     [ObservableProperty] private string _traceSummaryText = "No gaming session selected.";
+    [ObservableProperty] private string _traceEmptyMessage = "Record or select a session to populate the synchronized trace.";
     [ObservableProperty] private long _activeSessionId;
 
     public bool HasSelectedGame => SelectedGame is not null;
@@ -118,6 +120,29 @@ public sealed partial class GamingViewModel : ObservableObject
         {
             _ = RefreshReadinessAsync();
         }
+    }
+
+    partial void OnSelectedSessionChanged(GamingSessionDisplay? value)
+    {
+        CancelTraceLoad();
+        Trace.Clear();
+        TraceSummary.Clear();
+        if (value is null)
+        {
+            TraceEmptyMessage = Sessions.Count == 0
+                ? "No recorded sessions are available for this game yet."
+                : "Select a recorded session to populate the synchronized trace.";
+            TraceSummaryText = Sessions.Count == 0
+                ? "Record a session while you play to capture synchronized system evidence."
+                : "No gaming session selected.";
+            return;
+        }
+
+        TraceEmptyMessage = $"Loading the recording from {value.Label}...";
+        TraceSummaryText = "Loading synchronized system samples...";
+        var cts = new CancellationTokenSource();
+        _traceCts = cts;
+        _ = LoadTraceAsync(value.Session, cts);
     }
 
     partial void OnIsBusyChanged(bool value)
@@ -210,9 +235,12 @@ public sealed partial class GamingViewModel : ObservableObject
             Replace(Facts, Readiness.Facts);
             Replace(Capabilities, Readiness.Capabilities);
             Replace(Findings, Readiness.Findings.Select(finding => new GamingFindingViewModel(finding)));
+            var previousSessionId = SelectedSession?.Id;
+            SelectedSession = null;
             Replace(Sessions, sessionsOutcome.Value.Sessions.Select(session => new GamingSessionDisplay(
                 session,
                 $"{DateTimeOffset.FromUnixTimeMilliseconds(session.StartMs).ToLocalTime():g} · {FriendlyCapture(session.CaptureQuality)}")));
+            SelectedSession = Sessions.FirstOrDefault(session => session.Id == previousSessionId) ?? Sessions.FirstOrDefault();
             CoverageSummary = BuildCoverageSummary(Readiness.Capabilities);
             if (game.Running)
             {
@@ -353,19 +381,19 @@ public sealed partial class GamingViewModel : ObservableObject
         await RefreshReadinessAsync();
     }
 
-    public async Task LoadTraceAsync(GameSession? session)
+    private async Task LoadTraceAsync(GameSession session, CancellationTokenSource cts)
     {
-        if (session is null) return;
-        SelectedSession = session;
-        await RunBusyAsync(async () =>
+        try
         {
             using var channel = AtlasChannel.Connect(_who);
-            var outcome = await channel.GetGameSessionTraceAsync(session.Id);
+            var outcome = await channel.GetGameSessionTraceAsync(session.Id, cancellationToken: cts.Token);
+            if (cts.IsCancellationRequested || !ReferenceEquals(_traceCts, cts)) return;
             Trace.Clear();
             TraceSummary.Clear();
             if (!outcome.Supported || !outcome.Value.Found)
             {
                 TraceSummaryText = "The selected trace is unavailable.";
+                TraceEmptyMessage = "Atlas could not find retained samples for this recording.";
                 return;
             }
             foreach (var bucket in outcome.Value.Buckets) Trace.Add(bucket);
@@ -381,15 +409,41 @@ public sealed partial class GamingViewModel : ObservableObject
                     bucket.TemperatureC > 0 ? $"{bucket.TemperatureC:F0} °C" : "Not reported",
                     bucket.DataGap ? "Data gap" : string.IsNullOrWhiteSpace(bucket.EventLabel) ? "Measured" : bucket.EventLabel));
             }
-            TraceSummaryText = Trace.Count == 0
-                ? "This session has no retained samples."
-                : $"{Trace.Count} synchronized system samples. Frame-time evidence is unavailable until the ETW validation gate passes.";
-        });
+            if (Trace.Count == 0)
+            {
+                TraceEmptyMessage = "This recording contains no samples. Record for at least a few seconds before stopping.";
+                TraceSummaryText = "No synchronized system samples were retained for this recording.";
+            }
+            else
+            {
+                TraceEmptyMessage = string.Empty;
+                TraceSummaryText = $"{Trace.Count} synchronized system samples. Frame-time evidence is unavailable until the ETW validation gate passes.";
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            if (!ReferenceEquals(_traceCts, cts)) return;
+            TraceEmptyMessage = "Atlas could not load this recording. Try selecting it again.";
+            TraceSummaryText = "The selected trace could not be loaded.";
+            ShowMessage($"Atlas could not load the gaming trace: {ex.Message}", InfoBarSeverity.Error);
+        }
+        finally
+        {
+            if (ReferenceEquals(_traceCts, cts))
+            {
+                _traceCts = null;
+                cts.Dispose();
+            }
+        }
     }
 
     public void Stop()
     {
         CancelRefresh();
+        CancelTraceLoad();
     }
 
     private async Task RunBusyAsync(Func<Task> work)
@@ -417,6 +471,13 @@ public sealed partial class GamingViewModel : ObservableObject
         _refreshCts?.Cancel();
         _refreshCts?.Dispose();
         _refreshCts = null;
+    }
+
+    private void CancelTraceLoad()
+    {
+        _traceCts?.Cancel();
+        _traceCts?.Dispose();
+        _traceCts = null;
     }
 
     private void ShowMessage(string message, InfoBarSeverity severity)

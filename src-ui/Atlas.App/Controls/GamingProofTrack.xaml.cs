@@ -15,6 +15,18 @@ public sealed partial class GamingProofTrack : UserControl
         ActualThemeChanged += (_, _) => Render();
     }
 
+    public static readonly DependencyProperty EmptyMessageProperty = DependencyProperty.Register(
+        nameof(EmptyMessage),
+        typeof(string),
+        typeof(GamingProofTrack),
+        new PropertyMetadata("Record or select a session to populate the synchronized trace."));
+
+    public string EmptyMessage
+    {
+        get => (string)GetValue(EmptyMessageProperty);
+        set => SetValue(EmptyMessageProperty, value);
+    }
+
     public void SetTrace(IEnumerable<GamingTraceBucket> buckets, bool live = false)
     {
         _buckets = buckets.ToArray();

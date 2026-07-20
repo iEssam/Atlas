@@ -222,8 +222,7 @@
                                           MinWidth="240"
                                           AutomationProperties.Name="Recorded gaming session"
                                           ItemsSource="{x:Bind ViewModel.Sessions}"
-                                          SelectedItem="{x:Bind ViewModel.SelectedSession, Mode=TwoWay}"
-                                          SelectionChanged="Session_SelectionChanged">
+                                          SelectedItem="{x:Bind ViewModel.SelectedSession, Mode=TwoWay}">
                                     <ComboBox.ItemTemplate>
                                         <DataTemplate x:DataType="vm:GamingSessionDisplay">
                                             <TextBlock Text="{x:Bind Label}" />
@@ -231,7 +230,8 @@
                                     </ComboBox.ItemTemplate>
                                 </ComboBox>
                             </Grid>
-                            <controls:GamingProofTrack x:Name="ProofTrack" />
+                            <controls:GamingProofTrack x:Name="ProofTrack"
+                                                       EmptyMessage="{x:Bind ViewModel.TraceEmptyMessage, Mode=OneWay}" />
                             <TextBlock Text="{x:Bind ViewModel.TraceSummaryText, Mode=OneWay}"
                                        TextWrapping="Wrap"
                                        Style="{StaticResource CaptionTextBlockStyle}" />
