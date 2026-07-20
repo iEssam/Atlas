@@ -3,6 +3,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:vm="using:Atlas.App.ViewModels"
+    xmlns:controls="using:Atlas.App.Controls"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
@@ -87,21 +88,22 @@
                                 <!-- Column header -->
                                 <Grid Padding="12,0,12,6" ColumnSpacing="12">
                                     <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="34" />
                                         <ColumnDefinition Width="1.4*" />
                                         <ColumnDefinition Width="2*" />
                                         <ColumnDefinition Width="1.2*" />
                                         <ColumnDefinition Width="Auto" MinWidth="90" />
                                         <ColumnDefinition Width="Auto" MinWidth="80" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="NAME"
+                                    <TextBlock Grid.Column="1" Text="NAME"
                                                Style="{StaticResource AtlasColumnHeaderStyle}" />
-                                    <TextBlock Grid.Column="1" Text="COMMAND"
+                                    <TextBlock Grid.Column="2" Text="COMMAND"
                                                Style="{StaticResource AtlasColumnHeaderStyle}" />
-                                    <TextBlock Grid.Column="2" Text="PUBLISHER"
+                                    <TextBlock Grid.Column="3" Text="PUBLISHER"
                                                Style="{StaticResource AtlasColumnHeaderStyle}" />
-                                    <TextBlock Grid.Column="3" Text="STATE"
+                                    <TextBlock Grid.Column="4" Text="STATE"
                                                Style="{StaticResource AtlasColumnHeaderStyle}" />
-                                    <TextBlock Grid.Column="4" Text="SCOPE"
+                                    <TextBlock Grid.Column="5" Text="SCOPE"
                                                Style="{StaticResource AtlasColumnHeaderStyle}" />
                                 </Grid>
 
@@ -114,32 +116,36 @@
                                                         BorderThickness="0,0,0,1" Padding="12,9">
                                                     <Grid ColumnSpacing="12">
                                                         <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="Auto" />
                                                             <ColumnDefinition Width="1.4*" />
                                                             <ColumnDefinition Width="2*" />
                                                             <ColumnDefinition Width="1.2*" />
                                                             <ColumnDefinition Width="Auto" MinWidth="90" />
                                                             <ColumnDefinition Width="Auto" MinWidth="80" />
                                                         </Grid.ColumnDefinitions>
-                                                        <TextBlock Grid.Column="0" VerticalAlignment="Center"
+                                                        <controls:AppIcon Grid.Column="0" Command="{x:Bind CommandFull}"
+                                                                          Width="20" Height="20" Margin="0,0,2,0"
+                                                                          AutomationProperties.AccessibilityView="Raw" />
+                                                        <TextBlock Grid.Column="1" VerticalAlignment="Center"
                                                                    Text="{x:Bind Name}"
                                                                    TextTrimming="CharacterEllipsis"
                                                                    ToolTipService.ToolTip="{x:Bind SourceText}" />
-                                                        <TextBlock Grid.Column="1" VerticalAlignment="Center"
+                                                        <TextBlock Grid.Column="2" VerticalAlignment="Center"
                                                                    Style="{StaticResource AtlasMonoMutedStyle}"
                                                                    Text="{x:Bind CommandText}"
                                                                    TextTrimming="CharacterEllipsis"
                                                                    ToolTipService.ToolTip="{x:Bind CommandFull}" />
-                                                        <TextBlock Grid.Column="2" VerticalAlignment="Center"
+                                                        <TextBlock Grid.Column="3" VerticalAlignment="Center"
                                                                    Text="{x:Bind Publisher}"
                                                                    TextTrimming="CharacterEllipsis" />
                                                         <!-- Enabled/disabled pill -->
-                                                        <Border Grid.Column="3" HorizontalAlignment="Left"
+                                                        <Border Grid.Column="4" HorizontalAlignment="Left"
                                                                 Style="{StaticResource AtlasStatusPillStyle}">
                                                             <TextBlock Text="{x:Bind EnabledText}"
                                                                        Style="{StaticResource AtlasMonoMutedStyle}"
                                                                        FontSize="11" />
                                                         </Border>
-                                                        <TextBlock Grid.Column="4" VerticalAlignment="Center"
+                                                        <TextBlock Grid.Column="5" VerticalAlignment="Center"
                                                                    Style="{StaticResource AtlasMonoMutedStyle}"
                                                                    Text="{x:Bind Scope}" />
                                                     </Grid>

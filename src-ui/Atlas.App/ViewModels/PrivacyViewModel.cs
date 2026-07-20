@@ -120,6 +120,7 @@ public sealed partial class PrivacyViewModel : ObservableObject
                     : $"{type}, {aggregate.RecordCount} records combined";
                 list.Add(new PrivacyUsageItem(
                     aggregate.DisplayName,
+                    aggregate.AppId,
                     M7Formatter.UsageStatus(
                         aggregate.InUse,
                         aggregate.LastStartMs,
@@ -225,13 +226,15 @@ public sealed class PrivacyCapabilityGroup
 public sealed class PrivacyUsageItem
 {
     public string DisplayName { get; }
+    public string AppId { get; }
     public string StatusText { get; }
     public bool InUse { get; }
     public string PackagedText { get; }
 
-    public PrivacyUsageItem(string displayName, string statusText, bool inUse, string packagedText)
+    public PrivacyUsageItem(string displayName, string appId, string statusText, bool inUse, string packagedText)
     {
         DisplayName = displayName;
+        AppId = appId;
         StatusText = statusText;
         InUse = inUse;
         PackagedText = packagedText;

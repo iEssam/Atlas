@@ -3,6 +3,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:vm="using:Atlas.App.ViewModels"
+    xmlns:controls="using:Atlas.App.Controls"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
@@ -181,9 +182,12 @@
                                         <ColumnDefinition Width="1.6*" />
                                         <ColumnDefinition Width="Auto" MinWidth="120" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" VerticalAlignment="Center"
-                                               Text="{x:Bind Process}"
-                                               TextTrimming="CharacterEllipsis" />
+                                    <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                        <controls:AppIcon ProcessId="{x:Bind Pid}" Width="20" Height="20"
+                                                          AutomationProperties.AccessibilityView="Raw" />
+                                        <TextBlock VerticalAlignment="Center" Text="{x:Bind Process}"
+                                                   TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
                                     <TextBlock Grid.Column="1" VerticalAlignment="Center"
                                                Style="{StaticResource AtlasMonoMutedStyle}"
                                                Text="{x:Bind Protocol}" />
@@ -225,9 +229,12 @@
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Text="{x:Bind Process}"
-                                               Style="{StaticResource BodyStrongTextBlockStyle}"
-                                               TextTrimming="CharacterEllipsis" />
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <controls:AppIcon ProcessId="{x:Bind Pid}" Width="20" Height="20"
+                                                          AutomationProperties.AccessibilityView="Raw" />
+                                        <TextBlock Text="{x:Bind Process}" Style="{StaticResource BodyStrongTextBlockStyle}"
+                                                   TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
                                     <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
                                         <Ellipse Width="8" Height="8" VerticalAlignment="Center"
                                                  Fill="{x:Bind StateToken, Converter={StaticResource MonitorTokenToBrush}}" />
@@ -292,9 +299,11 @@
                                         <ColumnDefinition Width="2*" />
                                         <ColumnDefinition Width="Auto" MinWidth="80" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" VerticalAlignment="Center"
-                                               Text="{x:Bind Process}"
-                                               TextTrimming="CharacterEllipsis" />
+                                    <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                        <controls:AppIcon ProcessId="{x:Bind Pid}" Width="20" Height="20"
+                                                          AutomationProperties.AccessibilityView="Raw" />
+                                        <TextBlock Text="{x:Bind Process}" TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
                                     <TextBlock Grid.Column="1" VerticalAlignment="Center"
                                                Style="{StaticResource AtlasMonoMutedStyle}"
                                                Text="{x:Bind Protocol}" />
@@ -325,9 +334,12 @@
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Text="{x:Bind Process}"
-                                               Style="{StaticResource BodyStrongTextBlockStyle}"
-                                               TextTrimming="CharacterEllipsis" />
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <controls:AppIcon ProcessId="{x:Bind Pid}" Width="20" Height="20"
+                                                          AutomationProperties.AccessibilityView="Raw" />
+                                        <TextBlock Text="{x:Bind Process}" Style="{StaticResource BodyStrongTextBlockStyle}"
+                                                   TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
                                     <TextBlock Grid.Column="1"
                                                Style="{StaticResource AtlasMonoMutedStyle}"
                                                Text="{x:Bind Protocol}" />

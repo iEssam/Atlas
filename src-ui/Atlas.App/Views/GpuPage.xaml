@@ -3,6 +3,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:vm="using:Atlas.App.ViewModels"
+    xmlns:controls="using:Atlas.App.Controls"
     SizeChanged="Page_SizeChanged">
 
     <Page.Resources>
@@ -487,6 +488,8 @@
                                     <FontIcon Glyph="{x:Bind TrackGlyph, Mode=OneWay}" FontSize="13" />
                                 </Button>
                                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                    <controls:AppIcon ProcessId="{x:Bind Pid}" Width="20" Height="20"
+                                                      AutomationProperties.AccessibilityView="Raw" />
                                     <TextBlock Text="{x:Bind Name, Mode=OneWay}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
                                     <TextBlock Text="{x:Bind StatusText, Mode=OneWay}" Style="{StaticResource CaptionTextBlockStyle}" VerticalAlignment="Center" />
                                 </StackPanel>
@@ -536,6 +539,8 @@
                                     <FontIcon Glyph="{x:Bind TrackGlyph, Mode=OneWay}" FontSize="13" />
                                 </Button>
                                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                    <controls:AppIcon ProcessId="{x:Bind Pid}" Width="20" Height="20"
+                                                      AutomationProperties.AccessibilityView="Raw" />
                                     <TextBlock Text="{x:Bind Name, Mode=OneWay}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
                                     <TextBlock Text="{x:Bind StatusText, Mode=OneWay}" Style="{StaticResource CaptionTextBlockStyle}" VerticalAlignment="Center" />
                                 </StackPanel>

@@ -24,7 +24,7 @@ public static class PrivacyUsageAggregator
                 usage.Packaged);
             if (!aggregates.TryGetValue(key, out var summary))
             {
-                summary = new MutableSummary(displayName, usage.Packaged);
+                summary = new MutableSummary(displayName, usage.AppId, usage.Packaged);
                 aggregates.Add(key, summary);
             }
 
@@ -38,6 +38,7 @@ public static class PrivacyUsageAggregator
             .Select(entry => new PrivacyUsageSummary(
                 entry.Key.Capability,
                 entry.Value.DisplayName,
+                entry.Value.AppId,
                 entry.Value.Packaged,
                 entry.Value.InUse,
                 entry.Value.LastStartMs,
@@ -51,9 +52,10 @@ public static class PrivacyUsageAggregator
         string NormalizedDisplayName,
         bool Packaged);
 
-    private sealed class MutableSummary(string displayName, bool packaged)
+    private sealed class MutableSummary(string displayName, string appId, bool packaged)
     {
         public string DisplayName { get; } = displayName;
+        public string AppId { get; } = appId;
         public bool Packaged { get; } = packaged;
         public bool InUse { get; set; }
         public long LastStartMs { get; set; }
@@ -65,6 +67,7 @@ public static class PrivacyUsageAggregator
 public sealed record PrivacyUsageSummary(
     CapabilityKind Capability,
     string DisplayName,
+    string AppId,
     bool Packaged,
     bool InUse,
     long LastStartMs,

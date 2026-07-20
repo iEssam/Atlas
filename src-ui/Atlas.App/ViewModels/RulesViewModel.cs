@@ -545,6 +545,7 @@ public sealed class InterventionRowViewModel
     public InterventionRowViewModel(Intervention intervention, long nowMs)
     {
         ImageName = string.IsNullOrWhiteSpace(intervention.ImageName) ? "(unknown)" : intervention.ImageName;
+        Pid = intervention.Pid;
         PidText = $"pid {intervention.Pid}";
         Applied = RulesFormatter.InterventionApplied(intervention.Applied);
         RuleName = string.IsNullOrWhiteSpace(intervention.RuleName) ? "a rule" : intervention.RuleName;
@@ -552,6 +553,7 @@ public sealed class InterventionRowViewModel
     }
 
     public string ImageName { get; }
+    public uint Pid { get; }
     public string PidText { get; }
     public string Applied { get; }
     public string RuleName { get; }
