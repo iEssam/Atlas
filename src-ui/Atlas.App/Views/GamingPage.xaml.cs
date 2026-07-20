@@ -1,4 +1,6 @@
+using Atlas.App.Services;
 using Atlas.App.ViewModels;
+using Atlas.IpcClient;
 using Atlas.V0;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -245,6 +247,71 @@ public sealed partial class GamingPage : Page
 
     private void StartSession_Click(object sender, RoutedEventArgs e) => _ = ViewModel.StartSessionAsync();
     private void StopSession_Click(object sender, RoutedEventArgs e) => _ = ViewModel.StopSessionAsync();
+
+    private async void ExportRecording_Click(object sender, RoutedEventArgs e)
+    {
+        var selected = ViewModel.SelectedSession?.Session;
+        var window = App.MainWindow;
+        if (selected is null || window is null)
+        {
+            return;
+        }
+
+        var stage = "opening the Save dialog";
+        try
+        {
+            var target = RecordingSavePicker.Pick(
+                WinRT.Interop.WindowNative.GetWindowHandle(window),
+                GamingRecordingExporter.SuggestedFileName(selected));
+            if (target is null)
+            {
+                return;
+            }
+
+            if (File.Exists(target.Path))
+            {
+                stage = "confirming file replacement";
+                var replaceDialog = new ContentDialog
+                {
+                    XamlRoot = XamlRoot,
+                    Title = "Replace the existing export?",
+                    Content = $"{target.FileName} already exists. Atlas will replace only this export file.",
+                    PrimaryButtonText = "Replace",
+                    CloseButtonText = "Cancel",
+                    DefaultButton = ContentDialogButton.Close,
+                };
+                if (await replaceDialog.ShowAsync() != ContentDialogResult.Primary)
+                {
+                    return;
+                }
+            }
+
+            stage = "loading the selected recording";
+            var recording = await ViewModel.LoadSelectedRecordingForExportAsync();
+            if (recording?.Session is null)
+            {
+                return;
+            }
+
+            stage = "building the export file";
+            var content = await Task.Run(() => GamingRecordingExporter.Build(
+                recording.Session,
+                recording.Buckets,
+                target.Format));
+
+            stage = "writing the selected file";
+            await File.WriteAllTextAsync(target.Path, content);
+            ViewModel.ReportRecordingExported(target.FileName, recording.Buckets.Count);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Gaming recording export failed while {stage}: {ex}");
+            var detail = string.IsNullOrWhiteSpace(ex.Message)
+                ? ex.GetType().Name
+                : ex.Message.Trim();
+            ViewModel.ReportRecordingExportFailed($"{stage}: {detail} (0x{ex.HResult:X8})");
+        }
+    }
 
     private static string FriendlyObjective(GamingObjective objective) => objective == GamingObjective.SmoothCompetitive
         ? "Smooth competitive"

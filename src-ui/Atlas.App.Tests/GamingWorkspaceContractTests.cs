@@ -78,6 +78,29 @@ public sealed class GamingWorkspaceContractTests
     }
 
     [Fact]
+    public void SelectedRecordingCanBeExportedThroughTheNativeCommandSurface()
+    {
+        var xaml = File.ReadAllText(Path.Combine(RepositoryRoot, "src-ui", "Atlas.App", "Views", "GamingPage.xaml"));
+        var code = File.ReadAllText(Path.Combine(RepositoryRoot, "src-ui", "Atlas.App", "Views", "GamingPage.xaml.cs"));
+        var picker = File.ReadAllText(Path.Combine(RepositoryRoot, "src-ui", "Atlas.App", "Services", "RecordingSavePicker.cs"));
+        var viewModel = File.ReadAllText(Path.Combine(RepositoryRoot, "src-ui", "Atlas.App", "ViewModels", "GamingViewModel.cs"));
+
+        Assert.Contains("Label=\"Export recording\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.Name=\"Export selected gaming recording\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("IsEnabled=\"{x:Bind ViewModel.CanExportRecording, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Click=\"ExportRecording_Click\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("RecordingSavePicker.Pick", code, StringComparison.Ordinal);
+        Assert.Contains("JSON recording (*.json)", picker, StringComparison.Ordinal);
+        Assert.Contains("CSV recording (*.csv)", picker, StringComparison.Ordinal);
+        Assert.Contains("GetSaveFileName", picker, StringComparison.Ordinal);
+        Assert.Contains("File.WriteAllTextAsync(target.Path, content)", code, StringComparison.Ordinal);
+        Assert.Contains("(0x{ex.HResult:X8})", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("FileSavePicker", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("FileIO.WriteTextAsync", code, StringComparison.Ordinal);
+        Assert.Contains("maxPoints: 20_000", viewModel, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void PlanConfirmationSurfacesBeforeAfterRollbackAndVerification()
     {
         var code = File.ReadAllText(Path.Combine(RepositoryRoot, "src-ui", "Atlas.App", "Views", "GamingPage.xaml.cs"));

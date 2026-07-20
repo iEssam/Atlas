@@ -74,6 +74,7 @@ public sealed partial class GamingViewModel : ObservableObject
     private GameInstall? _selectedGame;
 
     [ObservableProperty] private GamingObjectiveOption _selectedObjectiveOption;
+    [NotifyPropertyChangedFor(nameof(CanExportRecording))]
     [ObservableProperty] private GamingSessionDisplay? _selectedSession;
     [ObservableProperty] private GamingReadiness? _readiness;
     [ObservableProperty] private GamingPlan? _currentPlan;
@@ -103,6 +104,7 @@ public sealed partial class GamingViewModel : ObservableObject
     public bool CanStopRecording => IsRecording && !IsBusy;
     public bool CanRollback => CurrentPlan is { Id: > 0 } && !IsBusy;
     public bool CanKeep => CurrentPlan is { Id: > 0, Status: GamingPlanStatus.Applied } && !IsBusy;
+    public bool CanExportRecording => SelectedSession is not null && !IsBusy;
     public GamingObjective SelectedObjective => SelectedObjectiveOption.Objective;
     public string ObjectiveExplanation => SelectedObjectiveOption.Explanation;
 
@@ -161,6 +163,7 @@ public sealed partial class GamingViewModel : ObservableObject
         OnPropertyChanged(nameof(CanStopRecording));
         OnPropertyChanged(nameof(CanRollback));
         OnPropertyChanged(nameof(CanKeep));
+        OnPropertyChanged(nameof(CanExportRecording));
     }
 
     partial void OnIsRecordingChanged(bool value)
@@ -389,6 +392,50 @@ public sealed partial class GamingViewModel : ObservableObject
         });
         await RefreshReadinessAsync();
     }
+
+    public async Task<GetGameSessionTraceReply?> LoadSelectedRecordingForExportAsync()
+    {
+        var selected = SelectedSession;
+        if (selected is null)
+        {
+            ShowMessage("Select a recorded session before exporting.", InfoBarSeverity.Informational);
+            return null;
+        }
+
+        IsBusy = true;
+        try
+        {
+            using var channel = AtlasChannel.Connect(_who);
+            var outcome = await channel.GetGameSessionTraceAsync(selected.Id, maxPoints: 20_000);
+            if (!outcome.Supported || !outcome.Value.Found || outcome.Value.Session is null)
+            {
+                ShowMessage(
+                    outcome.Supported
+                        ? "Atlas could not find the selected recording. Refresh the gaming workspace and try again."
+                        : "Recording export is unavailable on this service.",
+                    InfoBarSeverity.Warning);
+                return null;
+            }
+            return outcome.Value;
+        }
+        catch (Exception ex)
+        {
+            ShowMessage($"Atlas could not load the recording for export: {ex.Message}", InfoBarSeverity.Error);
+            return null;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    public void ReportRecordingExported(string fileName, int sampleCount) =>
+        ShowMessage(
+            $"Exported {sampleCount:N0} retained sample{(sampleCount == 1 ? string.Empty : "s")} to {fileName}.",
+            InfoBarSeverity.Success);
+
+    public void ReportRecordingExportFailed(string reason) =>
+        ShowMessage($"Atlas could not export the recording: {reason}", InfoBarSeverity.Error);
 
     private async Task LoadTraceAsync(GameSession session, CancellationTokenSource cts)
     {

@@ -99,6 +99,12 @@
                           Click="StopSession_Click">
                 <AppBarButton.Icon><SymbolIcon Symbol="Stop" /></AppBarButton.Icon>
             </AppBarButton>
+            <AppBarButton Label="Export recording"
+                          AutomationProperties.Name="Export selected gaming recording"
+                          IsEnabled="{x:Bind ViewModel.CanExportRecording, Mode=OneWay}"
+                          Click="ExportRecording_Click">
+                <AppBarButton.Icon><SymbolIcon Symbol="Save" /></AppBarButton.Icon>
+            </AppBarButton>
             <CommandBar.SecondaryCommands>
                 <AppBarButton Label="Keep current plan"
                               IsEnabled="{x:Bind ViewModel.CanKeep, Mode=OneWay}"
