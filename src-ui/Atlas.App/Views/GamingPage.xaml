@@ -4,6 +4,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:controls="using:Atlas.App.Controls"
     xmlns:proto="using:Atlas.V0"
+    xmlns:views="using:Atlas.App.Views"
     xmlns:vm="using:Atlas.App.ViewModels"
     SizeChanged="Page_SizeChanged">
 
@@ -67,7 +68,7 @@
                                     <ColumnDefinition Width="20" />
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
-                                <controls:AppIcon ExecutablePath="{x:Bind ExecutablePath}"
+                                <controls:AppIcon ExecutablePath="{x:Bind views:GamingPage.GameIconPath(CatalogId, ExecutablePath)}"
                                                   Width="20"
                                                   Height="20"
                                                   AutomationProperties.AccessibilityView="Raw" />
@@ -143,7 +144,7 @@
                                             <ColumnDefinition Width="32" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
-                                        <controls:AppIcon ExecutablePath="{x:Bind ExecutablePath}"
+                                        <controls:AppIcon ExecutablePath="{x:Bind views:GamingPage.GameIconPath(CatalogId, ExecutablePath)}"
                                                           Width="32"
                                                           Height="32"
                                                           Margin="0,2,0,0"

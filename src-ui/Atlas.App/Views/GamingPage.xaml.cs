@@ -26,6 +26,36 @@ public sealed partial class GamingPage : Page
         };
     }
 
+    public static string GameIconPath(string catalogId, string executablePath)
+    {
+        if (!string.Equals(catalogId, "valorant", StringComparison.OrdinalIgnoreCase) ||
+            string.IsNullOrWhiteSpace(executablePath))
+        {
+            return executablePath;
+        }
+
+        try
+        {
+            var shippingDirectory = Path.GetDirectoryName(executablePath);
+            if (string.IsNullOrWhiteSpace(shippingDirectory))
+            {
+                return executablePath;
+            }
+
+            var launcherPath = Path.GetFullPath(Path.Combine(
+                shippingDirectory,
+                "..",
+                "..",
+                "..",
+                "VALORANT.exe"));
+            return File.Exists(launcherPath) ? launcherPath : executablePath;
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return executablePath;
+        }
+    }
+
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
