@@ -167,6 +167,14 @@ public sealed class UiContractTests
         Assert.Contains("ExperimentInsufficientData", code, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void PrivacyAlertDialogGuardsSelectionChangedDuringXamlInitialization()
+    {
+        var code = File.ReadAllText(Path.Combine(AppRoot, "Views", "PrivacyAlertEditDialog.xaml.cs"));
+
+        Assert.Contains("if (ThresholdPanel is null)", code, StringComparison.Ordinal);
+    }
+
     [Theory]
     [MemberData(nameof(XamlFiles))]
     public void IconOnlyButtonsHaveAccessibleNames(string path)

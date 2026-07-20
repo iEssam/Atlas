@@ -75,6 +75,14 @@ public sealed partial class PrivacyAlertEditDialog : ContentDialog
 
     private void UpdateThresholdVisibility()
     {
+        // SelectedIndex is applied while InitializeComponent is still building the
+        // dialog. SelectionChanged can therefore run before the later panel has
+        // been assigned to its generated field.
+        if (ThresholdPanel is null)
+        {
+            return;
+        }
+
         var tag = (ConditionBox.SelectedItem as ComboBoxItem)?.Tag as string;
         ThresholdPanel.Visibility = tag == "longer"
             ? Microsoft.UI.Xaml.Visibility.Visible
