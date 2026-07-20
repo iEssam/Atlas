@@ -228,6 +228,32 @@ public sealed class UiContractTests
             Regex.Matches(code, @"catch \(Exception ex\) when \(ex is not OutOfMemoryException\)").Count);
     }
 
+    [Fact]
+    public void OverviewTraceUsesShapeOwnedDashCollectionAndContainsRenderFailures()
+    {
+        var code = File.ReadAllText(Path.Combine(AppRoot, "Views", "OverviewPage.xaml.cs"));
+
+        Assert.DoesNotContain("line.StrokeDashArray = dashPattern", code, StringComparison.Ordinal);
+        Assert.Contains("line.StrokeDashArray.Add(dash)", code, StringComparison.Ordinal);
+        Assert.Contains("private void RenderTraceCore()", code, StringComparison.Ordinal);
+        Assert.Contains(
+            "catch (Exception ex) when (ex is not OutOfMemoryException)",
+            code,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DevScriptTracksTheNativeWinUiProcessInsteadOfLastExitCode()
+    {
+        var code = File.ReadAllText(Path.Combine(RepositoryRoot, "scripts", "dev.ps1"));
+
+        Assert.Contains("$uiProcess = Start-Process", code, StringComparison.Ordinal);
+        Assert.Contains("while (-not $uiProcess.HasExited)", code, StringComparison.Ordinal);
+        Assert.Contains("$uiExitCode = $uiProcess.ExitCode", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("& $uiExe", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("$uiExitCode = $LASTEXITCODE", code, StringComparison.Ordinal);
+    }
+
     [Theory]
     [MemberData(nameof(XamlFiles))]
     public void IconOnlyButtonsHaveAccessibleNames(string path)

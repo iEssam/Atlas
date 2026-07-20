@@ -43,6 +43,7 @@ $uiExe = Join-Path $repo "src-ui\Atlas.App\bin\$Configuration\$uiTargetFramework
 $pipeName = "SystemAtlas.dev.$env:USERNAME"
 $pipePath = "\\.\pipe\$pipeName"
 $started = [System.Collections.Generic.List[System.Diagnostics.Process]]::new()
+$uiProcess = $null
 $uiExitCode = 0
 
 function Get-NormalizedAtlasPath([string]$Path) {
@@ -267,9 +268,19 @@ try {
     Write-Host "Starting Atlas UI ($Configuration)..." -ForegroundColor Green
     Write-Host 'Press Ctrl+C here to stop the complete stack cleanly.' -ForegroundColor DarkGray
     # WinUI's generated native apphost performs Windows App SDK bootstrap and
-    # activation that `dotnet exec Atlas.App.dll` does not provide.
-    & $uiExe
-    $uiExitCode = $LASTEXITCODE
+    # activation that `dotnet exec Atlas.App.dll` does not provide. PowerShell
+    # does not wait when a GUI-subsystem executable is invoked with `&`, and
+    # $LASTEXITCODE can therefore be stale or null. Track the native process.
+    $uiProcess = Start-Process `
+        -FilePath $uiExe `
+        -WorkingDirectory $repo `
+        -PassThru
+    while (-not $uiProcess.HasExited) {
+        Start-Sleep -Milliseconds 250
+    }
+    $uiExitCode = $uiProcess.ExitCode
+    $uiProcess.Dispose()
+    $uiProcess = $null
 
     if ($uiExitCode -ne 0) {
         throw "Atlas UI exited with code $uiExitCode"
@@ -287,6 +298,18 @@ catch {
     Write-Host $_.Exception.Message -ForegroundColor Red
 }
 finally {
+    if ($null -ne $uiProcess) {
+        if (-not $uiProcess.HasExited) {
+            $null = $uiProcess.CloseMainWindow()
+            $null = $uiProcess.WaitForExit(5000)
+        }
+        if (-not $uiProcess.HasExited) {
+            Write-Warning "Atlas UI process $($uiProcess.Id) did not close cleanly; stopping it now."
+            Stop-Process -Id $uiProcess.Id -Force -ErrorAction SilentlyContinue
+        }
+        $uiProcess.Dispose()
+    }
+
     # Ctrl+C is delivered to all processes sharing this console. Give the Rust
     # handlers time to restore rule interventions and flush the current TSDB
     # window. Deliberately avoid Stop-Process: forced termination can skip both.

@@ -1,5 +1,6 @@
 using Atlas.App.ViewModels;
 using Atlas.IpcClient;
+using System.Diagnostics;
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -144,6 +145,21 @@ public sealed partial class OverviewPage : Page
 
     private void RenderTrace()
     {
+        try
+        {
+            RenderTraceCore();
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            // The trace is an optional visualization. A malformed point or a
+            // platform rendering failure must not terminate the UI dispatcher.
+            TraceCanvas.Children.Clear();
+            Debug.WriteLine($"Unable to render the overview trace: {ex}");
+        }
+    }
+
+    private void RenderTraceCore()
+    {
         TraceCanvas.Children.Clear();
         var width = TraceCanvas.ActualWidth;
         var height = TraceCanvas.ActualHeight;
@@ -166,7 +182,7 @@ public sealed partial class OverviewPage : Page
             ViewModel.MemoryTrace,
             GetBrush("AtlasGreenBrush", Colors.ForestGreen),
             GetBrush("AtlasGreenTintBrush", Colors.Transparent),
-            new DoubleCollection { 1, 3 },
+            new[] { 1d, 3d },
             width,
             height,
             span);
@@ -174,7 +190,7 @@ public sealed partial class OverviewPage : Page
             ViewModel.GpuTrace,
             GetBrush("AtlasAmberBrush", Colors.Goldenrod),
             GetBrush("AtlasAmberTintBrush", Colors.Transparent),
-            new DoubleCollection { 6, 4 },
+            new[] { 6d, 4d },
             width,
             height,
             span);
@@ -203,7 +219,7 @@ public sealed partial class OverviewPage : Page
         IEnumerable<OverviewTracePoint> source,
         Brush lineBrush,
         Brush bandBrush,
-        DoubleCollection? dashPattern,
+        IReadOnlyList<double>? dashPattern,
         double width,
         double height,
         double span)
@@ -245,7 +261,7 @@ public sealed partial class OverviewPage : Page
         int end,
         Brush lineBrush,
         Brush bandBrush,
-        DoubleCollection? dashPattern,
+        IReadOnlyList<double>? dashPattern,
         double width,
         double height,
         double span)
@@ -291,7 +307,12 @@ public sealed partial class OverviewPage : Page
         };
         if (dashPattern is not null)
         {
-            line.StrokeDashArray = dashPattern;
+            // Mutate the collection owned by the shape. Assigning a projected
+            // DoubleCollection here throws E_INVALIDARG on some WinUI runtimes.
+            foreach (var dash in dashPattern)
+            {
+                line.StrokeDashArray.Add(dash);
+            }
         }
         TraceCanvas.Children.Add(line);
     }
