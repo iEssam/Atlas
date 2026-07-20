@@ -80,28 +80,34 @@ public sealed class AppIcon : Grid
 
     private async void BeginLoad()
     {
-        long version = Interlocked.Increment(ref _loadVersion);
-        _image.Source = null;
-        _image.Visibility = Visibility.Collapsed;
-        _fallback.Visibility = Visibility.Visible;
+        try
+        {
+            long version = Interlocked.Increment(ref _loadVersion);
+            _image.Source = null;
+            _image.Visibility = Visibility.Collapsed;
+            _fallback.Visibility = Visibility.Visible;
 
-        string executablePath = ExecutablePath;
-        string command = Command;
-        uint processId = ProcessId;
-        string? path = await Task.Run(() => ResolvePath(executablePath, command, processId));
-        if (version != _loadVersion || string.IsNullOrWhiteSpace(path))
-            return;
+            string executablePath = ExecutablePath;
+            string command = Command;
+            uint processId = ProcessId;
+            string? path = await Task.Run(() => ResolvePath(executablePath, command, processId));
+            if (version != _loadVersion || string.IsNullOrWhiteSpace(path))
+                return;
 
-        BitmapImage? source = await LoadThumbnailAsync(path);
-        if (version != _loadVersion)
-            return;
+            BitmapImage? source = await LoadThumbnailAsync(path);
+            if (version != _loadVersion || source is null)
+                return;
 
-        if (source is null)
-            return;
-
-        _image.Source = source;
-        _image.Visibility = Visibility.Visible;
-        _fallback.Visibility = Visibility.Collapsed;
+            _image.Source = source;
+            _image.Visibility = Visibility.Visible;
+            _fallback.Visibility = Visibility.Collapsed;
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            // Icons are optional decoration. A stale process, shell thumbnail
+            // provider, or malformed executable must never take down the app.
+            Debug.WriteLine($"AppIcon load failed: {ex}");
+        }
     }
 
     private static string? ResolvePath(string executablePath, string command, uint processId)
@@ -168,15 +174,15 @@ public sealed class AppIcon : Grid
             StorageFile file = await StorageFile.GetFileFromPathAsync(path);
             using StorageItemThumbnail thumbnail = await file.GetThumbnailAsync(
                 ThumbnailMode.SingleItem, 32, ThumbnailOptions.UseCurrentScale);
-            if (thumbnail.Type != ThumbnailType.Icon && thumbnail.Size == 0)
+            if (thumbnail.Type != ThumbnailType.Icon || thumbnail.Size == 0 || !thumbnail.CanRead)
                 return null;
             var source = new BitmapImage();
             await source.SetSourceAsync(thumbnail);
             return source;
         }
-        catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException or
-                                   System.Runtime.InteropServices.COMException)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
+            Debug.WriteLine($"AppIcon thumbnail decode failed for '{path}': {ex}");
             return null;
         }
     }

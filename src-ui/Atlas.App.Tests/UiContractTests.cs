@@ -214,6 +214,20 @@ public sealed class UiContractTests
         Assert.Contains("if (GpuThresholdPanel is null)", code, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void AppIconRejectsInvalidThumbnailStreamsAndContainsProviderFailures()
+    {
+        var code = File.ReadAllText(Path.Combine(AppRoot, "Controls", "AppIcon.cs"));
+
+        Assert.Contains(
+            "thumbnail.Type != ThumbnailType.Icon || thumbnail.Size == 0 || !thumbnail.CanRead",
+            code,
+            StringComparison.Ordinal);
+        Assert.Equal(
+            2,
+            Regex.Matches(code, @"catch \(Exception ex\) when \(ex is not OutOfMemoryException\)").Count);
+    }
+
     [Theory]
     [MemberData(nameof(XamlFiles))]
     public void IconOnlyButtonsHaveAccessibleNames(string path)
