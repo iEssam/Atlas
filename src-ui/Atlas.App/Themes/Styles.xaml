@@ -39,6 +39,10 @@
     <Style x:Key="AtlasPageHeadingStyle" TargetType="TextBlock" BasedOn="{StaticResource TitleTextBlockStyle}">
         <Setter Property="AutomationProperties.HeadingLevel" Value="Level1" />
     </Style>
+    <Style x:Key="AtlasSectionHeadingStyle" TargetType="TextBlock" BasedOn="{StaticResource SubtitleTextBlockStyle}">
+        <Setter Property="AutomationProperties.HeadingLevel" Value="Level2" />
+    </Style>
+    <Style x:Key="AtlasCardTitleStyle" TargetType="TextBlock" BasedOn="{StaticResource BodyStrongTextBlockStyle}" />
     <Style x:Key="AtlasPageDescriptionStyle" TargetType="TextBlock" BasedOn="{StaticResource BaseTextBlockStyle}">
         <Setter Property="FontFamily" Value="{ThemeResource AtlasUiFontFamily}" />
         <Setter Property="FontSize" Value="14" />
