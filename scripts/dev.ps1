@@ -45,6 +45,80 @@ $pipePath = "\\.\pipe\$pipeName"
 $started = [System.Collections.Generic.List[System.Diagnostics.Process]]::new()
 $uiExitCode = 0
 
+function Get-NormalizedAtlasPath([string]$Path) {
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return $null
+    }
+
+    try {
+        return [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
+    }
+    catch {
+        return $null
+    }
+}
+
+function Stop-StaleAtlasProcesses {
+    # A running Windows executable cannot be replaced by Cargo or dotnet. Only
+    # stop processes launched from this checkout and configuration, never an
+    # Atlas process from another worktree or target directory.
+    $targets = @($uiExe, $gpuVendorHostExe, $serviceExe) |
+        ForEach-Object { Get-NormalizedAtlasPath $_ } |
+        Where-Object { $_ }
+    $targetSet = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($target in $targets) {
+        $null = $targetSet.Add($target)
+    }
+
+    $stale = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
+        $path = Get-NormalizedAtlasPath $_.ExecutablePath
+        $path -and $targetSet.Contains($path)
+    })
+    if ($stale.Count -eq 0) {
+        return
+    }
+
+    Write-Host 'Stopping stale System Atlas development processes...' -ForegroundColor Yellow
+    foreach ($entry in $stale) {
+        try {
+            Stop-Process -Id ([int]$entry.ProcessId) -Force -ErrorAction Stop
+        }
+        catch {
+            Write-Host "Process $($entry.ProcessId) requires administrator permission to stop. Requesting it now..." -ForegroundColor Yellow
+            try {
+                $elevatedStop = Start-Process `
+                    -FilePath "$env:SystemRoot\System32\taskkill.exe" `
+                    -ArgumentList @('/PID', [string]$entry.ProcessId, '/F') `
+                    -Verb RunAs `
+                    -WindowStyle Hidden `
+                    -Wait `
+                    -PassThru
+                if ($elevatedStop.ExitCode -ne 0) {
+                    throw "taskkill exited with code $($elevatedStop.ExitCode)"
+                }
+            }
+            catch {
+                throw "Cannot stop stale $($entry.Name) process $($entry.ProcessId) at '$($entry.ExecutablePath)'. Administrator approval was declined or failed. Close it from Task Manager, then retry."
+            }
+        }
+    }
+
+    $deadline = [DateTime]::UtcNow.AddSeconds(5)
+    do {
+        $remaining = @($stale | Where-Object {
+            Get-Process -Id ([int]$_.ProcessId) -ErrorAction SilentlyContinue
+        })
+        if ($remaining.Count -eq 0) {
+            return
+        }
+        Start-Sleep -Milliseconds 100
+    } while ([DateTime]::UtcNow -lt $deadline)
+
+    $ids = ($remaining | ForEach-Object { $_.ProcessId }) -join ', '
+    throw "Timed out waiting for stale System Atlas process(es) $ids to exit."
+}
+
 function Test-AtlasPipe {
     try {
         return [System.IO.Directory]::GetFiles('\\.\pipe\') -contains $pipePath
@@ -121,6 +195,10 @@ function Start-AtlasProcess([string[]]$Arguments, [string]$Label) {
 Push-Location $repo
 try {
     Assert-NativeDevBinariesCanRun
+
+    # Do this before Cargo/dotnet so a previous interrupted dev session cannot
+    # leave either output executable locked and break the next build.
+    Stop-StaleAtlasProcesses
 
     if (-not $SkipBuild) {
         Write-Host "Building atlas-service ($Configuration)..." -ForegroundColor Cyan
