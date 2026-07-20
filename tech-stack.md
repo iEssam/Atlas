@@ -5,7 +5,7 @@
 **Date:** 2026-07-12
 **Scope:** Language and framework selection, per-component technology mapping, Windows API strategy, IPC design, storage design, security architecture, packaging, testing, and performance-budget engineering for the MVP through Release 3.
 
-> This document includes target-state architecture and should not be read as an inventory of shipped components. See [docs/current-state.md](docs/current-state.md) for the current source-tree baseline and [docs/phases.md](docs/phases.md) for implementation and release-gate status. In particular, NativeAOT UI publishing, sparse-MSIX Explorer integration, ARM64 release artifacts, signed updates, and the full test matrix below remain partially or wholly deferred.
+> This document includes target-state architecture and should not be read as an inventory of shipped components. See [docs/current-state.md](docs/current-state.md) for the current source-tree baseline and [docs/phases.md](docs/phases.md) for implementation and release-gate status. In particular, NativeAOT UI publishing, production signing/provisioning of the sparse-MSIX Explorer integration, ARM64 release artifacts, signed updates, and the full test matrix below remain partially or wholly deferred.
 
 ---
 

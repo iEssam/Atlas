@@ -5,6 +5,8 @@ param(
 
     [string]$ExpectedElementName = 'Overview',
 
+    [string]$FindUsingPath,
+
     [ValidateRange(5, 60)]
     [int]$TimeoutSeconds = 20
 )
@@ -26,14 +28,19 @@ $previousStartPage = $env:ATLAS_START_PAGE
 $process = $null
 
 try {
-    if ($StartPage -eq 'overview') {
+    if ($FindUsingPath -or $StartPage -eq 'overview') {
         Remove-Item Env:ATLAS_START_PAGE -ErrorAction SilentlyContinue
     }
     else {
         $env:ATLAS_START_PAGE = $StartPage
     }
 
-    $process = Start-Process -FilePath $executable.FullName -PassThru
+    if ($FindUsingPath) {
+        $launchArguments = @('--find-using', ('"{0}"' -f $FindUsingPath))
+        $process = Start-Process -FilePath $executable.FullName -ArgumentList $launchArguments -PassThru
+    } else {
+        $process = Start-Process -FilePath $executable.FullName -PassThru
+    }
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     $window = $null
 
@@ -85,6 +92,23 @@ try {
 
     if ($null -eq $expected) {
         throw "The expected '$ExpectedElementName' element was not present in the UI Automation tree."
+    }
+
+    if ($FindUsingPath) {
+        $pathCondition = [System.Windows.Automation.PropertyCondition]::new(
+            [System.Windows.Automation.AutomationElement]::NameProperty,
+            'File path to search')
+        $pathInput = $window.FindFirst(
+            [System.Windows.Automation.TreeScope]::Descendants,
+            $pathCondition)
+        if ($null -eq $pathInput) {
+            throw "The File Locks path input was not present in the UI Automation tree."
+        }
+        $valuePattern = $pathInput.GetCurrentPattern(
+            [System.Windows.Automation.ValuePattern]::Pattern)
+        if ($valuePattern.Current.Value -ne $FindUsingPath) {
+            throw "Expected selected path '$FindUsingPath', got '$($valuePattern.Current.Value)'."
+        }
     }
 
     Write-Host "UI smoke passed: title='$($process.MainWindowTitle)', page='$ExpectedElementName', pid=$($process.Id)."

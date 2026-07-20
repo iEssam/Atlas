@@ -86,7 +86,7 @@ Per-machine MSI (elevation required; registers and starts the `SystemAtlas` serv
 msiexec /i SystemAtlas-0.3.0.0-x64.msi
 ```
 
-Supports clean install, in-place major upgrade, and clean removal (`msiexec /x`). The MSI carries the current unpackaged, self-contained WinUI x64 payload; sparse-MSIX shell integration is still deferred. The `%ProgramData%\SystemAtlas` data directory is preserved across uninstall so a reinstall keeps history. The RC's MSI is **unsigned** — sign it before distribution (see [installer/README.md](installer/README.md)). Build it yourself with `installer/build.ps1`.
+Supports clean install, in-place major upgrade, and clean removal (`msiexec /x`). The MSI carries the current unpackaged, self-contained WinUI x64 payload plus the Explorer command DLL, sparse identity package, and a classic-menu fallback for **Find what is using this file**. The Windows 11 primary-menu command requires the sparse package to be signed and registered after install; unsigned development builds deliberately do not register it. The `%ProgramData%\SystemAtlas` data directory is preserved across uninstall so a reinstall keeps history. The RC's MSI is **unsigned** — sign it before distribution (see [installer/README.md](installer/README.md)). Build it yourself with `installer/build.ps1`.
 
 ## Validation
 

@@ -31,6 +31,16 @@ public sealed partial class FileLockPage : Page
         InitializeComponent();
     }
 
+    protected override void OnNavigatedTo(NavigationEventArgs e)
+    {
+        base.OnNavigatedTo(e);
+        if (e.Parameter is string path && !string.IsNullOrWhiteSpace(path))
+        {
+            ViewModel.PathInput = path;
+            _ = ViewModel.SearchAsync();
+        }
+    }
+
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         base.OnNavigatedFrom(e);

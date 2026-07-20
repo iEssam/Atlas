@@ -39,6 +39,10 @@ param(
     # fresh build outputs, or for a pure "does the WiX compile?" check.
     [switch]$SkipPrereqs,
 
+    # Optional production-signed sparse package. When omitted, the shell build
+    # emits an unsigned package suitable for CI validation but not deployment.
+    [string]$SignedShellPackage,
+
     # Emit an unsigned MSI. Signing is a separate, documented post-build step
     # (installer/README.md "Signing"); this harness never signs.
     [switch]$NoSign
@@ -115,6 +119,32 @@ function Build-Prereqs {
     & dotnet publish $appProj -c Release -r $DotnetRid --self-contained true `
         -p:Platform=$Platform
     if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed ($LASTEXITCODE)." }
+
+    Write-Step "Building Explorer command and sparse identity package"
+    $shellPlatform = if ($Platform -eq "x64") { "x64" } else { "ARM64" }
+    & (Join-Path $RepoRoot "shell-ext\build.ps1") -Configuration Release `
+        -Platform $shellPlatform -Version $Version
+    if ($LASTEXITCODE -ne 0) { throw "shell extension build failed ($LASTEXITCODE)." }
+
+}
+
+function Stage-ShellIntegration([string]$AppPublishDir) {
+    $shellPlatform = if ($Platform -eq "x64") { "x64" } else { "ARM64" }
+    $shellOutput = Join-Path $RepoRoot "shell-ext\out\$shellPlatform\Release"
+    $shellDll = Join-Path $shellOutput "SystemAtlas.ShellExtension.dll"
+    if (-not (Test-Path -LiteralPath $shellDll)) {
+        throw "Explorer command DLL not found at '$shellDll'. Run shell-ext/build.ps1 -Configuration Release -Platform $shellPlatform."
+    }
+    $identityPackage = if ($SignedShellPackage) {
+        (Resolve-Path -LiteralPath $SignedShellPackage).Path
+    } else {
+        Join-Path $shellOutput "SystemAtlas.Desktop-$Version.msix"
+    }
+    if (-not (Test-Path -LiteralPath $identityPackage)) {
+        throw "Sparse identity package not found at '$identityPackage'. Run shell-ext/build.ps1 -Configuration Release -Platform $shellPlatform -Version $Version."
+    }
+    Copy-Item $shellDll $AppPublishDir -Force
+    Copy-Item $identityPackage (Join-Path $AppPublishDir "SystemAtlas.Desktop.msix") -Force
 }
 
 # Resolve the two inputs Package.wxs needs, whether freshly built or staged.
@@ -153,6 +183,8 @@ if (-not (Test-Path $inputs.AppPublishDir)) {
     throw "WinUI publish dir not found at '$($inputs.AppPublishDir)'. Publish it with: dotnet publish src-ui/Atlas.App -c Release -r $DotnetRid --self-contained true"
 }
 
+Stage-ShellIntegration $inputs.AppPublishDir
+
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $msiName = "SystemAtlas-$Version-$Platform.msi"
 $msiPath = Join-Path $OutDir $msiName
@@ -173,6 +205,11 @@ Write-Step "Compiling MSI -> $msiPath"
 if ($LASTEXITCODE -ne 0) { throw "wix build failed ($LASTEXITCODE)." }
 
 Write-Step "MSI written: $msiPath"
+
+if (-not $SignedShellPackage) {
+    Write-Host "NOTE: the embedded sparse identity package is unsigned. The classic Explorer fallback works," -ForegroundColor Yellow
+    Write-Host "but the Windows 11 primary-menu command must not be registered until a signed package is supplied." -ForegroundColor Yellow
+}
 
 if (-not $NoSign) {
     Write-Host ""

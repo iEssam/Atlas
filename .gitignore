@@ -12,6 +12,7 @@
 # .NET / WinUI (arrives at milestone M5)
 bin/
 obj/
+/shell-ext/out/
 *.user
 .vs/
 

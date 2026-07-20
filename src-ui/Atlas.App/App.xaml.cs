@@ -1,4 +1,5 @@
 using Atlas.App.Services;
+using Atlas.IpcClient;
 using Microsoft.UI.Xaml;
 
 namespace Atlas.App;
@@ -27,7 +28,9 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
-        _window = new MainWindow();
+        var activation = ExplorerActivation.Parse(
+            Environment.GetCommandLineArgs().Skip(1));
+        _window = new MainWindow(activation);
         MainWindow = _window;
         _window.Activate();
     }

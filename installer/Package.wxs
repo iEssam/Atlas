@@ -24,7 +24,9 @@
     - Emergency UI  (atlas-emergency-ui.exe, Rust/Win32 - tech-stack sec 4.6)
     - Tray helper   (atlas-tray.exe        - tech-stack sec 4.6)
     - CLI           (atlas.exe             - tech-stack sec 4.8, R3)
-    - Sparse MSIX shell-extension identity (tech-stack sec 4.8)
+  The Explorer shell command now exists. The app payload harvest contains its
+  native DLL and sparse identity package; Component 4 registers the classic
+  registry verb fallback for Windows 10 and Windows 11 "Show more options".
   See the "FUTURE COMPONENTS" feature block near the bottom.
 
   BUILD: driven by installer/build.ps1, which passes these preprocessor vars:
@@ -254,8 +256,25 @@
     </Component>
 
     <!--
+      Explorer fallback for unpackaged/unsigned installs. Windows 11's primary
+      menu uses the sparse-package IExplorerCommand shipped in the app payload;
+      this registry verb keeps the same feature reachable from the classic menu
+      and on Windows 10. It launches the same strictly parsed app activation.
+    -->
+    <Component Id="cmpExplorerClassicVerb" Directory="INSTALLFOLDER"
+               Guid="E692433C-9DC3-4EB2-96C5-86D74663BF0E" Bitness="always64">
+      <RegistryValue Root="HKLM" Key="Software\Classes\*\shell\SystemAtlas.FindUsing"
+                     Name="MUIVerb" Type="string" Value="Find what is using this file" />
+      <RegistryValue Root="HKLM" Key="Software\Classes\*\shell\SystemAtlas.FindUsing"
+                     Name="Icon" Type="string" Value="[INSTALLFOLDER]Atlas.App.exe,0" />
+      <RegistryValue Root="HKLM" Key="Software\Classes\*\shell\SystemAtlas.FindUsing\command"
+                     Type="string" Value="&quot;[INSTALLFOLDER]Atlas.App.exe&quot; --find-using &quot;%1&quot;"
+                     KeyPath="yes" />
+    </Component>
+
+    <!--
       ==================================================================
-      COMPONENT 4 - DATA DIRECTORY + ACL  (tech-stack sec 7 "Data protection")
+      COMPONENT 5 - DATA DIRECTORY + ACL  (tech-stack sec 7 "Data protection")
       ==================================================================
       Creates %ProgramData%\SystemAtlas\ and sets its ACL.
 
@@ -304,9 +323,9 @@
 
     <!--
       ==================================================================
-      COMPONENT 5..8 - FUTURE COMPONENTS (STUBS - binaries do not exist yet)
+      COMPONENT 6..8 - FUTURE COMPONENTS (STUBS - binaries do not exist yet)
       ==================================================================
-      Emergency UI, tray helper, CLI, and sparse-MSIX shell identity are named
+      Emergency UI, tray helper, and CLI are named
       in tech-stack sec 4.6 / sec 4.8 / sec 8 but are NOT built yet (they are
       not in the M8 tree). They are intentionally left as commented scaffolding
       so a maintainer only has to: (a) produce the binary, (b) point a
@@ -330,11 +349,6 @@
         util:PathEntry so "atlas ..." works from any shell (R3).
       </Component>
 
-      Sparse MSIX (IExplorerCommand shell identity, tech-stack sec 4.8):
-      shipped as a separate .msix registered post-install (Add-AppxPackage /
-      stager custom action), NOT as MSI file components - the modern context
-      menu requires package identity the MSI cannot grant. Tracked in
-      installer/README.md under "Shell extension".
     -->
 
     <!--
@@ -362,6 +376,7 @@
                AllowAbsent="yes">
         <ComponentGroupRef Id="cgAppPayload" />
         <ComponentRef Id="cmpAppShortcut" />
+        <ComponentRef Id="cmpExplorerClassicVerb" />
       </Feature>
 
       <!--

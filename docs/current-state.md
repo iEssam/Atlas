@@ -1,6 +1,6 @@
 # Current implementation state
 
-Last reconciled with the repository: 2026-07-19.
+Last reconciled with the repository: 2026-07-20.
 
 This document describes the current source tree. It keeps implementation facts separate from requirements and target architecture:
 
@@ -17,16 +17,17 @@ When these documents disagree about what exists today, the source tree and autom
 - Desktop UI: C# on .NET 10 and Windows App SDK 1.6.
 - The current WinUI project is **unpackaged and self-contained** (`WindowsPackageType=None`, `WindowsAppSDKSelfContained=true`). It builds and launches as an ordinary x64 executable.
 - The release candidate installer is a per-machine WiX MSI that carries the unpackaged UI payload and installs the `SystemAtlas` service.
+- Explorer integration is implemented as a native `IExplorerCommand` plus a sparse external-location identity package. A strict `--find-using` activation opens the existing File Locks page, prefills the selected absolute path, and searches automatically. WiX also registers a classic-menu fallback.
 - The published release candidate and MSI are x64 and unsigned. They are for evaluation, not production distribution.
 
-The following target-architecture items are not current shipping facts: NativeAOT UI publishing, sparse-MSIX Explorer integration, ARM64 release artifacts, signed update manifests, staged update channels, winget distribution, a tray helper, and an emergency UI.
+The following target-architecture items are not current shipping facts: NativeAOT UI publishing, signed and automatically provisioned sparse-MSIX deployment, ARM64 release artifacts, signed update manifests, staged update channels, winget distribution, a tray helper, and an emergency UI.
 
 ## Automated validation on the current branch
 
 The primary CI workflow has two independent Windows jobs:
 
 1. Rust: formatting, Clippy with warnings denied, and all workspace tests.
-2. Windows UI: .NET restore, x64 WinUI build, a UI Automation launch/navigation smoke test, IPC-client tests, and source-level UI contract tests.
+2. Windows UI: .NET restore, x64 native Explorer-command and sparse-package build, x64 WinUI build, a UI Automation launch/navigation smoke test, IPC-client tests, and source-level UI contract tests.
 
 The UI contract suite guards authored XAML parsing, XAML event-handler wiring, shell navigation destinations, required responsive states, High Contrast resource parity, and accessible names for icon-only buttons. The smoke test launches the real unpackaged app and verifies the shell and a requested navigation destination through UI Automation.
 

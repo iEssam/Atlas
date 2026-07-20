@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using Atlas.App.Models;
 using Atlas.App.ViewModels;
 using Atlas.App.Views;
+using Atlas.IpcClient;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
@@ -35,7 +36,7 @@ public sealed partial class MainWindow : Window
 
     public ShellViewModel ViewModel { get; }
 
-    public MainWindow()
+    public MainWindow(ExplorerActivation? explorerActivation = null)
     {
         var who = Environment.GetEnvironmentVariable("ATLAS_PIPE");
         ViewModel = new ShellViewModel(
@@ -50,7 +51,11 @@ public sealed partial class MainWindow : Window
         Closed += (_, _) => ViewModel.Stop();
 #if DEBUG
         var startPage = Environment.GetEnvironmentVariable("ATLAS_START_PAGE");
-        if (string.Equals(startPage, "activity", StringComparison.OrdinalIgnoreCase)
+        if (explorerActivation is not null)
+        {
+            Root.Loaded += (_, _) => NavigateFromExplorer(explorerActivation);
+        }
+        else if (string.Equals(startPage, "activity", StringComparison.OrdinalIgnoreCase)
             || string.Equals(startPage, "graphics", StringComparison.OrdinalIgnoreCase)
             || string.Equals(startPage, "experiments", StringComparison.OrdinalIgnoreCase))
         {
@@ -64,8 +69,24 @@ public sealed partial class MainWindow : Window
             ContentFrame.Navigate(typeof(OverviewPage));
         }
 #else
-        ContentFrame.Navigate(typeof(OverviewPage));
+        if (explorerActivation is not null)
+        {
+            Root.Loaded += (_, _) => NavigateFromExplorer(explorerActivation);
+        }
+        else
+        {
+            ContentFrame.Navigate(typeof(OverviewPage));
+        }
 #endif
+    }
+
+    private void NavigateFromExplorer(ExplorerActivation activation)
+    {
+        // The NavigationView initially selects Overview from XAML. Clear that
+        // visual selection before opening the leaf page directly so Explorer's
+        // requested destination is not mislabeled as Overview.
+        Nav.SelectedItem = null;
+        ContentFrame.Navigate(typeof(FileLockPage), activation.FilePath);
     }
 
     public void ApplyThemePreference(ThemePreference preference)
