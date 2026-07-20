@@ -15,7 +15,7 @@ public sealed class UiContractTests
         "Checked", "Click", "Closing", "DoubleTapped", "DragOver", "Drop", "Invoked",
         "KeyDown", "Loaded", "PointerPressed", "PrimaryButtonClick", "QuerySubmitted",
         "SecondaryButtonClick", "SelectionChanged", "SizeChanged", "Tapped", "TextChanged",
-        "Unchecked",
+        "Toggled", "Unchecked", "Opened", "ValueChanged",
     ];
 
     private static string RepositoryRoot
@@ -84,6 +84,36 @@ public sealed class UiContractTests
         {
             Assert.Matches($@"\b{Regex.Escape(handler)}\s*\(", code);
         }
+    }
+
+    [Fact]
+    public void EveryAtlasStaticResourceReferenceResolves()
+    {
+        var documents = XamlFiles()
+            .Select(row => (string)row[0])
+            .Select(path => (Path: path, Document: XDocument.Load(path, LoadOptions.SetLineInfo)))
+            .ToArray();
+        var defined = documents
+            .SelectMany(item => item.Document.Root!.DescendantsAndSelf())
+            .Select(element => element.Attribute(Xaml + "Key")?.Value)
+            .Where(key => key?.StartsWith("Atlas", StringComparison.Ordinal) is true)
+            .Cast<string>()
+            .ToHashSet(StringComparer.Ordinal);
+        var unresolved = documents
+            .SelectMany(item => item.Document.Root!.DescendantsAndSelf()
+                .Attributes()
+                .SelectMany(attribute => Regex.Matches(
+                        attribute.Value,
+                        @"\{StaticResource\s+(?<key>Atlas[A-Za-z0-9_.-]+)\}")
+                    .Select(match => (item.Path, Key: match.Groups["key"].Value))))
+            .Where(reference => !defined.Contains(reference.Key))
+            .Select(reference => $"{Path.GetRelativePath(AppRoot, reference.Path)}: {reference.Key}")
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.True(unresolved.Length == 0,
+            $"Unresolved Atlas StaticResource references:{Environment.NewLine}{string.Join(Environment.NewLine, unresolved)}");
     }
 
     [Fact]
