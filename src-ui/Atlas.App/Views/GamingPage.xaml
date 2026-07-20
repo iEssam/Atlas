@@ -59,8 +59,26 @@
                           Header="Game"
                           AutomationProperties.Name="Selected game"
                           ItemsSource="{x:Bind ViewModel.Games}"
-                          DisplayMemberPath="DisplayName"
-                          SelectedItem="{x:Bind ViewModel.SelectedGame, Mode=TwoWay}" />
+                          SelectedItem="{x:Bind ViewModel.SelectedGame, Mode=TwoWay}">
+                    <ComboBox.ItemTemplate>
+                        <DataTemplate x:DataType="proto:GameInstall">
+                            <Grid ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="20" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <controls:AppIcon ExecutablePath="{x:Bind ExecutablePath}"
+                                                  Width="20"
+                                                  Height="20"
+                                                  AutomationProperties.AccessibilityView="Raw" />
+                                <TextBlock Grid.Column="1"
+                                           Text="{x:Bind DisplayName}"
+                                           TextTrimming="CharacterEllipsis"
+                                           VerticalAlignment="Center" />
+                            </Grid>
+                        </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                </ComboBox>
             </CommandBar.Content>
             <AppBarButton Label="Refresh" Click="Refresh_Click">
                 <AppBarButton.Icon><SymbolIcon Symbol="Refresh" /></AppBarButton.Icon>
@@ -114,15 +132,33 @@
                                   MaxHeight="650"
                                   AutomationProperties.Name="Detected games">
                             <ListView.ItemContainerStyle>
-                                <Style TargetType="ListViewItem" BasedOn="{StaticResource AtlasRowContainerStyle}" />
+                                <Style TargetType="ListViewItem" BasedOn="{StaticResource AtlasRowContainerStyle}">
+                                    <Setter Property="AutomationProperties.Name" Value="{Binding DisplayName}" />
+                                </Style>
                             </ListView.ItemContainerStyle>
                             <ListView.ItemTemplate>
                                 <DataTemplate x:DataType="proto:GameInstall">
-                                    <StackPanel Spacing="2">
-                                        <TextBlock Text="{x:Bind DisplayName}" Style="{StaticResource BodyStrongTextBlockStyle}" />
-                                        <TextBlock Text="{x:Bind Platform}" Style="{StaticResource CaptionTextBlockStyle}" />
-                                        <TextBlock Text="{x:Bind Version}" TextTrimming="CharacterEllipsis" Style="{StaticResource CaptionTextBlockStyle}" />
-                                    </StackPanel>
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="32" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <controls:AppIcon ExecutablePath="{x:Bind ExecutablePath}"
+                                                          Width="32"
+                                                          Height="32"
+                                                          Margin="0,2,0,0"
+                                                          VerticalAlignment="Top"
+                                                          AutomationProperties.AccessibilityView="Raw" />
+                                        <StackPanel Grid.Column="1" Spacing="2">
+                                            <TextBlock Text="{x:Bind DisplayName}"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                            <TextBlock Text="{x:Bind Platform}" Style="{StaticResource CaptionTextBlockStyle}" />
+                                            <TextBlock Text="{x:Bind Version}"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       Style="{StaticResource CaptionTextBlockStyle}" />
+                                        </StackPanel>
+                                    </Grid>
                                 </DataTemplate>
                             </ListView.ItemTemplate>
                         </ListView>
