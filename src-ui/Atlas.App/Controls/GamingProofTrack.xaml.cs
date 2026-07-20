@@ -31,7 +31,14 @@ public sealed partial class GamingProofTrack : UserControl
     {
         _buckets = buckets.ToArray();
         EmptyText.Visibility = _buckets.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        TraceContent.Visibility = _buckets.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
         LiveCursor.Visibility = live && _buckets.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        FrameLiveCursor.Visibility = live && _buckets.Any(bucket => bucket.FrameTimeMs > 0)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        FrameStatusText.Text = _buckets.Any(bucket => bucket.FrameTimeMs > 0)
+            ? "Frame time p95 by second"
+            : "Frame time was not captured for this recording";
         Render();
     }
 
@@ -42,11 +49,15 @@ public sealed partial class GamingProofTrack : UserControl
         CpuLine.Points.Clear();
         GpuLine.Points.Clear();
         MemoryLine.Points.Clear();
+        FrameLine.Points.Clear();
         var width = PlotCanvas.ActualWidth;
         var height = PlotCanvas.ActualHeight;
         if (_buckets.Count == 0 || width <= 1 || height <= 1) return;
 
         var maxMemory = Math.Max(1UL, _buckets.Max(bucket => bucket.RamUsedBytes));
+        var frameHeight = FrameCanvas.ActualHeight;
+        var frameWidth = FrameCanvas.ActualWidth;
+        var maxFrameTime = Math.Max(50.0, _buckets.Max(bucket => bucket.FrameTimeMs));
         for (var index = 0; index < _buckets.Count; index++)
         {
             var bucket = _buckets[index];
@@ -54,12 +65,21 @@ public sealed partial class GamingProofTrack : UserControl
             CpuLine.Points.Add(new Point(x, ValueY(bucket.CpuPercent, height)));
             GpuLine.Points.Add(new Point(x, ValueY(bucket.GpuPercent, height)));
             MemoryLine.Points.Add(new Point(x, ValueY(bucket.RamUsedBytes * 100.0 / maxMemory, height)));
+            if (bucket.FrameTimeMs > 0 && frameWidth > 1 && frameHeight > 1)
+            {
+                var frameX = _buckets.Count == 1 ? frameWidth / 2 : frameWidth * index / (_buckets.Count - 1);
+                FrameLine.Points.Add(new Point(frameX, frameHeight - Math.Clamp(bucket.FrameTimeMs / maxFrameTime, 0, 1) * frameHeight));
+            }
         }
 
         LiveCursor.X1 = width;
         LiveCursor.X2 = width;
         LiveCursor.Y1 = 0;
         LiveCursor.Y2 = height;
+        FrameLiveCursor.X1 = frameWidth;
+        FrameLiveCursor.X2 = frameWidth;
+        FrameLiveCursor.Y1 = 0;
+        FrameLiveCursor.Y2 = frameHeight;
     }
 
     private static double ValueY(double percent, double height) =>

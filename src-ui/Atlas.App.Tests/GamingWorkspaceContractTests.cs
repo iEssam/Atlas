@@ -60,6 +60,24 @@ public sealed class GamingWorkspaceContractTests
     }
 
     [Fact]
+    public void SessionPerformanceIsMeasuredExplainedAndNeverEstimatedFromUtilization()
+    {
+        var xaml = File.ReadAllText(Path.Combine(RepositoryRoot, "src-ui", "Atlas.App", "Views", "GamingPage.xaml"));
+        var viewModel = File.ReadAllText(Path.Combine(RepositoryRoot, "src-ui", "Atlas.App", "ViewModels", "GamingViewModel.cs"));
+        var proof = File.ReadAllText(Path.Combine(RepositoryRoot, "src-ui", "Atlas.App", "Controls", "GamingProofTrack.xaml"));
+        var proofCode = File.ReadAllText(Path.Combine(RepositoryRoot, "src-ui", "Atlas.App", "Controls", "GamingProofTrack.xaml.cs"));
+
+        Assert.Contains("1% low", xaml, StringComparison.Ordinal);
+        Assert.Contains("Frame p95", xaml, StringComparison.Ordinal);
+        Assert.Contains("Long frames", xaml, StringComparison.Ordinal);
+        Assert.Contains("PerformanceExplanation", xaml, StringComparison.Ordinal);
+        Assert.Contains("Frame time was not captured for this recording", proof, StringComparison.Ordinal);
+        Assert.Contains("Frame time p95 by second", proofCode, StringComparison.Ordinal);
+        Assert.Contains("Atlas never estimates FPS from CPU or GPU utilization.", viewModel, StringComparison.Ordinal);
+        Assert.Contains("diagnostic until anti-cheat compatibility", viewModel, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void PlanConfirmationSurfacesBeforeAfterRollbackAndVerification()
     {
         var code = File.ReadAllText(Path.Combine(RepositoryRoot, "src-ui", "Atlas.App", "Views", "GamingPage.xaml.cs"));

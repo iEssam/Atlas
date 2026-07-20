@@ -147,7 +147,7 @@ function Stage-ShellIntegration([string]$AppPublishDir) {
     Copy-Item $identityPackage (Join-Path $AppPublishDir "SystemAtlas.Desktop.msix") -Force
 }
 
-# Resolve the two inputs Package.wxs needs, whether freshly built or staged.
+# Resolve the inputs Package.wxs needs, whether freshly built or staged.
 function Resolve-Inputs {
     # Service exe: prefer staged copy, else the cargo target dir.
     $svc = Join-Path $StageDir "atlas-service.exe"
@@ -160,8 +160,9 @@ function Resolve-Inputs {
 
     # App publish dir: the RID publish output.
     $appPub = Join-Path $RepoRoot "src-ui\Atlas.App\bin\$Platform\Release\net10.0-windows10.0.19041.0\$DotnetRid\publish"
+    $presentMonDir = Join-Path $RepoRoot "third_party\presentmon"
 
-    return [pscustomobject]@{ ServiceExe = $svc; AppPublishDir = $appPub }
+    return [pscustomobject]@{ ServiceExe = $svc; AppPublishDir = $appPub; PresentMonDir = $presentMonDir }
 }
 
 # --- Main --------------------------------------------------------------------
@@ -182,6 +183,9 @@ if (-not (Test-Path $inputs.ServiceExe)) {
 if (-not (Test-Path $inputs.AppPublishDir)) {
     throw "WinUI publish dir not found at '$($inputs.AppPublishDir)'. Publish it with: dotnet publish src-ui/Atlas.App -c Release -r $DotnetRid --self-contained true"
 }
+if ($Platform -eq "x64" -and -not (Test-Path (Join-Path $inputs.PresentMonDir "PresentMon-2.5.1-x64.exe"))) {
+    throw "Pinned PresentMon 2.5.1 x64 runtime not found at '$($inputs.PresentMonDir)'."
+}
 
 Stage-ShellIntegration $inputs.AppPublishDir
 
@@ -199,6 +203,7 @@ Write-Step "Compiling MSI -> $msiPath"
     -d "ProductVersion=$Version" `
     -d "ServiceExe=$($inputs.ServiceExe)" `
     -d "AppPublishDir=$($inputs.AppPublishDir)" `
+    -d "PresentMonDir=$($inputs.PresentMonDir)" `
     -d "Platform=$Platform" `
     -ext WixToolset.Util.wixext `
     -o $msiPath

@@ -33,6 +33,7 @@
     -d ProductVersion=<x.y.z.b>
     -d ServiceExe=<path to atlas-service.exe>
     -d AppPublishDir=<dir containing Atlas.App.exe + deps>
+    -d PresentMonDir=<dir containing the pinned Intel PresentMon runtime>
     -d Platform=x64            (see the ARM64 note at the bottom)
   ============================================================================
 -->
@@ -196,6 +197,21 @@
           Remove="uninstall"
           Wait="yes" />
     </Component>
+
+    <?if $(var.Platform) = x64 ?>
+    <Component Id="cmpPresentMonCapture" Directory="INSTALLFOLDER" Bitness="always64">
+      <File Id="filPresentMonCapture"
+            Name="PresentMon-2.5.1-x64.exe"
+            Source="$(var.PresentMonDir)\PresentMon-2.5.1-x64.exe"
+            KeyPath="yes" />
+    </Component>
+    <Component Id="cmpPresentMonLicense" Directory="INSTALLFOLDER" Bitness="always64">
+      <File Id="filPresentMonLicense"
+            Name="PresentMon-LICENSE.txt"
+            Source="$(var.PresentMonDir)\LICENSE.txt"
+            KeyPath="yes" />
+    </Component>
+    <?endif?>
 
     <!--
       ==================================================================
@@ -367,6 +383,10 @@
              Display="expand">
 
       <ComponentRef Id="cmpAtlasService" />
+      <?if $(var.Platform) = x64 ?>
+      <ComponentRef Id="cmpPresentMonCapture" />
+      <ComponentRef Id="cmpPresentMonLicense" />
+      <?endif?>
       <ComponentRef Id="cmpDataFolder" />
 
       <Feature Id="DesktopApp"

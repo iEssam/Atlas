@@ -213,7 +213,7 @@
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Spacing="3">
                                     <TextBlock Text="Proof Track" Style="{StaticResource AtlasSectionHeadingStyle}" />
-                                    <TextBlock Text="CPU in green, GPU in foreground, memory as a dashed line. All lanes share one measured time axis."
+                                    <TextBlock Text="Measured frame pacing sits above synchronized CPU, GPU, and memory activity on the same time axis."
                                                TextWrapping="Wrap"
                                                Style="{StaticResource CaptionTextBlockStyle}" />
                                 </StackPanel>
@@ -230,6 +230,44 @@
                                     </ComboBox.ItemTemplate>
                                 </ComboBox>
                             </Grid>
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="{x:Bind ViewModel.PerformanceTitle, Mode=OneWay}"
+                                           Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                <Grid x:Name="FrameMetricGrid" ColumnSpacing="18" RowSpacing="10"
+                                      AutomationProperties.Name="Selected session performance summary">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition x:Name="MetricColumn1" Width="*" />
+                                        <ColumnDefinition x:Name="MetricColumn2" Width="*" />
+                                        <ColumnDefinition x:Name="MetricColumn3" Width="*" />
+                                        <ColumnDefinition x:Name="MetricColumn4" Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <StackPanel x:Name="AverageMetric" Spacing="2">
+                                        <TextBlock Text="Average" Style="{StaticResource CaptionTextBlockStyle}" />
+                                        <TextBlock Text="{x:Bind ViewModel.AverageFps, Mode=OneWay}" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                    </StackPanel>
+                                    <StackPanel x:Name="LowMetric" Grid.Column="1" Spacing="2">
+                                        <TextBlock Text="1% low" Style="{StaticResource CaptionTextBlockStyle}" />
+                                        <TextBlock Text="{x:Bind ViewModel.OnePercentLowFps, Mode=OneWay}" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                    </StackPanel>
+                                    <StackPanel x:Name="P95Metric" Grid.Column="2" Spacing="2">
+                                        <TextBlock Text="Frame p95" Style="{StaticResource CaptionTextBlockStyle}" />
+                                        <TextBlock Text="{x:Bind ViewModel.FrameTimeP95, Mode=OneWay}" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                    </StackPanel>
+                                    <StackPanel x:Name="LongFrameMetric" Grid.Column="3" Spacing="2">
+                                        <TextBlock Text="Long frames" Style="{StaticResource CaptionTextBlockStyle}" />
+                                        <TextBlock Text="{x:Bind ViewModel.LongFrames, Mode=OneWay}" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                    </StackPanel>
+                                </Grid>
+                                <TextBlock Text="{x:Bind ViewModel.PerformanceExplanation, Mode=OneWay}"
+                                           TextWrapping="Wrap" />
+                                <TextBlock Text="{x:Bind ViewModel.PerformanceEvidence, Mode=OneWay}"
+                                           TextWrapping="Wrap"
+                                           Style="{StaticResource CaptionTextBlockStyle}" />
+                            </StackPanel>
                             <controls:GamingProofTrack x:Name="ProofTrack"
                                                        EmptyMessage="{x:Bind ViewModel.TraceEmptyMessage, Mode=OneWay}" />
                             <TextBlock Text="{x:Bind ViewModel.TraceSummaryText, Mode=OneWay}"
@@ -243,14 +281,16 @@
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="1.4*" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Text="Time" Style="{StaticResource AtlasColumnHeaderStyle}" />
-                                <TextBlock Grid.Column="1" Text="CPU" Style="{StaticResource AtlasColumnHeaderStyle}" />
-                                <TextBlock Grid.Column="2" Text="GPU" Style="{StaticResource AtlasColumnHeaderStyle}" />
-                                <TextBlock Grid.Column="3" Text="Memory" Style="{StaticResource AtlasColumnHeaderStyle}" />
-                                <TextBlock Grid.Column="4" Text="Temperature" Style="{StaticResource AtlasColumnHeaderStyle}" />
-                                <TextBlock Grid.Column="5" Text="State" Style="{StaticResource AtlasColumnHeaderStyle}" />
+                                <TextBlock Grid.Column="1" Text="Frame" Style="{StaticResource AtlasColumnHeaderStyle}" />
+                                <TextBlock Grid.Column="2" Text="CPU" Style="{StaticResource AtlasColumnHeaderStyle}" />
+                                <TextBlock Grid.Column="3" Text="GPU" Style="{StaticResource AtlasColumnHeaderStyle}" />
+                                <TextBlock Grid.Column="4" Text="Memory" Style="{StaticResource AtlasColumnHeaderStyle}" />
+                                <TextBlock Grid.Column="5" Text="Temperature" Style="{StaticResource AtlasColumnHeaderStyle}" />
+                                <TextBlock Grid.Column="6" Text="State" Style="{StaticResource AtlasColumnHeaderStyle}" />
                             </Grid>
                             <ListView ItemsSource="{x:Bind ViewModel.TraceSummary}"
                                       SelectionMode="None"
@@ -268,14 +308,16 @@
                                                 <ColumnDefinition Width="*" />
                                                 <ColumnDefinition Width="*" />
                                                 <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
                                                 <ColumnDefinition Width="1.4*" />
                                             </Grid.ColumnDefinitions>
                                             <TextBlock Text="{x:Bind Time}" />
-                                            <TextBlock Grid.Column="1" Text="{x:Bind Cpu}" />
-                                            <TextBlock Grid.Column="2" Text="{x:Bind Gpu}" />
-                                            <TextBlock Grid.Column="3" Text="{x:Bind Memory}" />
-                                            <TextBlock Grid.Column="4" Text="{x:Bind Temperature}" />
-                                            <TextBlock Grid.Column="5" Text="{x:Bind State}" TextWrapping="Wrap" />
+                                            <TextBlock Grid.Column="1" Text="{x:Bind Frame}" />
+                                            <TextBlock Grid.Column="2" Text="{x:Bind Cpu}" />
+                                            <TextBlock Grid.Column="3" Text="{x:Bind Gpu}" />
+                                            <TextBlock Grid.Column="4" Text="{x:Bind Memory}" />
+                                            <TextBlock Grid.Column="5" Text="{x:Bind Temperature}" />
+                                            <TextBlock Grid.Column="6" Text="{x:Bind State}" TextWrapping="Wrap" />
                                         </Grid>
                                     </DataTemplate>
                                 </ListView.ItemTemplate>

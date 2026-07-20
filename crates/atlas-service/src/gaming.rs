@@ -10,6 +10,8 @@
 // helpers so metadata and transport semantics are preserved at the boundary.
 #![allow(clippy::result_large_err)]
 
+mod frame_capture;
+
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -34,11 +36,13 @@ use atlas_store::{
     GameInstallRow, GameSessionRow, GameTraceBucketRow, GamingPlanRow, GamingPlanStepRow,
 };
 
+use frame_capture::{FrameCaptureSummary, PresentMonCapture, VALIDATION_LIMITATION};
+
 use crate::ipc::{QueryService, SharedStore};
 
 const KNOWLEDGE_JSON: &str = include_str!("../knowledge/gaming-pack-v1.json");
 const TOKEN_TTL_MS: i64 = 5 * 60 * 1000;
-const NO_FRAME_TIME_LIMITATION: &str = "Frame-time capture is unavailable until the embedded ETW path passes licensing, anti-cheat, and under-0.5%-CPU validation.";
+const NO_FRAME_TIME_LIMITATION: &str = "This session contains no measured frame data, so Atlas cannot report FPS or frame-time pacing for it.";
 
 #[derive(Debug, Deserialize)]
 struct KnowledgePack {
@@ -77,6 +81,13 @@ struct KnowledgeSource {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredInstallPayload {
+    limitations: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+struct StoredSessionPayload {
+    frame_summary: Option<FrameCaptureSummary>,
     limitations: Vec<String>,
 }
 
@@ -254,6 +265,7 @@ impl GamingService {
         let snapshot = self.query.latest_snapshot();
         let power_overlay = get_power_overlay_state();
         let running = game.running || game_is_running(&game, snapshot.as_ref());
+        let frame_capture = PresentMonCapture::capability();
 
         let mut capabilities = vec![
             GamingCapability {
@@ -264,8 +276,13 @@ impl GamingService {
             },
             GamingCapability {
                 id: "collector.frame-time".into(), name: "Frame-time capture".into(),
-                state: GamingCapabilityState::ValidationRequired as i32,
-                explanation: NO_FRAME_TIME_LIMITATION.into(), limitations: vec![NO_FRAME_TIME_LIMITATION.into()],
+                state: if frame_capture.runnable {
+                    GamingCapabilityState::ValidationRequired as i32
+                } else {
+                    GamingCapabilityState::Unavailable as i32
+                },
+                explanation: frame_capture.explanation,
+                limitations: frame_capture.limitations,
             },
             GamingCapability {
                 id: "collector.display-primary".into(), name: "Primary display mode".into(),
@@ -1312,21 +1329,32 @@ impl AtlasGamingControl for GamingService {
                 session: None,
             }));
         };
+        let process_id = process.pid;
+        let process_create_time = process.create_time_100ns;
         let config_hash = self.current_configuration_hash(&game.id, objective)?;
         let start = now_ms();
+        let frame_capability = PresentMonCapture::capability();
+        let initial_payload = StoredSessionPayload {
+            frame_summary: None,
+            limitations: if frame_capability.runnable {
+                vec![VALIDATION_LIMITATION.into()]
+            } else {
+                frame_capability.limitations.clone()
+            },
+        };
         let row = GameSessionRow {
             id: 0,
             game_id: game.id.clone(),
             objective: objective as i32,
-            process_id: process.pid,
-            process_create_time: process.create_time_100ns,
+            process_id,
+            process_create_time,
             start_ms: start,
             end_ms: 0,
             capture_quality: GamingCaptureQuality::SystemOnly as i32,
             config_hash,
             applied_plan_id: req.applied_plan_id,
             comparable: false,
-            payload_json: "{}".into(),
+            payload_json: serde_json::to_string(&initial_payload).map_err(internal)?,
         };
         let id = self
             .store
@@ -1346,6 +1374,8 @@ impl AtlasGamingControl for GamingService {
                 game_thread,
                 id,
                 req.applied_plan_id,
+                process_id,
+                start,
                 stop_thread,
             )
         });
@@ -1366,7 +1396,16 @@ impl AtlasGamingControl for GamingService {
             .get_game_session(id)
             .map_err(internal)?
             .expect("inserted gaming session");
-        Ok(Response::new(StartGamingSessionReply { started: true, message: "Recording synchronized system evidence. Frame-time lanes remain unavailable until ETW validation passes.".into(), session: Some(self.session_proto(&stored)?) }))
+        let message = if frame_capability.runnable {
+            "Recording system telemetry and attempting process-bound PresentMon FPS and frame times. If ETW permission is unavailable, Atlas will keep system evidence and report the frame gap instead of guessing."
+        } else {
+            "Recording synchronized system evidence. FPS capture is unavailable because the pinned PresentMon collector was not found or could not be verified."
+        };
+        Ok(Response::new(StartGamingSessionReply {
+            started: true,
+            message: message.into(),
+            session: Some(self.session_proto(&stored)?),
+        }))
     }
 
     async fn stop_gaming_session(
@@ -1398,7 +1437,21 @@ impl AtlasGamingControl for GamingService {
                 session: None,
             }));
         };
-        Ok(Response::new(StopGamingSessionReply { stopped: true, message: "Session stopped. It contains system evidence only and cannot prove an FPS improvement.".into(), session: Some(self.session_proto(&row)?) }))
+        let session = self.session_proto(&row)?;
+        let message = if session
+            .summary
+            .as_ref()
+            .is_some_and(|summary| summary.average_fps > 0.0)
+        {
+            "Session stopped. Measured FPS and frame-time evidence is attached. It remains diagnostic until the validation gate passes."
+        } else {
+            "Session stopped. System evidence was saved, but no usable game-frame samples were captured."
+        };
+        Ok(Response::new(StopGamingSessionReply {
+            stopped: true,
+            message: message.into(),
+            session: Some(session),
+        }))
     }
 }
 
@@ -1632,11 +1685,19 @@ fn collect_session_loop(
     game: GameInstall,
     session_id: i64,
     plan_id: i64,
+    process_id: u32,
+    started_ms: i64,
     stop: Arc<AtomicBool>,
 ) {
     let mut game_seen = false;
+    let (mut frame_capture, mut frame_limitations) =
+        match PresentMonCapture::start(process_id, session_id, started_ms) {
+            Ok(capture) => (Some(capture), Vec::new()),
+            Err(reason) => (None, vec![reason]),
+        };
     while !stop.load(Ordering::SeqCst) {
         let now = now_ms();
+        let bucket_ts = (now / 1_000) * 1_000;
         let snapshot = query.latest_snapshot();
         let running = game_is_running(&game, snapshot.as_ref());
         if running {
@@ -1661,7 +1722,7 @@ fn collect_session_loop(
                 .count();
             let bucket = GameTraceBucketRow {
                 session_id,
-                ts_ms: now,
+                ts_ms: bucket_ts,
                 frame_time_ms: 0.0,
                 cpu_percent: system.map(|s| s.cpu_permille as f64 / 10.0).unwrap_or(0.0),
                 gpu_percent: system.map(|s| s.gpu_permille as f64 / 10.0).unwrap_or(0.0),
@@ -1684,7 +1745,7 @@ fn collect_session_loop(
         } else if let Ok(guard) = store.lock() {
             let _ = guard.upsert_game_trace_bucket(&GameTraceBucketRow {
                 session_id,
-                ts_ms: now,
+                ts_ms: bucket_ts,
                 frame_time_ms: 0.0,
                 cpu_percent: 0.0,
                 gpu_percent: 0.0,
@@ -1698,14 +1759,74 @@ fn collect_session_loop(
                 event_label: "System snapshot unavailable".into(),
             });
         }
+        if frame_capture
+            .as_mut()
+            .is_some_and(PresentMonCapture::enforce_raw_limit)
+        {
+            frame_limitations.push(
+                "Atlas stopped raw frame collection at its bounded safety limit; system telemetry continued."
+                    .into(),
+            );
+        }
         if game_seen && !running {
             break;
         }
         std::thread::sleep(Duration::from_secs(1));
     }
+
+    let frame_result = frame_capture
+        .take()
+        .map(PresentMonCapture::finish)
+        .unwrap_or_default();
+    frame_limitations.extend(frame_result.limitations.clone());
     if let Ok(guard) = store.lock() {
+        let existing = guard
+            .list_game_trace_buckets(session_id, 200_000)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|bucket| (bucket.ts_ms, bucket))
+            .collect::<HashMap<_, _>>();
+        for frame in &frame_result.buckets {
+            let mut bucket = existing
+                .get(&frame.ts_ms)
+                .cloned()
+                .unwrap_or(GameTraceBucketRow {
+                    session_id,
+                    ts_ms: frame.ts_ms,
+                    frame_time_ms: 0.0,
+                    cpu_percent: 0.0,
+                    gpu_percent: 0.0,
+                    vram_used_bytes: 0,
+                    ram_used_bytes: 0,
+                    temperature_c: 0.0,
+                    disk_bytes_per_sec: 0,
+                    background_processes: 0,
+                    incident: false,
+                    data_gap: true,
+                    event_label: "Frame evidence only; system sample unavailable".into(),
+                });
+            bucket.frame_time_ms = frame.frame_time_p95_ms;
+            bucket.incident |= frame.incident;
+            if frame.incident && !bucket.event_label.contains("Long-frame burst") {
+                if !bucket.event_label.is_empty() {
+                    bucket.event_label.push_str("; ");
+                }
+                bucket
+                    .event_label
+                    .push_str("Long-frame burst (50 ms or more)");
+            }
+            let _ = guard.upsert_game_trace_bucket(&bucket);
+        }
         if let Ok(Some(mut row)) = guard.get_game_session(session_id) {
             row.end_ms = now_ms();
+            if frame_result.summary.is_some() {
+                row.capture_quality = GamingCaptureQuality::Partial as i32;
+            }
+            row.payload_json = serde_json::to_string(&StoredSessionPayload {
+                frame_summary: frame_result.summary,
+                limitations: deduplicate_strings(frame_limitations),
+            })
+            .unwrap_or_else(|_| "{}".into());
             let _ = guard.update_game_session(&row);
         }
     }
@@ -1765,19 +1886,46 @@ fn session_from_rows(
     buckets: &[GameTraceBucketRow],
 ) -> GameSession {
     let count = buckets.len().max(1) as f64;
+    let payload =
+        serde_json::from_str::<StoredSessionPayload>(&row.payload_json).unwrap_or_default();
+    let frame = payload.frame_summary.as_ref();
+    let mut limitations = payload.limitations;
+    if frame.is_none()
+        && !limitations
+            .iter()
+            .any(|value| value == NO_FRAME_TIME_LIMITATION)
+    {
+        limitations.push(NO_FRAME_TIME_LIMITATION.into());
+    }
+    let mut contention = Vec::new();
+    if buckets.iter().any(|bucket| bucket.cpu_percent >= 90.0) {
+        contention.push("System CPU usage reached 90% or more during the session.".into());
+    }
+    if buckets.iter().any(|bucket| bucket.gpu_percent >= 95.0) {
+        contention.push("GPU usage reached 95% or more during the session.".into());
+    }
     let summary = GameSessionSummary {
+        average_fps: frame.map(|value| value.average_fps).unwrap_or(0.0),
+        one_percent_low_fps: frame.map(|value| value.one_percent_low_fps).unwrap_or(0.0),
+        point_one_percent_low_fps: frame
+            .map(|value| value.point_one_percent_low_fps)
+            .unwrap_or(0.0),
+        frame_time_p50_ms: frame.map(|value| value.frame_time_p50_ms).unwrap_or(0.0),
+        frame_time_p95_ms: frame.map(|value| value.frame_time_p95_ms).unwrap_or(0.0),
+        frame_time_p99_ms: frame.map(|value| value.frame_time_p99_ms).unwrap_or(0.0),
+        long_frame_count: frame.map(|value| value.long_frame_count).unwrap_or(0),
         cpu_average_percent: buckets.iter().map(|b| b.cpu_percent).sum::<f64>() / count,
         gpu_average_percent: buckets.iter().map(|b| b.gpu_percent).sum::<f64>() / count,
         vram_peak_bytes: buckets.iter().map(|b| b.vram_used_bytes).max().unwrap_or(0),
         ram_peak_bytes: buckets.iter().map(|b| b.ram_used_bytes).max().unwrap_or(0),
         temperature_peak_c: buckets.iter().map(|b| b.temperature_c).fold(0.0, f64::max),
-        contention: if buckets.iter().any(|b| b.cpu_percent >= 90.0) {
-            vec!["System CPU usage reached 90% or more during the session.".into()]
-        } else {
-            Vec::new()
-        },
-        incidents: Vec::new(),
-        limitations: vec![NO_FRAME_TIME_LIMITATION.into()],
+        contention,
+        incidents: buckets
+            .iter()
+            .filter(|bucket| bucket.incident)
+            .map(|bucket| format!("Long-frame burst near {}.", bucket.ts_ms))
+            .collect(),
+        limitations: limitations.clone(),
         ..GameSessionSummary::default()
     };
     GameSession {
@@ -1793,7 +1941,7 @@ fn session_from_rows(
         configuration_snapshot_hash: row.config_hash.clone(),
         applied_plan_id: row.applied_plan_id,
         summary: Some(summary),
-        limitations: vec![NO_FRAME_TIME_LIMITATION.into()],
+        limitations,
         comparable: row.comparable,
     }
 }
@@ -1870,6 +2018,15 @@ fn bytes_text(bytes: u64) -> String {
     } else {
         format!("{:.1} GB", bytes as f64 / 1_073_741_824.0)
     }
+}
+fn deduplicate_strings(values: Vec<String>) -> Vec<String> {
+    let mut result = Vec::new();
+    for value in values {
+        if !value.is_empty() && !result.iter().any(|existing| existing == &value) {
+            result.push(value);
+        }
+    }
+    result
 }
 fn cpu_topology_text(device: &atlas_collectors::DeviceInfo) -> String {
     if device.heterogeneous {

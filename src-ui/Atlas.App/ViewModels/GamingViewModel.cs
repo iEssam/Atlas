@@ -9,6 +9,7 @@ namespace Atlas.App.ViewModels;
 
 public sealed record GamingTraceSummaryRow(
     string Time,
+    string Frame,
     string Cpu,
     string Gpu,
     string Memory,
@@ -87,6 +88,13 @@ public sealed partial class GamingViewModel : ObservableObject
     [ObservableProperty] private string _coverageSummary = "Sensor coverage will appear after the ready check.";
     [ObservableProperty] private string _traceSummaryText = "No gaming session selected.";
     [ObservableProperty] private string _traceEmptyMessage = "Record or select a session to populate the synchronized trace.";
+    [ObservableProperty] private string _performanceTitle = "No measured game performance";
+    [ObservableProperty] private string _averageFps = "Not captured";
+    [ObservableProperty] private string _onePercentLowFps = "Not captured";
+    [ObservableProperty] private string _frameTimeP95 = "Not captured";
+    [ObservableProperty] private string _longFrames = "Not captured";
+    [ObservableProperty] private string _performanceExplanation = "Select a recording to see whether Atlas captured real game frames or system telemetry only.";
+    [ObservableProperty] private string _performanceEvidence = "Atlas never estimates FPS from CPU or GPU utilization.";
     [ObservableProperty] private long _activeSessionId;
 
     public bool HasSelectedGame => SelectedGame is not null;
@@ -127,6 +135,7 @@ public sealed partial class GamingViewModel : ObservableObject
         CancelTraceLoad();
         Trace.Clear();
         TraceSummary.Clear();
+        UpdatePerformanceSummary(value?.Session);
         if (value is null)
         {
             TraceEmptyMessage = Sessions.Count == 0
@@ -403,6 +412,7 @@ public sealed partial class GamingViewModel : ObservableObject
                 var bucket = Trace[index];
                 TraceSummary.Add(new GamingTraceSummaryRow(
                     DateTimeOffset.FromUnixTimeMilliseconds(bucket.TsMs).ToLocalTime().ToString("T"),
+                    bucket.FrameTimeMs > 0 ? $"{bucket.FrameTimeMs:F1} ms p95" : "Not captured",
                     $"{bucket.CpuPercent:F1}%",
                     $"{bucket.GpuPercent:F1}%",
                     FormatBytes(bucket.RamUsedBytes),
@@ -417,7 +427,10 @@ public sealed partial class GamingViewModel : ObservableObject
             else
             {
                 TraceEmptyMessage = string.Empty;
-                TraceSummaryText = $"{Trace.Count} synchronized system samples. Frame-time evidence is unavailable until the ETW validation gate passes.";
+                var frameBuckets = Trace.Count(bucket => bucket.FrameTimeMs > 0);
+                TraceSummaryText = frameBuckets > 0
+                    ? $"{Trace.Count} synchronized system samples; {frameBuckets} seconds include measured frame-time evidence."
+                    : $"{Trace.Count} synchronized system samples. This recording contains no measured game frames.";
             }
         }
         catch (OperationCanceledException)
@@ -502,6 +515,55 @@ public sealed partial class GamingViewModel : ObservableObject
     }
 
     private static string FormatBytes(ulong bytes) => bytes == 0 ? "Not reported" : $"{bytes / 1_073_741_824.0:F1} GB";
+
+    private void UpdatePerformanceSummary(GameSession? session)
+    {
+        var summary = session?.Summary;
+        if (session is null)
+        {
+            PerformanceTitle = "No measured game performance";
+            AverageFps = OnePercentLowFps = FrameTimeP95 = LongFrames = "Not captured";
+            PerformanceExplanation = "Select a recording to see whether Atlas captured real game frames or system telemetry only.";
+            PerformanceEvidence = "Atlas never estimates FPS from CPU or GPU utilization.";
+            return;
+        }
+
+        if (summary is null || summary.AverageFps <= 0)
+        {
+            PerformanceTitle = "System evidence only";
+            AverageFps = OnePercentLowFps = FrameTimeP95 = LongFrames = "Not captured";
+            PerformanceExplanation = "Atlas recorded CPU, GPU, memory, temperature, disk, and process activity, but no usable displayed-frame samples were attached. This session cannot describe FPS or pacing.";
+            PerformanceEvidence = session.Limitations.Count == 0
+                ? "No frame-capture limitation was returned."
+                : string.Join(" ", session.Limitations);
+            return;
+        }
+
+        PerformanceTitle = session.CaptureQuality == GamingCaptureQuality.FrameTimeValidated
+            ? "Validated game performance"
+            : "Measured game performance - diagnostic";
+        AverageFps = $"{summary.AverageFps:F1} FPS";
+        OnePercentLowFps = $"{summary.OnePercentLowFps:F1} FPS";
+        FrameTimeP95 = $"{summary.FrameTimeP95Ms:F1} ms";
+        LongFrames = $"{summary.LongFrameCount} at 50+ ms";
+
+        var lowRatio = summary.AverageFps > 0 ? summary.OnePercentLowFps / summary.AverageFps : 1.0;
+        if (summary.LongFrameCount > 0)
+        {
+            PerformanceExplanation = $"Atlas measured {summary.LongFrameCount} long frame{(summary.LongFrameCount == 1 ? string.Empty : "s")} at 50 ms or more. These are visible hitch candidates even if the average FPS looks high. Select the matching peaks in the trace and compare them with GPU, CPU, memory, temperature, disk, and background activity.";
+        }
+        else if (lowRatio < 0.75)
+        {
+            PerformanceExplanation = $"The 1% low is {Math.Round((1.0 - lowRatio) * 100):F0}% below the average. Frame delivery was less consistent during the slowest moments, so the average FPS alone overstates how smooth this session felt.";
+        }
+        else
+        {
+            PerformanceExplanation = "The slowest 1% stayed reasonably close to the average and no 50 ms long frames were measured. This is a pacing observation for this recording, not proof that a setting improved performance.";
+        }
+        PerformanceEvidence = session.CaptureQuality == GamingCaptureQuality.FrameTimeValidated
+            ? "Frame evidence passed the current validation gate and can be used in matched comparisons."
+            : "Frames came from process-bound PresentMon ETW with no injection. This build keeps the result diagnostic until anti-cheat compatibility and capture overhead pass the release gate.";
+    }
 
     private static string FriendlyCapture(GamingCaptureQuality quality) => quality switch
     {

@@ -91,6 +91,20 @@ public sealed partial class GamingPage : Page
         Grid.SetColumn(FindingsPane, wide ? 2 : 0);
         Grid.SetColumnSpan(ProofPane, 1);
         Grid.SetColumnSpan(FindingsPane, wide ? 1 : 2);
+
+        var compact = !wide && !medium;
+        MetricColumn1.Width = new GridLength(1, GridUnitType.Star);
+        MetricColumn2.Width = new GridLength(1, GridUnitType.Star);
+        MetricColumn3.Width = compact ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
+        MetricColumn4.Width = compact ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
+        Grid.SetRow(AverageMetric, 0);
+        Grid.SetColumn(AverageMetric, 0);
+        Grid.SetRow(LowMetric, 0);
+        Grid.SetColumn(LowMetric, 1);
+        Grid.SetRow(P95Metric, compact ? 1 : 0);
+        Grid.SetColumn(P95Metric, compact ? 0 : 2);
+        Grid.SetRow(LongFrameMetric, compact ? 1 : 0);
+        Grid.SetColumn(LongFrameMetric, compact ? 1 : 3);
     }
 
     private void Refresh_Click(object sender, RoutedEventArgs e) => _ = ViewModel.LoadAsync();

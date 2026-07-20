@@ -2,10 +2,33 @@
     x:Class="Atlas.App.Controls.GamingProofTrack"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <Grid MinHeight="260"
+    <Grid MinHeight="310"
           AutomationProperties.Name="Proof Track synchronized gaming trace"
-          AutomationProperties.HelpText="A synchronized plot of measured CPU, GPU, memory, temperature, and system events. An accessible summary table follows the plot.">
-        <Canvas x:Name="PlotCanvas" SizeChanged="PlotCanvas_SizeChanged">
+          AutomationProperties.HelpText="A synchronized plot with measured frame-time p95 above CPU, GPU, and memory activity. An accessible summary table follows the plot.">
+        <Grid x:Name="TraceContent" RowSpacing="8">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="110" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="170" />
+            </Grid.RowDefinitions>
+            <TextBlock x:Name="FrameStatusText"
+                       Text="Frame time was not captured for this recording"
+                       Style="{StaticResource CaptionTextBlockStyle}" />
+            <Canvas x:Name="FrameCanvas" Grid.Row="1" SizeChanged="PlotCanvas_SizeChanged">
+                <Polyline x:Name="FrameLine"
+                          Stroke="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                          StrokeThickness="2"
+                          StrokeLineJoin="Round" />
+                <Line x:Name="FrameLiveCursor"
+                      Stroke="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                      StrokeThickness="1"
+                      Visibility="Collapsed" />
+            </Canvas>
+            <TextBlock Grid.Row="2"
+                       Text="System activity: CPU in green, GPU in foreground, memory dashed"
+                       Style="{StaticResource CaptionTextBlockStyle}" />
+            <Canvas x:Name="PlotCanvas" Grid.Row="3" SizeChanged="PlotCanvas_SizeChanged">
             <Polyline x:Name="CpuLine"
                       Stroke="{ThemeResource SystemFillColorSuccessBrush}"
                       StrokeThickness="2"
@@ -23,7 +46,8 @@
                   Stroke="{ThemeResource AccentTextFillColorPrimaryBrush}"
                   StrokeThickness="1"
                   Visibility="Collapsed" />
-        </Canvas>
+            </Canvas>
+        </Grid>
         <TextBlock x:Name="EmptyText"
                    Text="{x:Bind EmptyMessage, Mode=OneWay}"
                    TextWrapping="Wrap"
