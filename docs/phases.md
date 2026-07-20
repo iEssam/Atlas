@@ -99,10 +99,10 @@ Until those gates close, System Atlas is a release candidate for evaluation, not
 
 ### M8 — Incidents, detectors, reports `[~]`
 
-- [x] Threshold+duration detectors (`detectors.rs`, pure tested core): CPU saturation (≥85% ≥10s), memory pressure (≥90% ≥10s); data gaps never merge runs; ongoing = end 0; schema v7 `incident` table, idempotent upsert. Live-verified with a real CPU incident. Disk latency deferred — no latency metric exists yet; reserved, never faked
+- [x] Always-on threshold+duration incident capture (`detectors.rs`): CPU saturation (≥85% ≥10s), memory pressure (≥90% ≥10s), GPU saturation (≥85% ≥10s), GPU-memory pressure (≥90% of reported budget ≥10s), explicit GPU thermal throttling (≥5s), and ACPI thermal-zone crossings against firmware-declared passive/critical trip points. The production recording pipeline owns CPU/GPU incidents; a bounded query-side worker isolates slower WMI thermal probes so they never block live publication. Gaps never merge runs and orderly shutdown closes ongoing rows. Incident rows themselves pin retained windows, so no duplicate bookmark is needed. Unsupported GPU/thermal sensors stay unknown. Disk latency remains deferred because no latency metric exists.
 - [x] Diagnostics engine (`diagnostics.rs`, evidence-only, no LLM): ranks factors by attribution share, maps to the PRD confidence ladder (insufficient/low/medium/high; crash-in-window ⇒ confirmed; temporal-overlap-only ⇒ low), emits alternatives + hedged recommendation/risk/reversibility/verification, returns available=false with a reason on thin evidence. Output explicitly labels factors "correlation, not proof" (PRD §3.2)
 - [x] Report export (`report.rs`): text/json/csv/html (self-contained, no external refs); single redactor pass before formatting so every format redacts identically (paths/command-lines/user/host). UI: Diagnostics page (calm confidence badges, first-class insufficient-evidence state) + report dialog with redaction toggles
-- [ ] Automatic incident recording windows / bookmark-on-detect and richer detectors (disk latency once a latency metric lands, GPU, thermal) — future
+- [x] Automatic incident windows and GPU/thermal detectors. Incident persistence is idempotent by `(kind,start_ms)` and automatically provides the retention pin. Disk latency remains the only reserved detector until a real latency metric lands.
 
 ### M9 — Hardening & packaging `[~]`
 

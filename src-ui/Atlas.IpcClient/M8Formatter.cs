@@ -34,6 +34,7 @@ public static class M8Formatter
         IncidentKind.GpuSaturation => "GPU saturation",
         IncidentKind.GpuMemoryExhaustion => "GPU memory pressure",
         IncidentKind.GpuThermalThrottling => "GPU thermal throttling",
+        IncidentKind.SystemThermalLimit => "System thermal limit",
         _ => "Incident",
     };
 
@@ -55,6 +56,7 @@ public static class M8Formatter
         IncidentKind.GpuSaturation => "GPU",
         IncidentKind.GpuMemoryExhaustion => "GPU memory",
         IncidentKind.GpuThermalThrottling => "GPU thermal state",
+        IncidentKind.SystemThermalLimit => "system thermal state",
         _ => "the resource",
     };
 
@@ -80,6 +82,8 @@ public static class M8Formatter
                 return string.Format(Inv, "Peaked at {0:0.#}% of the GPU memory budget", peakValue);
             case IncidentKind.GpuThermalThrottling:
                 return "Hardware reported thermal throttling";
+            case IncidentKind.SystemThermalLimit:
+                return string.Format(Inv, "Peaked at {0:0.#} °C", peakValue);
             default:
                 return string.Empty;
         }

@@ -815,6 +815,8 @@ impl AtlasQuery for FakeQuery {
                 name: "ACPI\\ThermalZone\\TZ00".into(),
                 celsius: 42.5,
                 source: "ACPI thermal zone (WMI)".into(),
+                passive_trip_celsius: 85.0,
+                critical_trip_celsius: 105.0,
             }],
         }))
     }

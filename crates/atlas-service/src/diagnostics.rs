@@ -27,7 +27,7 @@ use atlas_tsdb::{Metric, SYSTEM_SCOPE};
 
 use crate::detectors::{
     CPU_SATURATION_PCT, KIND_CPU_SATURATION, KIND_GPU_MEMORY_EXHAUSTION, KIND_GPU_SATURATION,
-    KIND_GPU_THERMAL_THROTTLING, KIND_MEMORY_PRESSURE, MEM_PRESSURE_PCT,
+    KIND_GPU_THERMAL_THROTTLING, KIND_MEMORY_PRESSURE, KIND_SYSTEM_THERMAL_LIMIT, MEM_PRESSURE_PCT,
 };
 
 /// Attribution at/above this share, sustained over most of the window, reaches
@@ -121,6 +121,7 @@ pub fn diagnose(
             | KIND_GPU_SATURATION
             | KIND_GPU_MEMORY_EXHAUSTION
             | KIND_GPU_THERMAL_THROTTLING
+            | KIND_SYSTEM_THERMAL_LIMIT
     ) {
         ctx.kind
     } else {
@@ -218,7 +219,10 @@ pub fn diagnose(
     for t in &tops {
         if matches!(
             kind,
-            KIND_GPU_SATURATION | KIND_GPU_MEMORY_EXHAUSTION | KIND_GPU_THERMAL_THROTTLING
+            KIND_GPU_SATURATION
+                | KIND_GPU_MEMORY_EXHAUSTION
+                | KIND_GPU_THERMAL_THROTTLING
+                | KIND_SYSTEM_THERMAL_LIMIT
         ) {
             continue; // no CPU/memory attribution is presented as GPU attribution
         }
@@ -424,6 +428,7 @@ fn observed_text(kind: i32, peak_value: f64, from: i64, to: i64) -> String {
         KIND_MEMORY_PRESSURE => "Memory",
         KIND_GPU_MEMORY_EXHAUSTION => "GPU memory",
         KIND_GPU_THERMAL_THROTTLING => "GPU thermal state",
+        KIND_SYSTEM_THERMAL_LIMIT => "System thermal state",
         KIND_GPU_SATURATION => "GPU",
         _ => "CPU",
     };
@@ -446,7 +451,14 @@ fn templates(kind: i32, top_name: Option<&str>, top_pid: u32) -> (String, String
         Some(name) => format!("{name} (pid {top_pid})"),
         None => "the top consumer".to_string(),
     };
-    if matches!(
+    if kind == KIND_SYSTEM_THERMAL_LIMIT {
+        (
+            "Let the system cool and check airflow. This incident uses the firmware thermal zone's own trip point; Atlas does not guess a universal safe temperature.".to_string(),
+            "Sustained thermal limiting can reduce performance. A critical firmware trip can precede hibernation or shutdown.".to_string(),
+            "Reversible - normal performance returns when firmware reports the zone below its trip point.".to_string(),
+            "Verify that the thermal-zone reading falls below its firmware-declared trip point and the incident resolves.".to_string(),
+        )
+    } else if matches!(
         kind,
         KIND_GPU_SATURATION | KIND_GPU_MEMORY_EXHAUSTION | KIND_GPU_THERMAL_THROTTLING
     ) {

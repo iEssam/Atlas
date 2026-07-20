@@ -388,6 +388,8 @@ pub struct QueryService {
     /// flag and are joined on shutdown.
     change_detector: Mutex<Option<std::thread::JoinHandle<()>>>,
     crash_scanner: Mutex<Option<std::thread::JoinHandle<()>>>,
+    /// Automatic incident capture owns blocking store/WMI work off the sampler.
+    incident_capture: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
 impl QueryService {
@@ -442,6 +444,15 @@ impl QueryService {
             }
         };
 
+        let (incident_tx, incident_rx) = std::sync::mpsc::sync_channel(8);
+        let incident_store = store.clone();
+        let incident_stop = stop.clone();
+        let incident_capture = std::thread::Builder::new()
+            .name("atlas-incident-capture".into())
+            .spawn(move || {
+                crate::detectors::run_live_capture(incident_rx, incident_stop, incident_store)
+            })?;
+
         let thread_slot = slot.clone();
         let thread_tx = tx.clone();
         let thread_stop = stop.clone();
@@ -449,7 +460,14 @@ impl QueryService {
         let sampler = std::thread::Builder::new()
             .name("atlas-ipc-sampler".into())
             .spawn(move || {
-                sampler_loop(thread_slot, thread_tx, thread_stop, ring, thread_engine)
+                sampler_loop(
+                    thread_slot,
+                    thread_tx,
+                    thread_stop,
+                    ring,
+                    thread_engine,
+                    incident_tx,
+                )
             })?;
 
         // R2 advanced privacy alerts: the ConsentStore change-watcher feeds
@@ -490,6 +508,7 @@ impl QueryService {
             privacy_eval: Mutex::new(Some(privacy_eval)),
             change_detector: Mutex::new(Some(change_detector)),
             crash_scanner: Mutex::new(Some(crash_scanner)),
+            incident_capture: Mutex::new(Some(incident_capture)),
         })
     }
 
@@ -515,6 +534,7 @@ impl QueryService {
             (&self.privacy_eval, "privacy-eval"),
             (&self.change_detector, "change-detector"),
             (&self.crash_scanner, "crash-scanner"),
+            (&self.incident_capture, "incident-capture"),
         ] {
             let handle = slot.lock().ok().and_then(|mut g| g.take());
             if let Some(h) = handle {
@@ -534,6 +554,7 @@ fn sampler_loop(
     stop: Arc<AtomicBool>,
     ring: Option<RingWriter>,
     engine: Arc<RulesEngine>,
+    incident_tx: std::sync::mpsc::SyncSender<crate::detectors::LiveFrame>,
 ) {
     let mut sampler = match Sampler::new() {
         Ok(s) => s,
@@ -551,6 +572,12 @@ fn sampler_loop(
                 // ledger; it never blocks the publish path meaningfully (same-user
                 // handle ops on a handful of matched processes).
                 engine.apply_tick(&set);
+
+                // Never block the sampler on WMI. The product service's record
+                // pipeline owns CPU/GPU incident detection; this worker adds
+                // the slower firmware thermal-zone probe without duplicating
+                // those incidents.
+                let _ = incident_tx.try_send(crate::detectors::LiveFrame { ts_ms: set.ts_ms });
 
                 let reply = to_reply(&set);
                 // Publish the top-N rows into the live ring (already CPU-sorted
@@ -1201,8 +1228,8 @@ impl AtlasQuery for QueryService {
         &self,
         req: Request<ListIncidentsRequest>,
     ) -> Result<Response<ListIncidentsReply>, Status> {
-        // Pure read of the incidents the record/writer path detected. Detection
-        // itself runs where the samples are written, not on the query path.
+        // Pure read of incidents captured by the always-on detector worker or
+        // the offline record/writer pass. Detection never runs on this query.
         let r = req.into_inner();
         let (from_ms, to_ms) = range_bounds(&r.range);
         let limit = if r.limit == 0 { 100 } else { r.limit };
@@ -2395,6 +2422,8 @@ fn thermal_to_proto(r: ThermalReading) -> GetThermalReply {
                 name: s.name,
                 celsius: s.celsius,
                 source: s.source,
+                passive_trip_celsius: s.passive_trip_celsius.unwrap_or(0.0),
+                critical_trip_celsius: s.critical_trip_celsius.unwrap_or(0.0),
             })
             .collect(),
     }

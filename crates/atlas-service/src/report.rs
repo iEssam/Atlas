@@ -259,6 +259,7 @@ pub(crate) fn kind_label(kind: i32) -> &'static str {
         Ok(IncidentKind::GpuSaturation) => "GPU saturation",
         Ok(IncidentKind::GpuMemoryExhaustion) => "GPU memory pressure",
         Ok(IncidentKind::GpuThermalThrottling) => "GPU thermal throttling",
+        Ok(IncidentKind::SystemThermalLimit) => "System thermal limit",
         _ => "Unspecified",
     }
 }

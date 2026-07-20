@@ -10,7 +10,7 @@ A Windows system intelligence and control application: one coherent replacement 
 
 - **Collection (user-mode only, no kernel driver — see [ADR-0001](docs/adr/0001-kernel-driver-decision-gate.md)):** ETW process/image events, `NtQuerySystemInformation`, SCM/services, registry & ConsentStore watchers, Restart Manager, GPU (D3DKMT + vendor libraries), battery, ACPI thermal via WMI, and per-process security metadata (Authenticode + cert chain, token privileges, mitigation policies).
 - **Storage:** SQLite (WAL) for entities/events plus a custom Gorilla-compressed time-series store with tiered T0/T1/T2 roll-ups that preserve peaks and honor bookmark pins.
-- **Intelligence:** threshold+duration incident detection (CPU saturation, memory pressure), evidence-based diagnosis with confidence-laddered contributing factors (no LLM), and a fully redacted support bundle.
+- **Intelligence:** always-on threshold+duration incident capture for CPU, memory, GPU load, GPU memory, explicit GPU thermal throttling, and firmware-declared ACPI thermal limits. Incident rows pin their own retained windows; unsupported sensors remain unknown rather than guessed. Diagnosis uses confidence-laddered evidence (no LLM), and support bundles are redacted.
 - **Control:** a rules engine (priority / affinity / EcoQoS) with guaranteed reversibility, named rule profiles, and a dynamic responsiveness-protection watchdog that dampens a runaway process and auto-restores it.
 - **Experiments:** save two evidence windows around a change and compare resource averages, peaks, threshold duration, process starts, crashes, and system changes with explicit data-quality and causation caveats.
 - **Privacy:** live camera / microphone / location usage alerts sourced from the ConsentStore.

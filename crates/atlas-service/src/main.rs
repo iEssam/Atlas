@@ -5527,6 +5527,10 @@ fn incident_kind_label(kind: i32) -> &'static str {
         detectors::KIND_CPU_SATURATION => "CPU saturation",
         detectors::KIND_MEMORY_PRESSURE => "Memory pressure",
         detectors::KIND_DISK_LATENCY => "Disk latency",
+        detectors::KIND_GPU_SATURATION => "GPU saturation",
+        detectors::KIND_GPU_MEMORY_EXHAUSTION => "GPU memory pressure",
+        detectors::KIND_GPU_THERMAL_THROTTLING => "GPU thermal throttling",
+        detectors::KIND_SYSTEM_THERMAL_LIMIT => "System thermal limit",
         _ => "unspecified",
     }
 }

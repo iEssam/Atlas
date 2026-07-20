@@ -540,6 +540,9 @@ enum IncidentKind {
   GPU_SATURATION = 4;
   GPU_MEMORY_EXHAUSTION = 5;
   GPU_THERMAL_THROTTLING = 6;
+  // A firmware thermal zone reached its own passive/critical trip point.
+  // Atlas never applies a universal guessed temperature threshold.
+  SYSTEM_THERMAL_LIMIT = 7;
 }
 
 enum Severity {
@@ -1171,6 +1174,9 @@ message ThermalSensor {
   double celsius = 2;
   // Where the reading came from (ACPI thermal zone, OEM WMI, ...).
   string source = 3;
+  // Firmware-declared ACPI trip points. Zero means not exposed/invalid.
+  double passive_trip_celsius = 4;
+  double critical_trip_celsius = 5;
 }
 
 message GetThermalRequest {}

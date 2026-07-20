@@ -38,7 +38,7 @@ use crate::ffi::{
     OPEN_EXISTING, PVOID, RPC_C_AUTHN_LEVEL_CALL, RPC_C_AUTHN_LEVEL_DEFAULT, RPC_C_AUTHN_WINNT,
     RPC_C_AUTHZ_NONE, RPC_C_IMP_LEVEL_IMPERSONATE, RPC_E_CHANGED_MODE, SP_DEVICE_INTERFACE_DATA,
     SP_DEVICE_INTERFACE_DETAIL_DATA_W, SYSTEM_POWER_STATUS, S_FALSE, S_OK, VARIANT, VT_I4,
-    WBEM_FLAG_FORWARD_ONLY, WBEM_FLAG_RETURN_IMMEDIATELY, WBEM_INFINITE,
+    WBEM_FLAG_FORWARD_ONLY, WBEM_FLAG_RETURN_IMMEDIATELY,
 };
 
 // ===========================================================================
@@ -340,6 +340,10 @@ pub struct ThermalSensor {
     pub celsius: f64,
     /// Where the reading came from (e.g. "ACPI thermal zone (WMI)").
     pub source: String,
+    /// Firmware-declared passive-cooling trip point, when valid.
+    pub passive_trip_celsius: Option<f64>,
+    /// Firmware-declared critical-shutdown trip point, when valid.
+    pub critical_trip_celsius: Option<f64>,
 }
 
 /// The thermal read result. Mirrors the proto `GetThermalReply`.
@@ -477,7 +481,9 @@ fn thermal_inner() -> ThermalReading {
         // SAFETY: enumerator valid; out-params live; one object per iteration.
         let hr = unsafe {
             let v = &**(enumerator as *const *const IEnumWbemClassObjectVtbl);
-            (v.Next)(enumerator, WBEM_INFINITE, 1, &mut obj, &mut returned)
+            // Bound each provider wait so a broken firmware/WMI provider cannot
+            // stall service shutdown indefinitely.
+            (v.Next)(enumerator, 2_000, 1, &mut obj, &mut returned)
         };
         if hr != S_OK || returned == 0 || obj.is_null() {
             break;
@@ -512,11 +518,25 @@ fn read_thermal_object(obj: PVOID) -> Option<ThermalSensor> {
         return None;
     }
     let name = get_str_prop(obj, "InstanceName").unwrap_or_else(|| "Thermal zone".to_string());
+    let passive_trip_celsius = thermal_kelvin_tenths(get_u32_prop(obj, "PassiveTripPoint"));
+    let critical_trip_celsius = thermal_kelvin_tenths(get_u32_prop(obj, "CriticalTripPoint"));
     Some(ThermalSensor {
         name,
         celsius: (celsius * 10.0).round() / 10.0,
         source: "ACPI thermal zone (WMI)".to_string(),
+        passive_trip_celsius,
+        critical_trip_celsius,
     })
+}
+
+/// Converts an optional tenths-of-Kelvin WMI value, rejecting zero and values
+/// outside the physically credible range. Firmware omissions stay `None`.
+fn thermal_kelvin_tenths(raw: Option<u32>) -> Option<f64> {
+    let raw = raw.filter(|value| *value != 0)?;
+    let celsius = raw as f64 / 10.0 - 273.15;
+    (-40.0..=200.0)
+        .contains(&celsius)
+        .then_some((celsius * 10.0).round() / 10.0)
 }
 
 /// Reads an integer WMI property via `IWbemClassObject::Get`.
@@ -653,5 +673,14 @@ mod tests {
         assert!((c - 39.95).abs() < 0.001);
         let rounded = (c * 10.0).round() / 10.0;
         assert_eq!(rounded, 40.0);
+    }
+
+    #[test]
+    fn firmware_trip_points_reject_missing_and_implausible_values() {
+        assert_eq!(thermal_kelvin_tenths(None), None);
+        assert_eq!(thermal_kelvin_tenths(Some(0)), None);
+        assert_eq!(thermal_kelvin_tenths(Some(3582)), Some(85.1));
+        assert_eq!(thermal_kelvin_tenths(Some(100)), None);
+        assert_eq!(thermal_kelvin_tenths(Some(6_000)), None);
     }
 }
