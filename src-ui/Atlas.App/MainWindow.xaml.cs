@@ -57,7 +57,8 @@ public sealed partial class MainWindow : Window
         }
         else if (string.Equals(startPage, "activity", StringComparison.OrdinalIgnoreCase)
             || string.Equals(startPage, "graphics", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(startPage, "experiments", StringComparison.OrdinalIgnoreCase))
+            || string.Equals(startPage, "experiments", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(startPage, "gaming", StringComparison.OrdinalIgnoreCase))
         {
             // A dormant development hook used by the unpackaged smoke test.
             // NavigationView applies its initial Overview selection after XAML
@@ -111,6 +112,17 @@ public sealed partial class MainWindow : Window
                 StringComparison.OrdinalIgnoreCase))
             {
                 ContentFrame.Navigate(typeof(ExperimentsPage));
+                return;
+            }
+            if (string.Equals(
+                Environment.GetEnvironmentVariable("ATLAS_START_PAGE"),
+                "gaming",
+                StringComparison.OrdinalIgnoreCase))
+            {
+                var gamingItem = Nav.MenuItems
+                    .OfType<NavigationViewItem>()
+                    .First(item => string.Equals(item.Tag as string, "gaming", StringComparison.Ordinal));
+                Nav.SelectedItem = gamingItem;
                 return;
             }
             string requestedSection = string.Equals(
@@ -176,6 +188,7 @@ public sealed partial class MainWindow : Window
         var pageType = tag switch
         {
             "overview" => typeof(OverviewPage),
+            "gaming" => typeof(GamingPage),
             "plugins" => typeof(PluginsPage),
             "settings" => typeof(SettingsPage),
             _ => null,

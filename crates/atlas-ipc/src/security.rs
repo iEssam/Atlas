@@ -32,6 +32,7 @@ type HLOCAL = *mut c_void;
 type PSID = *mut c_void;
 
 const TOKEN_QUERY: DWORD = 0x0008;
+const PROCESS_QUERY_LIMITED_INFORMATION: DWORD = 0x1000;
 const ERROR_INSUFFICIENT_BUFFER: DWORD = 122;
 const SDDL_REVISION_1: DWORD = 1;
 // TokenUser = 1 in the TOKEN_INFORMATION_CLASS enum.
@@ -54,6 +55,7 @@ struct TOKEN_USER {
 #[link(name = "kernel32")]
 extern "system" {
     fn GetCurrentProcess() -> HANDLE;
+    fn OpenProcess(dwDesiredAccess: DWORD, bInheritHandle: BOOL, dwProcessId: DWORD) -> HANDLE;
     fn CloseHandle(hObject: HANDLE) -> BOOL;
     fn LocalFree(hMem: HLOCAL) -> HLOCAL;
     fn GetLastError() -> DWORD;
@@ -160,7 +162,7 @@ impl Drop for SecurityDescriptor {
 
 /// Resolves the current process user's SID as an SDDL SID string (e.g.
 /// `S-1-5-21-...`).
-fn current_user_sid_string() -> io::Result<String> {
+pub fn current_user_sid_string() -> io::Result<String> {
     // SAFETY: pseudo-handle; OpenProcessToken duplicates a real token handle
     // into `token` which we close below.
     let mut token: HANDLE = ptr::null_mut();
@@ -204,6 +206,51 @@ fn current_user_sid_string() -> io::Result<String> {
     // SAFETY: token is a valid handle from OpenProcessToken.
     unsafe { CloseHandle(token) };
     result
+}
+
+/// Resolves the user SID for a connected client process. The caller supplies a
+/// PID obtained from the named-pipe server, never from untrusted RPC payload.
+pub fn process_user_sid_string(pid: u32) -> io::Result<String> {
+    let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if process.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    let mut token: HANDLE = ptr::null_mut();
+    let opened = unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) };
+    unsafe { CloseHandle(process) };
+    if opened == 0 || token.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    let result = token_user_sid_string(token);
+    unsafe { CloseHandle(token) };
+    result
+}
+
+fn token_user_sid_string(token: HANDLE) -> io::Result<String> {
+    let mut needed: DWORD = 0;
+    let sized =
+        unsafe { GetTokenInformation(token, TOKEN_USER_CLASS, ptr::null_mut(), 0, &mut needed) };
+    if sized == 0 {
+        let error = unsafe { GetLastError() };
+        if error != ERROR_INSUFFICIENT_BUFFER {
+            return Err(io::Error::from_raw_os_error(error as i32));
+        }
+    }
+    let mut buffer = vec![0u8; needed as usize];
+    let ok = unsafe {
+        GetTokenInformation(
+            token,
+            TOKEN_USER_CLASS,
+            buffer.as_mut_ptr().cast(),
+            needed,
+            &mut needed,
+        )
+    };
+    if ok == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let token_user = unsafe { &*(buffer.as_ptr() as *const TOKEN_USER) };
+    sid_to_string(token_user.Sid)
 }
 
 /// Converts a raw PSID into its `S-1-...` string form via

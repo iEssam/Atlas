@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('overview', 'activity', 'graphics', 'experiments')]
+    [ValidateSet('overview', 'activity', 'graphics', 'experiments', 'gaming')]
     [string]$StartPage = 'overview',
 
     [string]$ExpectedElementName = 'Overview',

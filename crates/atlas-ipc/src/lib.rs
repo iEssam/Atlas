@@ -36,6 +36,10 @@ pub use transport::{connect, default_pipe_name, pipe_name, serve, PipeConnectInf
 // atlas-ipc rather than pinning tonic/prost versions themselves.
 pub use v0::atlas_control_client::AtlasControlClient;
 pub use v0::atlas_control_server::{AtlasControl, AtlasControlServer};
+pub use v0::atlas_gaming_control_client::AtlasGamingControlClient;
+pub use v0::atlas_gaming_control_server::{AtlasGamingControl, AtlasGamingControlServer};
+pub use v0::atlas_gaming_query_client::AtlasGamingQueryClient;
+pub use v0::atlas_gaming_query_server::{AtlasGamingQuery, AtlasGamingQueryServer};
 pub use v0::atlas_plugins_client::AtlasPluginsClient;
 pub use v0::atlas_plugins_server::{AtlasPlugins, AtlasPluginsServer};
 pub use v0::atlas_query_client::AtlasQueryClient;

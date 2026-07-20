@@ -1789,6 +1789,7 @@ extern "system" {
 /// Battery / Balanced / Best Performance). Feature-flagged: an unresolved export
 /// degrades to a no-op (PRD §9.7.4).
 pub type PowerSetActiveOverlaySchemeFn = unsafe extern "system" fn(*const GUID) -> DWORD;
+pub type PowerGetActualOverlaySchemeFn = unsafe extern "system" fn(*mut GUID) -> DWORD;
 
 /// Power-overlay GUIDs (the "power mode" slider). The all-zero GUID selects the
 /// recommended/Balanced overlay.

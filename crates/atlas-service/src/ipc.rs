@@ -405,6 +405,13 @@ impl QueryService {
         self.engine.clone()
     }
 
+    /// Latest already-collected system snapshot for sibling first-party
+    /// services such as Gaming Intelligence. This never triggers a second
+    /// whole-system collection and returns `None` during startup.
+    pub fn latest_snapshot(&self) -> Option<SnapshotReply> {
+        self.slot.read().ok().and_then(|slot| slot.clone())
+    }
+
     /// Spawns the sampler thread and returns the service handle. The thread
     /// runs until [`QueryService::shutdown`] flips the stop flag (or the
     /// process exits).

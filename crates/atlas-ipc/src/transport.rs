@@ -17,6 +17,7 @@
 #![cfg(windows)]
 
 use std::io;
+use std::os::windows::io::AsRawHandle;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
@@ -32,6 +33,11 @@ const ERROR_PIPE_BUSY: i32 = 231;
 /// startup the client may dial before the first instance exists; retry until
 /// it appears (bounded by the dial deadline).
 const ERROR_FILE_NOT_FOUND: i32 = 2;
+
+#[link(name = "kernel32")]
+extern "system" {
+    fn GetNamedPipeClientProcessId(pipe: *mut std::ffi::c_void, client_pid: *mut u32) -> i32;
+}
 
 /// Builds the full pipe path for a given instance discriminator. The name is
 /// scoped by `\\.\pipe\SystemAtlas.dev.<who>` so parallel dev instances (and
@@ -56,6 +62,7 @@ pub fn default_pipe_name() -> String {
 /// it and provide trivial connection info.
 pub struct PipeConnection {
     inner: NamedPipeServer,
+    info: PipeConnectInfo,
 }
 
 /// Minimal connection info exposed through request extensions. Named pipes
@@ -63,13 +70,16 @@ pub struct PipeConnection {
 /// signature, tech-stack §4.5) is future work — the pipe DACL is the boundary
 /// today.
 #[derive(Clone, Debug, Default)]
-pub struct PipeConnectInfo;
+pub struct PipeConnectInfo {
+    pub client_pid: u32,
+    pub client_sid: String,
+}
 
 impl tonic::transport::server::Connected for PipeConnection {
     type ConnectInfo = PipeConnectInfo;
 
     fn connect_info(&self) -> Self::ConnectInfo {
-        PipeConnectInfo
+        self.info.clone()
     }
 }
 
@@ -170,9 +180,13 @@ where
                     return;
                 }
             };
+            let info = connected_client_info(&server);
             let connected = std::mem::replace(&mut server, next);
             if conn_tx
-                .send(Ok(PipeConnection { inner: connected }))
+                .send(Ok(PipeConnection {
+                    inner: connected,
+                    info,
+                }))
                 .await
                 .is_err()
             {
@@ -190,6 +204,19 @@ where
 
     accept.abort();
     Ok(())
+}
+
+fn connected_client_info(pipe: &NamedPipeServer) -> PipeConnectInfo {
+    let mut client_pid = 0u32;
+    let ok = unsafe { GetNamedPipeClientProcessId(pipe.as_raw_handle().cast(), &mut client_pid) };
+    if ok == 0 || client_pid == 0 {
+        return PipeConnectInfo::default();
+    }
+    let client_sid = crate::security::process_user_sid_string(client_pid).unwrap_or_default();
+    PipeConnectInfo {
+        client_pid,
+        client_sid,
+    }
 }
 
 /// Connects a tonic `Channel` to the named pipe `name`. Uses a

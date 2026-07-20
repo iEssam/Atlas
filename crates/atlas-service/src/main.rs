@@ -14,6 +14,8 @@ mod dynamic_protection;
 mod experiments;
 #[cfg(windows)]
 mod forensics;
+#[cfg(windows)]
+mod gaming;
 mod insights;
 #[cfg(windows)]
 mod ipc;
@@ -2343,7 +2345,10 @@ fn serve_loop(
     stop: Arc<AtomicBool>,
     duration: Option<u64>,
 ) -> Result<()> {
-    use atlas_ipc::{AtlasControlServer, AtlasPluginsServer, AtlasQueryServer, AtlasRulesServer};
+    use atlas_ipc::{
+        AtlasControlServer, AtlasGamingControlServer, AtlasGamingQueryServer, AtlasPluginsServer,
+        AtlasQueryServer, AtlasRulesServer,
+    };
 
     let pipe_disc = pipe.clone();
     let name = resolve_pipe_name(pipe);
@@ -2374,6 +2379,7 @@ fn serve_loop(
             handle.store(),
             sessions.clone(),
         ));
+        let gaming_svc = std::sync::Arc::new(gaming::GamingService::new(handle.clone())?);
         let store = handle.store();
         let router = tonic::transport::Server::builder()
             .add_service(plugins::PluginGuard::query(
@@ -2395,10 +2401,20 @@ fn serve_loop(
                 AtlasPluginsServer::from_arc(plugins_svc),
                 sessions.clone(),
                 store.clone(),
+            ))
+            .add_service(plugins::PluginGuard::query(
+                AtlasGamingQueryServer::from_arc(gaming_svc.clone()),
+                sessions.clone(),
+                store.clone(),
+            ))
+            .add_service(plugins::PluginGuard::mutating(
+                AtlasGamingControlServer::from_arc(gaming_svc),
+                sessions.clone(),
+                store.clone(),
             ));
 
-        tracing::info!(pipe = %name, "AtlasQuery + AtlasControl + AtlasRules + AtlasPlugins serving");
-        println!("Serving AtlasQuery + AtlasControl + AtlasRules + AtlasPlugins on {name}");
+        tracing::info!(pipe = %name, "AtlasQuery + AtlasControl + AtlasRules + AtlasPlugins + AtlasGaming serving");
+        println!("Serving AtlasQuery + AtlasControl + AtlasRules + AtlasPlugins + AtlasGaming on {name}");
 
         // Optional self-stop after `duration` seconds (verification path): flip
         // the shared stop flag so the shutdown future below fires cleanly.

@@ -500,6 +500,128 @@ CREATE TABLE IF NOT EXISTS experiment (
 CREATE INDEX IF NOT EXISTS ix_experiment_created ON experiment(created_ms DESC);
 "#;
 
+// Additive v17 Gaming Intelligence persistence. Payload columns retain the
+// versioned domain document while indexed columns keep common reads bounded.
+// Plan steps and before-state are separate rows so crash recovery can resume or
+// roll back in exact reverse order without trusting a restore point.
+const SCHEMA_V17_GAMING: &str = r#"
+CREATE TABLE IF NOT EXISTS game_install (
+    id                  TEXT PRIMARY KEY,
+    catalog_id          TEXT NOT NULL,
+    display_name        TEXT NOT NULL,
+    platform            INTEGER NOT NULL,
+    executable_path     TEXT NOT NULL,
+    executable_identity TEXT NOT NULL,
+    install_path        TEXT NOT NULL,
+    version             TEXT NOT NULL,
+    support_level       INTEGER NOT NULL,
+    last_seen_ms        INTEGER NOT NULL,
+    adapter_version     TEXT NOT NULL,
+    payload_json        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_game_install_seen ON game_install(last_seen_ms DESC);
+
+CREATE TABLE IF NOT EXISTS gaming_config_snapshot (
+    id          INTEGER PRIMARY KEY,
+    hash        TEXT NOT NULL UNIQUE,
+    game_id     TEXT NOT NULL,
+    captured_ms INTEGER NOT NULL,
+    payload_json TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS gaming_plan (
+    id             INTEGER PRIMARY KEY,
+    plan_hash      TEXT NOT NULL UNIQUE,
+    config_hash    TEXT NOT NULL,
+    game_id        TEXT NOT NULL,
+    objective      INTEGER NOT NULL,
+    status         INTEGER NOT NULL,
+    created_ms     INTEGER NOT NULL,
+    expires_ms     INTEGER NOT NULL,
+    checkpoint     TEXT NOT NULL,
+    payload_json   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_gaming_plan_created ON gaming_plan(created_ms DESC);
+
+CREATE TABLE IF NOT EXISTS gaming_plan_step (
+    plan_id           INTEGER NOT NULL REFERENCES gaming_plan(id) ON DELETE CASCADE,
+    step_id           TEXT NOT NULL,
+    ordinal           INTEGER NOT NULL,
+    kind              INTEGER NOT NULL,
+    risk_lane         INTEGER NOT NULL,
+    selected          INTEGER NOT NULL,
+    executable        INTEGER NOT NULL,
+    action_key        TEXT NOT NULL,
+    before_state_json TEXT NOT NULL,
+    execution_status  TEXT NOT NULL,
+    payload_json      TEXT NOT NULL,
+    PRIMARY KEY(plan_id, step_id)
+);
+CREATE INDEX IF NOT EXISTS ix_gaming_plan_step_order ON gaming_plan_step(plan_id, ordinal);
+
+CREATE TABLE IF NOT EXISTS gaming_execution (
+    id                INTEGER PRIMARY KEY,
+    plan_id           INTEGER NOT NULL,
+    step_id           TEXT NOT NULL,
+    ts_ms             INTEGER NOT NULL,
+    phase             TEXT NOT NULL,
+    success           INTEGER NOT NULL,
+    detail            TEXT NOT NULL,
+    before_state_json TEXT NOT NULL,
+    after_state_json  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_gaming_execution_plan ON gaming_execution(plan_id, id);
+
+CREATE TABLE IF NOT EXISTS gaming_rollback (
+    id        INTEGER PRIMARY KEY,
+    plan_id   INTEGER NOT NULL,
+    step_id   TEXT NOT NULL,
+    ts_ms     INTEGER NOT NULL,
+    success   INTEGER NOT NULL,
+    detail    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_gaming_rollback_plan ON gaming_rollback(plan_id, id);
+
+CREATE TABLE IF NOT EXISTS game_session (
+    id                  INTEGER PRIMARY KEY,
+    game_id             TEXT NOT NULL,
+    objective           INTEGER NOT NULL,
+    process_id          INTEGER NOT NULL,
+    process_create_time INTEGER NOT NULL,
+    start_ms            INTEGER NOT NULL,
+    end_ms              INTEGER NOT NULL,
+    capture_quality     INTEGER NOT NULL,
+    config_hash         TEXT NOT NULL,
+    applied_plan_id     INTEGER NOT NULL,
+    comparable          INTEGER NOT NULL,
+    payload_json        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_game_session_game ON game_session(game_id, start_ms DESC);
+
+CREATE TABLE IF NOT EXISTS game_trace_bucket (
+    session_id            INTEGER NOT NULL REFERENCES game_session(id) ON DELETE CASCADE,
+    ts_ms                 INTEGER NOT NULL,
+    frame_time_ms         REAL NOT NULL,
+    cpu_percent           REAL NOT NULL,
+    gpu_percent           REAL NOT NULL,
+    vram_used_bytes       INTEGER NOT NULL,
+    ram_used_bytes        INTEGER NOT NULL,
+    temperature_c         REAL NOT NULL,
+    disk_bytes_per_sec    INTEGER NOT NULL,
+    background_processes  INTEGER NOT NULL,
+    incident              INTEGER NOT NULL,
+    data_gap              INTEGER NOT NULL,
+    event_label           TEXT NOT NULL,
+    PRIMARY KEY(session_id, ts_ms)
+);
+
+CREATE TABLE IF NOT EXISTS game_adapter_version (
+    catalog_id    TEXT PRIMARY KEY,
+    version       TEXT NOT NULL,
+    updated_ms    INTEGER NOT NULL
+);
+"#;
+
 /// Whether `table` already has a column named `column`, via `PRAGMA table_info`.
 /// Used to make the v3 `ADD COLUMN` migration idempotent (SQLite lacks
 /// `ADD COLUMN IF NOT EXISTS`).
@@ -513,6 +635,62 @@ fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
         }
     }
     Ok(false)
+}
+
+fn game_install_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<GameInstallRow> {
+    Ok(GameInstallRow {
+        id: row.get(0)?,
+        catalog_id: row.get(1)?,
+        display_name: row.get(2)?,
+        platform: row.get(3)?,
+        executable_path: row.get(4)?,
+        executable_identity: row.get(5)?,
+        install_path: row.get(6)?,
+        version: row.get(7)?,
+        support_level: row.get(8)?,
+        last_seen_ms: row.get(9)?,
+        adapter_version: row.get(10)?,
+        payload_json: row.get(11)?,
+    })
+}
+
+fn gaming_plan_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<GamingPlanRow> {
+    Ok(GamingPlanRow {
+        id: row.get(0)?,
+        plan_hash: row.get(1)?,
+        config_hash: row.get(2)?,
+        game_id: row.get(3)?,
+        objective: row.get(4)?,
+        status: row.get(5)?,
+        created_ms: row.get(6)?,
+        expires_ms: row.get(7)?,
+        checkpoint: row.get(8)?,
+        payload_json: row.get(9)?,
+    })
+}
+
+fn game_session_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<GameSessionRow> {
+    Ok(GameSessionRow {
+        id: row.get(0)?,
+        game_id: row.get(1)?,
+        objective: row.get(2)?,
+        process_id: row.get(3)?,
+        process_create_time: row.get(4)?,
+        start_ms: row.get(5)?,
+        end_ms: row.get(6)?,
+        capture_quality: row.get(7)?,
+        config_hash: row.get(8)?,
+        applied_plan_id: row.get(9)?,
+        comparable: row.get::<_, i64>(10)? != 0,
+        payload_json: row.get(11)?,
+    })
+}
+
+fn to_sql_i64(value: u64) -> i64 {
+    value.min(i64::MAX as u64) as i64
+}
+fn from_sql_u64(value: i64) -> u64 {
+    value.max(0) as u64
 }
 
 #[derive(Debug, Clone)]
@@ -912,6 +1090,84 @@ impl Default for DynProtRow {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GameInstallRow {
+    pub id: String,
+    pub catalog_id: String,
+    pub display_name: String,
+    pub platform: i32,
+    pub executable_path: String,
+    pub executable_identity: String,
+    pub install_path: String,
+    pub version: String,
+    pub support_level: i32,
+    pub last_seen_ms: i64,
+    pub adapter_version: String,
+    pub payload_json: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GamingPlanRow {
+    pub id: i64,
+    pub plan_hash: String,
+    pub config_hash: String,
+    pub game_id: String,
+    pub objective: i32,
+    pub status: i32,
+    pub created_ms: i64,
+    pub expires_ms: i64,
+    pub checkpoint: String,
+    pub payload_json: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GamingPlanStepRow {
+    pub plan_id: i64,
+    pub step_id: String,
+    pub ordinal: u32,
+    pub kind: i32,
+    pub risk_lane: i32,
+    pub selected: bool,
+    pub executable: bool,
+    pub action_key: String,
+    pub before_state_json: String,
+    pub execution_status: String,
+    pub payload_json: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct GameSessionRow {
+    pub id: i64,
+    pub game_id: String,
+    pub objective: i32,
+    pub process_id: u32,
+    pub process_create_time: i64,
+    pub start_ms: i64,
+    pub end_ms: i64,
+    pub capture_quality: i32,
+    pub config_hash: String,
+    pub applied_plan_id: i64,
+    pub comparable: bool,
+    pub payload_json: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct GameTraceBucketRow {
+    pub session_id: i64,
+    pub ts_ms: i64,
+    pub frame_time_ms: f64,
+    pub cpu_percent: f64,
+    pub gpu_percent: f64,
+    pub vram_used_bytes: u64,
+    pub ram_used_bytes: u64,
+    pub temperature_c: f64,
+    pub disk_bytes_per_sec: u64,
+    pub background_processes: u32,
+    pub incident: bool,
+    pub data_gap: bool,
+    pub event_label: String,
+}
+
 pub struct Store {
     conn: Connection,
 }
@@ -1014,6 +1270,415 @@ impl Store {
                     driver_date: row.get(12)?,
                     first_seen_ms: row.get(13)?,
                     last_seen_ms: row.get(14)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub fn upsert_game_install(&self, game: &GameInstallRow) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO game_install
+                 (id, catalog_id, display_name, platform, executable_path,
+                  executable_identity, install_path, version, support_level,
+                  last_seen_ms, adapter_version, payload_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+             ON CONFLICT(id) DO UPDATE SET
+                 catalog_id=excluded.catalog_id, display_name=excluded.display_name,
+                 platform=excluded.platform, executable_path=excluded.executable_path,
+                 executable_identity=excluded.executable_identity,
+                 install_path=excluded.install_path, version=excluded.version,
+                 support_level=excluded.support_level, last_seen_ms=excluded.last_seen_ms,
+                 adapter_version=excluded.adapter_version, payload_json=excluded.payload_json",
+            params![
+                game.id,
+                game.catalog_id,
+                game.display_name,
+                game.platform,
+                game.executable_path,
+                game.executable_identity,
+                game.install_path,
+                game.version,
+                game.support_level,
+                game.last_seen_ms,
+                game.adapter_version,
+                game.payload_json,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_game_installs(&self) -> Result<Vec<GameInstallRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, catalog_id, display_name, platform, executable_path,
+                    executable_identity, install_path, version, support_level,
+                    last_seen_ms, adapter_version, payload_json
+             FROM game_install ORDER BY display_name, platform, id",
+        )?;
+        let rows = stmt
+            .query_map([], game_install_from_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub fn get_game_install(&self, id: &str) -> Result<Option<GameInstallRow>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT id, catalog_id, display_name, platform, executable_path,
+                    executable_identity, install_path, version, support_level,
+                    last_seen_ms, adapter_version, payload_json
+             FROM game_install WHERE id=?1",
+                params![id],
+                game_install_from_row,
+            )
+            .optional()?)
+    }
+
+    pub fn insert_gaming_config_snapshot(
+        &self,
+        hash: &str,
+        game_id: &str,
+        captured_ms: i64,
+        payload_json: &str,
+    ) -> Result<i64> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO gaming_config_snapshot(hash, game_id, captured_ms, payload_json)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![hash, game_id, captured_ms, payload_json],
+        )?;
+        Ok(self.conn.query_row(
+            "SELECT id FROM gaming_config_snapshot WHERE hash=?1",
+            params![hash],
+            |row| row.get(0),
+        )?)
+    }
+
+    pub fn insert_gaming_plan(
+        &mut self,
+        plan: &GamingPlanRow,
+        steps: &[GamingPlanStepRow],
+    ) -> Result<i64> {
+        let tx = self.conn.transaction()?;
+        tx.execute(
+            "INSERT INTO gaming_plan
+                 (plan_hash, config_hash, game_id, objective, status, created_ms,
+                  expires_ms, checkpoint, payload_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                plan.plan_hash,
+                plan.config_hash,
+                plan.game_id,
+                plan.objective,
+                plan.status,
+                plan.created_ms,
+                plan.expires_ms,
+                plan.checkpoint,
+                plan.payload_json
+            ],
+        )?;
+        let id = tx.last_insert_rowid();
+        for step in steps {
+            tx.execute(
+                "INSERT INTO gaming_plan_step
+                     (plan_id, step_id, ordinal, kind, risk_lane, selected, executable,
+                      action_key, before_state_json, execution_status, payload_json)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    id,
+                    step.step_id,
+                    step.ordinal,
+                    step.kind,
+                    step.risk_lane,
+                    step.selected as i64,
+                    step.executable as i64,
+                    step.action_key,
+                    step.before_state_json,
+                    step.execution_status,
+                    step.payload_json
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(id)
+    }
+
+    pub fn get_gaming_plan(&self, id: i64) -> Result<Option<GamingPlanRow>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT id, plan_hash, config_hash, game_id, objective, status,
+                    created_ms, expires_ms, checkpoint, payload_json
+             FROM gaming_plan WHERE id=?1",
+                params![id],
+                gaming_plan_from_row,
+            )
+            .optional()?)
+    }
+
+    pub fn find_gaming_plan_by_hash(&self, hash: &str) -> Result<Option<GamingPlanRow>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT id, plan_hash, config_hash, game_id, objective, status,
+                    created_ms, expires_ms, checkpoint, payload_json
+             FROM gaming_plan WHERE plan_hash=?1",
+                params![hash],
+                gaming_plan_from_row,
+            )
+            .optional()?)
+    }
+
+    pub fn list_gaming_plans_with_statuses(&self, statuses: &[i32]) -> Result<Vec<GamingPlanRow>> {
+        if statuses.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders = (1..=statuses.len())
+            .map(|index| format!("?{index}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "SELECT id, plan_hash, config_hash, game_id, objective, status,
+                    created_ms, expires_ms, checkpoint, payload_json
+             FROM gaming_plan WHERE status IN ({placeholders}) ORDER BY id"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(
+                rusqlite::params_from_iter(statuses.iter()),
+                gaming_plan_from_row,
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub fn list_gaming_plan_steps(&self, plan_id: i64) -> Result<Vec<GamingPlanStepRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT plan_id, step_id, ordinal, kind, risk_lane, selected, executable,
+                    action_key, before_state_json, execution_status, payload_json
+             FROM gaming_plan_step WHERE plan_id=?1 ORDER BY ordinal",
+        )?;
+        let rows = stmt
+            .query_map(params![plan_id], |row| {
+                Ok(GamingPlanStepRow {
+                    plan_id: row.get(0)?,
+                    step_id: row.get(1)?,
+                    ordinal: row.get(2)?,
+                    kind: row.get(3)?,
+                    risk_lane: row.get(4)?,
+                    selected: row.get::<_, i64>(5)? != 0,
+                    executable: row.get::<_, i64>(6)? != 0,
+                    action_key: row.get(7)?,
+                    before_state_json: row.get(8)?,
+                    execution_status: row.get(9)?,
+                    payload_json: row.get(10)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub fn update_gaming_plan_status(
+        &self,
+        id: i64,
+        status: i32,
+        checkpoint: &str,
+        payload_json: &str,
+    ) -> Result<()> {
+        self.conn.execute(
+            "UPDATE gaming_plan SET status=?2, checkpoint=?3, payload_json=?4 WHERE id=?1",
+            params![id, status, checkpoint, payload_json],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_gaming_step_state(
+        &self,
+        plan_id: i64,
+        step_id: &str,
+        before_state_json: &str,
+        execution_status: &str,
+    ) -> Result<()> {
+        self.conn.execute(
+            "UPDATE gaming_plan_step SET before_state_json=?3, execution_status=?4
+             WHERE plan_id=?1 AND step_id=?2",
+            params![plan_id, step_id, before_state_json, execution_status],
+        )?;
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_gaming_execution(
+        &self,
+        plan_id: i64,
+        step_id: &str,
+        ts_ms: i64,
+        phase: &str,
+        success: bool,
+        detail: &str,
+        before_state_json: &str,
+        after_state_json: &str,
+    ) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO gaming_execution(plan_id, step_id, ts_ms, phase, success, detail, before_state_json, after_state_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![plan_id, step_id, ts_ms, phase, success as i64, detail, before_state_json, after_state_json],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn record_gaming_rollback(
+        &self,
+        plan_id: i64,
+        step_id: &str,
+        ts_ms: i64,
+        success: bool,
+        detail: &str,
+    ) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO gaming_rollback(plan_id, step_id, ts_ms, success, detail)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![plan_id, step_id, ts_ms, success as i64, detail],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn insert_game_session(&self, session: &GameSessionRow) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO game_session
+                 (game_id, objective, process_id, process_create_time, start_ms, end_ms,
+                  capture_quality, config_hash, applied_plan_id, comparable, payload_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                session.game_id,
+                session.objective,
+                session.process_id,
+                session.process_create_time,
+                session.start_ms,
+                session.end_ms,
+                session.capture_quality,
+                session.config_hash,
+                session.applied_plan_id,
+                session.comparable as i64,
+                session.payload_json
+            ],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn update_game_session(&self, session: &GameSessionRow) -> Result<()> {
+        self.conn.execute(
+            "UPDATE game_session SET process_id=?2, process_create_time=?3, end_ms=?4,
+                    capture_quality=?5, comparable=?6, payload_json=?7 WHERE id=?1",
+            params![
+                session.id,
+                session.process_id,
+                session.process_create_time,
+                session.end_ms,
+                session.capture_quality,
+                session.comparable as i64,
+                session.payload_json
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_game_session(&self, id: i64) -> Result<Option<GameSessionRow>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT id, game_id, objective, process_id, process_create_time, start_ms,
+                    end_ms, capture_quality, config_hash, applied_plan_id, comparable, payload_json
+             FROM game_session WHERE id=?1",
+                params![id],
+                game_session_from_row,
+            )
+            .optional()?)
+    }
+
+    pub fn list_game_sessions(&self, game_id: &str, limit: u32) -> Result<Vec<GameSessionRow>> {
+        let max = limit.clamp(1, 500) as i64;
+        let sql_all = "SELECT id, game_id, objective, process_id, process_create_time, start_ms,
+                              end_ms, capture_quality, config_hash, applied_plan_id, comparable, payload_json
+                       FROM game_session ORDER BY start_ms DESC LIMIT ?1";
+        let sql_game = "SELECT id, game_id, objective, process_id, process_create_time, start_ms,
+                               end_ms, capture_quality, config_hash, applied_plan_id, comparable, payload_json
+                        FROM game_session WHERE game_id=?1 ORDER BY start_ms DESC LIMIT ?2";
+        if game_id.is_empty() {
+            let mut stmt = self.conn.prepare(sql_all)?;
+            return Ok(stmt
+                .query_map(params![max], game_session_from_row)?
+                .collect::<rusqlite::Result<Vec<_>>>()?);
+        }
+        let mut stmt = self.conn.prepare(sql_game)?;
+        let rows = stmt
+            .query_map(params![game_id, max], game_session_from_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub fn upsert_game_trace_bucket(&self, bucket: &GameTraceBucketRow) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO game_trace_bucket
+                 (session_id, ts_ms, frame_time_ms, cpu_percent, gpu_percent,
+                  vram_used_bytes, ram_used_bytes, temperature_c, disk_bytes_per_sec,
+                  background_processes, incident, data_gap, event_label)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+             ON CONFLICT(session_id, ts_ms) DO UPDATE SET
+                 frame_time_ms=excluded.frame_time_ms, cpu_percent=excluded.cpu_percent,
+                 gpu_percent=excluded.gpu_percent, vram_used_bytes=excluded.vram_used_bytes,
+                 ram_used_bytes=excluded.ram_used_bytes, temperature_c=excluded.temperature_c,
+                 disk_bytes_per_sec=excluded.disk_bytes_per_sec,
+                 background_processes=excluded.background_processes,
+                 incident=excluded.incident, data_gap=excluded.data_gap,
+                 event_label=excluded.event_label",
+            params![
+                bucket.session_id,
+                bucket.ts_ms,
+                bucket.frame_time_ms,
+                bucket.cpu_percent,
+                bucket.gpu_percent,
+                to_sql_i64(bucket.vram_used_bytes),
+                to_sql_i64(bucket.ram_used_bytes),
+                bucket.temperature_c,
+                to_sql_i64(bucket.disk_bytes_per_sec),
+                bucket.background_processes,
+                bucket.incident as i64,
+                bucket.data_gap as i64,
+                bucket.event_label
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_game_trace_buckets(
+        &self,
+        session_id: i64,
+        max_points: u32,
+    ) -> Result<Vec<GameTraceBucketRow>> {
+        let max = max_points.clamp(1, 20_000) as i64;
+        let mut stmt = self.conn.prepare(
+            "SELECT session_id, ts_ms, frame_time_ms, cpu_percent, gpu_percent,
+                    vram_used_bytes, ram_used_bytes, temperature_c, disk_bytes_per_sec,
+                    background_processes, incident, data_gap, event_label
+             FROM game_trace_bucket WHERE session_id=?1 ORDER BY ts_ms LIMIT ?2",
+        )?;
+        let rows = stmt
+            .query_map(params![session_id, max], |row| {
+                Ok(GameTraceBucketRow {
+                    session_id: row.get(0)?,
+                    ts_ms: row.get(1)?,
+                    frame_time_ms: row.get(2)?,
+                    cpu_percent: row.get(3)?,
+                    gpu_percent: row.get(4)?,
+                    vram_used_bytes: from_sql_u64(row.get(5)?),
+                    ram_used_bytes: from_sql_u64(row.get(6)?),
+                    temperature_c: row.get(7)?,
+                    disk_bytes_per_sec: from_sql_u64(row.get(8)?),
+                    background_processes: row.get(9)?,
+                    incident: row.get::<_, i64>(10)? != 0,
+                    data_gap: row.get::<_, i64>(11)? != 0,
+                    event_label: row.get(12)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -1125,6 +1790,10 @@ impl Store {
         if version < 16 {
             self.conn.execute_batch(SCHEMA_V16_EXPERIMENT)?;
             self.conn.execute_batch("PRAGMA user_version = 16;")?;
+        }
+        if version < 17 {
+            self.conn.execute_batch(SCHEMA_V17_GAMING)?;
+            self.conn.execute_batch("PRAGMA user_version = 17;")?;
         }
         // FTS5 objects are built (idempotently, IF NOT EXISTS) on every open
         // once the module is confirmed present, independent of user_version: a
@@ -3580,7 +4249,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 16, "migration walks v1 up to the current schema");
+        assert_eq!(version, 17, "migration walks v1 up to the current schema");
 
         store
             .write_self_sample(&SelfSampleRow {
@@ -3656,7 +4325,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 16, "migration walks a v2 db to the current schema");
+        assert_eq!(version, 17, "migration walks a v2 db to the current schema");
         assert!(column_exists(&store.conn, "process_instance", "exit_status").unwrap());
 
         // Pre-existing row survived and has a NULL exit_status.
@@ -3766,13 +4435,13 @@ mod tests {
     }
 
     #[test]
-    fn fresh_database_is_v16() {
+    fn fresh_database_is_v17() {
         let store = Store::open_in_memory().unwrap();
         let version: i64 = store
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 16);
+        assert_eq!(version, 17);
     }
 
     #[test]
@@ -3802,7 +4471,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 16);
+        assert_eq!(version, 17);
         for column in [
             "physical_adapter_index",
             "vendor_id",
@@ -4762,5 +5431,105 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].id, second_id);
         assert_eq!(rows[1].id, first_id);
+    }
+
+    #[test]
+    fn gaming_plan_and_trace_round_trip_with_recovery_status_query() {
+        let mut store = Store::open_in_memory().unwrap();
+        store
+            .upsert_game_install(&GameInstallRow {
+                id: "steam-cs2".into(),
+                catalog_id: "cs2".into(),
+                display_name: "Counter-Strike 2".into(),
+                platform: 1,
+                executable_path: r"C:\Games\cs2.exe".into(),
+                executable_identity: "cs2.exe".into(),
+                install_path: r"C:\Games".into(),
+                version: "1.0".into(),
+                support_level: 3,
+                last_seen_ms: 1_000,
+                adapter_version: "pilot-v1".into(),
+                payload_json: "{}".into(),
+            })
+            .unwrap();
+        let plan = GamingPlanRow {
+            id: 0,
+            plan_hash: "immutable-hash".into(),
+            config_hash: "before-hash".into(),
+            game_id: "steam-cs2".into(),
+            objective: 1,
+            status: 3,
+            created_ms: 2_000,
+            expires_ms: 3_000,
+            checkpoint: "applying".into(),
+            payload_json: "{}".into(),
+        };
+        let step = GamingPlanStepRow {
+            plan_id: 0,
+            step_id: "power".into(),
+            ordinal: 0,
+            kind: 2,
+            risk_lane: 1,
+            selected: true,
+            executable: true,
+            action_key: "power.overlay.high".into(),
+            before_state_json: r#"{"guid":"before"}"#.into(),
+            execution_status: "applying".into(),
+            payload_json: "{}".into(),
+        };
+        let plan_id = store.insert_gaming_plan(&plan, &[step]).unwrap();
+        let incomplete = store.list_gaming_plans_with_statuses(&[3, 6]).unwrap();
+        assert_eq!(
+            incomplete.iter().map(|row| row.id).collect::<Vec<_>>(),
+            vec![plan_id]
+        );
+        assert_eq!(
+            store.list_gaming_plan_steps(plan_id).unwrap()[0].action_key,
+            "power.overlay.high"
+        );
+
+        let session_id = store
+            .insert_game_session(&GameSessionRow {
+                id: 0,
+                game_id: "steam-cs2".into(),
+                objective: 1,
+                process_id: 730,
+                process_create_time: 99,
+                start_ms: 4_000,
+                end_ms: 0,
+                capture_quality: 1,
+                config_hash: "before-hash".into(),
+                applied_plan_id: plan_id,
+                comparable: false,
+                payload_json: "{}".into(),
+            })
+            .unwrap();
+        store
+            .upsert_game_trace_bucket(&GameTraceBucketRow {
+                session_id,
+                ts_ms: 4_001,
+                frame_time_ms: 0.0,
+                cpu_percent: 42.0,
+                gpu_percent: 77.0,
+                vram_used_bytes: 4,
+                ram_used_bytes: 8,
+                temperature_c: 65.0,
+                disk_bytes_per_sec: 16,
+                background_processes: 12,
+                incident: false,
+                data_gap: false,
+                event_label: String::new(),
+            })
+            .unwrap();
+        let trace = store.list_game_trace_buckets(session_id, 100).unwrap();
+        assert_eq!(trace.len(), 1);
+        assert_eq!(trace[0].gpu_percent, 77.0);
+        assert!(
+            !store
+                .get_game_session(session_id)
+                .unwrap()
+                .unwrap()
+                .comparable
+        );
     }
 }
