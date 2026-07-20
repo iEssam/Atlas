@@ -1,5 +1,5 @@
 {
-  "version": "2026.07.1",
+  "version": "2026.07.2",
   "reviewed_date": "2026-07-20",
   "rules": [
     {
@@ -154,6 +154,40 @@
       "rollback": "Restore the previous in-game value.",
       "verification": "Confirm the in-game diagnostic state and compare matched sessions.",
       "sources": [{"title":"Overwatch 2 with NVIDIA Reflex","uri":"https://www.nvidia.com/en-us/geforce/news/overwatch-2-out-now-geforce-rtx-reflex-high-fps/","publisher":"NVIDIA","reviewed_date":"2026-07-20"}]
+    },
+    {
+      "id": "rocket-league.native-diagnostics",
+      "catalog_ids": ["rocket-league"],
+      "condition": "always",
+      "severity": "opportunity",
+      "title": "Separate rendering delay from connection delay",
+      "observed": "Rocket League is installed, but Atlas cannot read the game's Performance or Network graph state from a recognized configuration adapter yet.",
+      "why_it_matters": "Rocket League exposes separate Frame, Game, Render, GPU, packet-loss, latency, and input-buffer signals. They help distinguish a slow frame on this PC from an unstable route or server symptom instead of calling every problem lag.",
+      "expected_benefit": "Clearer evidence when a stutter, delayed input, rubber-banding, or inconsistent match occurs.",
+      "tradeoff": "The in-game graph uses some screen space and still needs to be correlated with an Atlas session before drawing a conclusion.",
+      "risk_lane": "guided",
+      "action_key": "rocket-league.native-diagnostics",
+      "restart_requirement": "None; enable the graph from Settings > Interface before a measured session.",
+      "rollback": "Set Performance Graphs back to None and leave Connection Quality Indicators at the previous value.",
+      "verification": "Mark the incident in Atlas and compare its timestamp with Rocket League's Frame, Game, Render, GPU, loss, latency, and input-buffer readings.",
+      "sources": [{"title":"Rocket League performance and network graphs (PC Only)","uri":"https://www.epicgames.com/help/c-202300000001622/c-202300000001748/a202300000013148?lang=en-US","publisher":"Epic Games","reviewed_date":"2026-07-20"}]
+    },
+    {
+      "id": "rocket-league.video-experiment",
+      "catalog_ids": ["rocket-league"],
+      "condition": "always",
+      "severity": "opportunity",
+      "title": "Reduce only the graphics work that is missing the frame budget",
+      "observed": "Rocket League is installed, but its current video settings and sustainable frame-time budget have not been verified by Atlas.",
+      "why_it_matters": "Lower render quality can help when GPU time is late, while lowering visuals cannot fix a network-loss or game-thread problem. Atlas should identify the late lane before suggesting a quality tradeoff.",
+      "expected_benefit": "A controlled performance preset test can improve frame consistency when the GPU is the measured limit.",
+      "tradeoff": "Performance-oriented anti-aliasing, render, texture, world, and particle settings reduce image quality. A copied preset may provide no benefit when the GPU is not the bottleneck.",
+      "risk_lane": "advanced",
+      "action_key": "rocket-league.video-experiment",
+      "restart_requirement": "Start a fresh comparable session after changing one group of settings.",
+      "rollback": "Restore the prior in-game video values recorded before the experiment.",
+      "verification": "Compare matched sessions and keep the change only when the effect is outside the 5% noise band; three comparable sessions are required for a verified verdict.",
+      "sources": [{"title":"How do I adjust the in-game video settings in Rocket League?","uri":"https://www.epicgames.com/help/c-202300000001748/a202300000010466?lang=en-US","publisher":"Epic Games","reviewed_date":"2026-07-20"}]
     }
   ],
   "blocked_actions": ["bcd-timer-change","hpet-force","security-disable","defender-exclusion-broad","page-file-disable","real-time-priority","unsigned-input-driver","mass-service-disable","modified-windows-build","routine-cache-delete","arbitrary-command"]

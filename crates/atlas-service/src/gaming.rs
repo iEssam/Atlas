@@ -1928,6 +1928,23 @@ mod tests {
     }
 
     #[test]
+    fn rocket_league_rules_are_bundled_and_remain_non_executable_guidance() {
+        let pack: KnowledgePack = serde_json::from_str(KNOWLEDGE_JSON).expect("valid gaming pack");
+        let rules = pack
+            .rules
+            .iter()
+            .filter(|rule| rule.catalog_ids.iter().any(|id| id == "rocket-league"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(rules.len(), 2);
+        assert!(rules.iter().all(|rule| {
+            matches!(rule.risk_lane.as_str(), "guided" | "advanced")
+                && rule.action_key.starts_with("rocket-league.")
+                && !rule.sources.is_empty()
+        }));
+    }
+
+    #[test]
     fn comparison_noise_band_is_directionally_honest() {
         assert_eq!(median(vec![10.0, 12.0, 11.0]), 11.0);
         assert_eq!(median(vec![10.0, 12.0]), 11.0);

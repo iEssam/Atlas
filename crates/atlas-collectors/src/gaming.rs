@@ -19,7 +19,7 @@ use crate::ffi::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_WOW64_32KEY, KEY_WOW
 use crate::reg::RegKey;
 use crate::{read_version_info, verify_signature_info};
 
-pub const GAMING_ADAPTER_VERSION: &str = "1.0.0";
+pub const GAMING_ADAPTER_VERSION: &str = "1.2.0";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GamePlatform {
@@ -115,12 +115,17 @@ const PILOTS: &[Pilot] = &[
     Pilot {
         catalog_id: "apex-legends",
         display_name: "Apex Legends",
-        exe_names: &["r5apex.exe"],
+        exe_names: &["r5apex.exe", "r5apex_dx12.exe"],
     },
     Pilot {
         catalog_id: "overwatch",
         display_name: "Overwatch",
         exe_names: &["overwatch.exe"],
+    },
+    Pilot {
+        catalog_id: "rocket-league",
+        display_name: "Rocket League",
+        exe_names: &["rocketleague.exe"],
     },
 ];
 
@@ -163,17 +168,8 @@ pub fn discover_games() -> GameDiscoveryReport {
         },
     });
 
-    let riot_found = discover_known_roots(
-        GamePlatform::Riot,
-        scanned_ms,
-        &mut out,
-        &[
-            program_drive().join("Riot Games/VALORANT/live/VALORANT.exe"),
-            program_drive().join(
-                "Riot Games/VALORANT/live/ShooterGame/Binaries/Win64/VALORANT-Win64-Shipping.exe",
-            ),
-        ],
-    );
+    let riot_paths = riot_candidate_paths();
+    let riot_found = discover_known_roots(GamePlatform::Riot, scanned_ms, &mut out, &riot_paths);
     capabilities.push(DiscoveryCapability {
         id: "launcher.riot",
         available: riot_found > 0,
@@ -185,15 +181,8 @@ pub fn discover_games() -> GameDiscoveryReport {
         },
     });
 
-    let ea_found = discover_known_roots(
-        GamePlatform::Ea,
-        scanned_ms,
-        &mut out,
-        &[
-            program_files().join("EA Games/Apex/r5apex.exe"),
-            program_files().join("Electronic Arts/Apex/r5apex.exe"),
-        ],
-    );
+    let ea_paths = apex_candidate_paths();
+    let ea_found = discover_known_roots(GamePlatform::Ea, scanned_ms, &mut out, &ea_paths);
     capabilities.push(DiscoveryCapability {
         id: "launcher.ea",
         available: ea_found > 0,
@@ -310,8 +299,17 @@ fn discover_steam(roots: &[PathBuf], seen_ms: i64, out: &mut Vec<DiscoveredGame>
         let steamapps = root.join("steamapps");
         for (appid, pilot, relative_exes) in [
             ("730", PILOTS[0], &["game/bin/win64/cs2.exe"] as &[&str]),
-            ("1172470", PILOTS[3], &["r5apex.exe"] as &[&str]),
+            (
+                "1172470",
+                PILOTS[3],
+                &["r5apex_dx12.exe", "r5apex.exe"] as &[&str],
+            ),
             ("2357570", PILOTS[4], &["_retail_/Overwatch.exe"] as &[&str]),
+            (
+                "252950",
+                PILOTS[5],
+                &["Binaries/Win64/RocketLeague.exe"] as &[&str],
+            ),
         ] {
             let manifest_path = steamapps.join(format!("appmanifest_{appid}.acf"));
             let Ok(manifest) = fs::read_to_string(&manifest_path) else {
@@ -368,10 +366,9 @@ fn discover_epic(manifest_dir: &Path, seen_ms: i64, out: &mut Vec<DiscoveredGame
             continue;
         };
         let launch = manifest.launch_executable.unwrap_or_default();
-        let exe = PathBuf::from(&location).join(&launch);
-        if !exe.is_file() {
+        let Some(exe) = resolve_epic_executable(pilot, Path::new(&location), &launch) else {
             continue;
-        }
+        };
         push_game(
             out,
             pilot,
@@ -383,6 +380,104 @@ fn discover_epic(manifest_dir: &Path, seen_ms: i64, out: &mut Vec<DiscoveredGame
         );
     }
     out.len() - before
+}
+
+fn resolve_epic_executable(pilot: Pilot, install: &Path, advertised: &str) -> Option<PathBuf> {
+    let advertised = install.join(advertised);
+    if advertised.is_file()
+        && pilot_from_executable(&advertised)
+            .is_some_and(|matched| matched.catalog_id.eq_ignore_ascii_case(pilot.catalog_id))
+    {
+        return Some(advertised);
+    }
+
+    // Epic's Rocket League manifest currently advertises Launcher.exe. Atlas
+    // follows that bounded install root to the actual allowlisted game binary
+    // so running-state and session correlation use RocketLeague.exe.
+    let fallbacks: &[&str] = match pilot.catalog_id {
+        "fortnite" => &["FortniteGame/Binaries/Win64/FortniteClient-Win64-Shipping.exe"],
+        "rocket-league" => &["Binaries/Win64/RocketLeague.exe"],
+        _ => &[],
+    };
+    fallbacks
+        .iter()
+        .map(|relative| install.join(relative))
+        .find(|candidate| candidate.is_file())
+}
+
+fn riot_candidate_paths() -> Vec<PathBuf> {
+    let mut roots = BTreeSet::new();
+    roots.insert(program_drive().join("Riot Games/VALORANT/live"));
+    let metadata = program_data()
+        .join("Riot Games/Metadata/valorant.live/valorant.live.product_settings.yaml");
+    if let Ok(text) = fs::read_to_string(metadata) {
+        if let Some(root) = riot_install_root_from_metadata(&text) {
+            roots.insert(root);
+        }
+    }
+    roots
+        .into_iter()
+        .flat_map(|root| {
+            [
+                root.join("VALORANT.exe"),
+                root.join("ShooterGame/Binaries/Win64/VALORANT-Win64-Shipping.exe"),
+            ]
+        })
+        .collect()
+}
+
+fn riot_install_root_from_metadata(text: &str) -> Option<PathBuf> {
+    text.lines().find_map(|line| {
+        let (key, value) = line.split_once(':')?;
+        if !key.trim().eq_ignore_ascii_case("product_install_full_path") {
+            return None;
+        }
+        let value = value.trim().trim_matches('"');
+        (!value.is_empty()).then(|| PathBuf::from(value.replace('/', "\\")))
+    })
+}
+
+fn apex_candidate_paths() -> Vec<PathBuf> {
+    let mut roots = BTreeSet::from([
+        program_files().join("EA Games/Apex"),
+        program_files().join("Electronic Arts/Apex"),
+    ]);
+    for (root, view) in [
+        (HKEY_LOCAL_MACHINE, KEY_WOW64_32KEY),
+        (HKEY_LOCAL_MACHINE, KEY_WOW64_64KEY),
+        (HKEY_CURRENT_USER, 0),
+    ] {
+        let Some(uninstall) = RegKey::open(
+            root,
+            r"Software\Microsoft\Windows\CurrentVersion\Uninstall",
+            view,
+        ) else {
+            continue;
+        };
+        for name in uninstall.subkey_names().into_iter().take(4096) {
+            let Some(key) = uninstall.open_subkey(&name) else {
+                continue;
+            };
+            let is_apex = key
+                .get_value("DisplayName")
+                .and_then(|value| value.as_str().map(str::to_owned))
+                .is_some_and(|display| display.eq_ignore_ascii_case("Apex Legends"));
+            if !is_apex {
+                continue;
+            }
+            if let Some(location) = key
+                .get_value("InstallLocation")
+                .and_then(|value| value.as_str().map(str::to_owned))
+                .filter(|value| !value.trim().is_empty())
+            {
+                roots.insert(PathBuf::from(location));
+            }
+        }
+    }
+    roots
+        .into_iter()
+        .flat_map(|root| [root.join("r5apex_dx12.exe"), root.join("r5apex.exe")])
+        .collect()
 }
 
 fn discover_known_roots(
@@ -514,41 +609,63 @@ fn steam_paths_from_vdf(text: &str) -> Vec<PathBuf> {
 }
 
 fn quoted_pairs(text: &str) -> HashMap<String, String> {
-    all_quoted_pairs(text)
-        .into_iter()
-        .map(|(k, v)| (k.to_ascii_lowercase(), v))
-        .collect()
-}
-
-fn all_quoted_pairs(text: &str) -> Vec<(String, String)> {
-    let strings = quoted_strings(text);
-    strings
-        .chunks_exact(2)
-        .map(|pair| (pair[0].clone(), pair[1].clone()))
-        .collect()
+    let tokens = quoted_tokens(text);
+    let mut fields = HashMap::new();
+    let mut index = 0;
+    while index + 1 < tokens.len() {
+        let key = &tokens[index];
+        let value = &tokens[index + 1];
+        let separator = &text[key.end..value.start];
+        if separator.chars().all(char::is_whitespace) {
+            fields.insert(key.value.to_ascii_lowercase(), value.value.clone());
+            index += 2;
+        } else {
+            // A brace between quoted tokens means the first token names a VDF
+            // object (for example AppState), not a scalar key/value pair.
+            index += 1;
+        }
+    }
+    fields
 }
 
 fn quoted_strings(text: &str) -> Vec<String> {
-    let mut strings = Vec::new();
-    let mut chars = text.chars().peekable();
-    while let Some(c) = chars.next() {
+    quoted_tokens(text)
+        .into_iter()
+        .map(|token| token.value)
+        .collect()
+}
+
+struct QuotedToken {
+    value: String,
+    start: usize,
+    end: usize,
+}
+
+fn quoted_tokens(text: &str) -> Vec<QuotedToken> {
+    let mut tokens = Vec::new();
+    let mut chars = text.char_indices().peekable();
+    while let Some((start, c)) = chars.next() {
         if c != '"' {
             continue;
         }
         let mut value = String::new();
-        while let Some(next) = chars.next() {
+        let mut end = text.len();
+        while let Some((position, next)) = chars.next() {
             match next {
-                '"' => break,
-                '\\' if chars.peek() == Some(&'"') => {
+                '"' => {
+                    end = position + next.len_utf8();
+                    break;
+                }
+                '\\' if chars.peek().is_some_and(|(_, next)| *next == '"') => {
                     chars.next();
                     value.push('"');
                 }
                 other => value.push(other),
             }
         }
-        strings.push(value);
+        tokens.push(QuotedToken { value, start, end });
     }
-    strings
+    tokens
 }
 
 fn pilot_from_text(text: &str) -> Option<Pilot> {
@@ -645,8 +762,17 @@ fn program_data() -> PathBuf {
 
 fn program_drive() -> PathBuf {
     std::env::var_os("SystemDrive")
-        .map(PathBuf::from)
+        .map(|value| absolute_drive_root(&value.to_string_lossy()))
         .unwrap_or_else(|| PathBuf::from(r"C:\"))
+}
+
+fn absolute_drive_root(value: &str) -> PathBuf {
+    let value = value.trim().trim_end_matches(['\\', '/']);
+    if value.is_empty() {
+        PathBuf::from(r"C:\")
+    } else {
+        PathBuf::from(format!(r"{value}\"))
+    }
 }
 
 #[cfg(test)]
@@ -681,7 +807,149 @@ mod tests {
                 .catalog_id,
             "apex-legends"
         );
+        assert_eq!(
+            pilot_from_executable(Path::new(r"C:\Games\r5apex_dx12.exe"))
+                .unwrap()
+                .catalog_id,
+            "apex-legends"
+        );
         assert!(pilot_from_executable(Path::new(r"C:\Games\unknown.exe")).is_none());
+    }
+
+    #[test]
+    fn system_drive_is_normalized_to_an_absolute_root() {
+        assert_eq!(absolute_drive_root("C:"), PathBuf::from(r"C:\"));
+        assert_eq!(absolute_drive_root(r"D:\"), PathBuf::from(r"D:\"));
+    }
+
+    #[test]
+    fn riot_metadata_exposes_the_absolute_valorant_install_root() {
+        let metadata = r#"
+locale_data:
+  default_locale: "en_US"
+product_install_full_path: "D:/Riot Games/VALORANT/live"
+product_install_root: "D:/Riot Games"
+"#;
+        assert_eq!(
+            riot_install_root_from_metadata(metadata),
+            Some(PathBuf::from(r"D:\Riot Games\VALORANT\live"))
+        );
+    }
+
+    #[test]
+    fn rocket_league_is_allowlisted_for_epic_and_executable_discovery() {
+        let from_manifest = pilot_from_text("Rocket League® Live").expect("pilot manifest");
+        let from_executable = pilot_from_executable(Path::new(
+            r"D:\Games\rocketleague\Binaries\Win64\RocketLeague.exe",
+        ))
+        .expect("pilot executable");
+
+        assert_eq!(from_manifest.catalog_id, "rocket-league");
+        assert_eq!(from_executable.catalog_id, "rocket-league");
+        assert_eq!(from_executable.display_name, "Rocket League");
+    }
+
+    #[test]
+    fn discovers_an_installed_rocket_league_steam_manifest() {
+        let root = std::env::temp_dir().join(format!(
+            "atlas-rocket-league-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let steamapps = root.join("steamapps");
+        let exe = steamapps.join("common/rocketleague/Binaries/Win64/RocketLeague.exe");
+        fs::create_dir_all(exe.parent().expect("fixture parent")).expect("fixture directories");
+        fs::write(&exe, []).expect("fixture executable");
+        fs::write(
+            steamapps.join("appmanifest_252950.acf"),
+            r#""AppState" { "appid" "252950" "installdir" "rocketleague" "buildid" "12345" }"#,
+        )
+        .expect("fixture manifest");
+
+        let mut games = Vec::new();
+        assert_eq!(
+            discover_steam(std::slice::from_ref(&root), 42, &mut games),
+            1
+        );
+        assert_eq!(games[0].catalog_id, "rocket-league");
+        assert_eq!(games[0].platform, GamePlatform::Steam);
+        assert_eq!(games[0].version, "12345");
+        assert_eq!(games[0].support_level, GameSupportLevel::PilotReadOnly);
+
+        fs::remove_dir_all(root).expect("remove fixture");
+    }
+
+    #[test]
+    fn epic_rocket_league_manifest_resolves_launcher_to_game_binary() {
+        let root = std::env::temp_dir().join(format!(
+            "atlas-rocket-league-epic-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let manifests = root.join("manifests");
+        let install = root.join("rocketleague");
+        let launcher = install.join("Binaries/Win64/Launcher.exe");
+        let game = install.join("Binaries/Win64/RocketLeague.exe");
+        fs::create_dir_all(&manifests).expect("manifest directory");
+        fs::create_dir_all(launcher.parent().expect("launcher parent")).expect("install directory");
+        fs::write(&launcher, []).expect("launcher fixture");
+        fs::write(&game, []).expect("game fixture");
+        let manifest = serde_json::json!({
+            "DisplayName": "Rocket League®",
+            "InstallLocation": install,
+            "LaunchExecutable": "Binaries/Win64/Launcher.exe",
+            "AppVersionString": "test-build"
+        });
+        fs::write(
+            manifests.join("rocket-league.item"),
+            serde_json::to_vec(&manifest).expect("manifest JSON"),
+        )
+        .expect("manifest fixture");
+
+        let mut games = Vec::new();
+        assert_eq!(discover_epic(&manifests, 42, &mut games), 1);
+        assert_eq!(games[0].catalog_id, "rocket-league");
+        assert_eq!(games[0].platform, GamePlatform::Epic);
+        assert_eq!(games[0].executable_path, game);
+
+        fs::remove_dir_all(root).expect("remove fixture");
+    }
+
+    #[test]
+    fn epic_fortnite_manifest_resolves_bootstrapper_to_game_binary() {
+        let root = std::env::temp_dir().join(format!(
+            "atlas-fortnite-epic-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let manifests = root.join("manifests");
+        let install = root.join("Fortnite");
+        let binaries = install.join("FortniteGame/Binaries/Win64");
+        let bootstrapper = binaries.join("FortniteBootstrapper.exe");
+        let game = binaries.join("FortniteClient-Win64-Shipping.exe");
+        fs::create_dir_all(&manifests).expect("manifest directory");
+        fs::create_dir_all(&binaries).expect("install directory");
+        fs::write(&bootstrapper, []).expect("bootstrapper fixture");
+        fs::write(&game, []).expect("game fixture");
+        let manifest = serde_json::json!({
+            "DisplayName": "Fortnite",
+            "InstallLocation": install,
+            "LaunchExecutable": "FortniteGame/Binaries/Win64/FortniteBootstrapper.exe",
+            "AppVersionString": "test-build"
+        });
+        fs::write(
+            manifests.join("fortnite.item"),
+            serde_json::to_vec(&manifest).expect("manifest JSON"),
+        )
+        .expect("manifest fixture");
+
+        let mut games = Vec::new();
+        assert_eq!(discover_epic(&manifests, 42, &mut games), 1);
+        assert_eq!(games[0].catalog_id, "fortnite");
+        assert_eq!(games[0].platform, GamePlatform::Epic);
+        assert_eq!(games[0].executable_path, game);
+
+        fs::remove_dir_all(root).expect("remove fixture");
     }
 
     #[test]
