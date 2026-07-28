@@ -23,12 +23,12 @@ jobs:
       matrix:
         language: [csharp, rust]
     steps:
-      - uses: actions/checkout@v4
-      - uses: github/codeql-action/init@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: github/codeql-action/init@adfda868f108ac4222129de456ea554034a27db7 # v4
         with:
           languages: ${{ matrix.language }}
           build-mode: none
           queries: security-extended,security-and-quality
-      - uses: github/codeql-action/analyze@v4
+      - uses: github/codeql-action/analyze@adfda868f108ac4222129de456ea554034a27db7 # v4
         with:
           category: "/language:${{ matrix.language }}"

@@ -24,9 +24,9 @@ allow = [
 confidence-threshold = 0.93
 
 [licenses.private]
-# Atlas workspace crates are explicitly publish=false. Their eventual product
-# license is a release/legal decision, not something CI should invent.
-ignore = true
+# Workspace crates are private to the monorepo but carry the same declared
+# Apache-2.0 license as the complete project.
+ignore = false
 
 [bans]
 # Existing duplicates are visible debt, but not all can be collapsed by Atlas.

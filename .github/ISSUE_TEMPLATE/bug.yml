@@ -1,0 +1,95 @@
+name: Bug report
+description: Report a reproducible defect in System Atlas
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a problem. Search existing issues first.
+        For vulnerabilities, stop and use the private process in SECURITY.md.
+
+  - type: input
+    id: version
+    attributes:
+      label: System Atlas version
+      description: Release version or commit SHA
+      placeholder: v0.3.0-rc.1 or commit SHA
+    validations:
+      required: true
+
+  - type: dropdown
+    id: launch
+    attributes:
+      label: Installation or launch method
+      options:
+        - MSI release
+        - scripts/dev.ps1
+        - Direct cargo or dotnet command
+        - Other source build
+    validations:
+      required: true
+
+  - type: input
+    id: windows
+    attributes:
+      label: Windows environment
+      description: Edition, version, OS build, and architecture
+      placeholder: Windows 11 Pro 24H2, build 26100, x64
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      description: Provide the smallest reliable sequence that triggers the problem.
+      placeholder: |
+        1. Start...
+        2. Open...
+        3. Select...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Redacted evidence
+      description: |
+        Add logs, screenshots, or traces only after removing usernames, paths,
+        process arguments, tokens, and unrelated system information.
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Hardware, security software, Smart App Control state, or other relevant details.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Confirmation
+      options:
+        - label: I searched existing issues for this problem.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true
+        - label: I removed secrets and personal information from attached evidence.
+          required: true
+        - label: I agree to follow the Code of Conduct.
+          required: true

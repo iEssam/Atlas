@@ -44,6 +44,15 @@ docs/                   phase tracker, ADRs, release notes
 
 Requires stable **Rust** (MSVC toolchain, `winget install Rustlang.Rustup`) for the core, and the **.NET 10 SDK** (`winget install Microsoft.DotNet.SDK.10`) to build the WinUI app under `src-ui/`.
 
+To build and launch the complete development stack in one console:
+
+```powershell
+.\scripts\dev.ps1
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the complete environment,
+validation, pull request, and DCO sign-off requirements.
+
 ```powershell
 # live top-style view (1 s sampling)
 cargo run -p atlas-service -- top
@@ -108,3 +117,21 @@ Pull requests also build the x64 WinUI app, run both .NET test projects, and exe
 | [docs/adr/](docs/adr/README.md) | Architecture Decision Records |
 | [docs/releases/v0.3.0-rc.1.md](docs/releases/v0.3.0-rc.1.md) | Release notes |
 | [proto/atlas.proto](proto/atlas.proto) | IPC contract (package `atlas.v0`) |
+| [GOVERNANCE.md](GOVERNANCE.md) | Project decisions and maintainer responsibilities |
+
+## Contributing
+
+Issues and pull requests are welcome. Start with
+[CONTRIBUTING.md](CONTRIBUTING.md), follow the
+[Code of Conduct](CODE_OF_CONDUCT.md), and use the private process in
+[SECURITY.md](SECURITY.md) for vulnerabilities.
+
+The project is still an early release candidate. Small, testable changes are
+the easiest to review. Issues labeled `good first issue` or `help wanted` are
+the intended starting points for new contributors.
+
+## License
+
+System Atlas is licensed under the [Apache License 2.0](LICENSE).
+Third-party components retain their own licenses; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

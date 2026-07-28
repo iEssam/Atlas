@@ -20,6 +20,15 @@ obj/
 .idea/
 .vscode/
 
+# Secrets and signing material
+.env
+.env.*
+*.key
+*.pem
+*.pfx
+*.p12
+*.snk
+
 # OS noise
 Thumbs.db
 desktop.ini

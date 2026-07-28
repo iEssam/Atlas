@@ -1,5 +1,13 @@
 <Project>
   <PropertyGroup>
+    <!-- Shared open-source package metadata. -->
+    <Authors>Essam Alghamedi</Authors>
+    <Copyright>Copyright 2026 Essam Alghamedi</Copyright>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/iEssam/System-Atlas</PackageProjectUrl>
+    <RepositoryType>git</RepositoryType>
+    <RepositoryUrl>https://github.com/iEssam/System-Atlas.git</RepositoryUrl>
+
     <!-- Audit direct and transitive packages and make every advisory severity blocking. -->
     <NuGetAudit>true</NuGetAudit>
     <NuGetAuditMode>all</NuGetAuditMode>
