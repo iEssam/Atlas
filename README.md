@@ -6,6 +6,31 @@ A Windows system intelligence and control application: one coherent replacement 
 
 **Status:** the first release candidate, **[v0.3.0-rc.1](https://github.com/iEssam/System-Atlas/releases/tag/v0.3.0-rc.1)**, is published for evaluation with a per-machine MSI. The planned MVP, R2, and R3 feature slices are substantially implemented, but the project is **not production-ready**: the milestone tracker still contains open and deferred work, the release artifact is unsigned, and the stable distribution/update path is not complete. See [docs/current-state.md](docs/current-state.md) for the as-built baseline and [docs/phases.md](docs/phases.md) for implementation status and release gates.
 
+## See Atlas
+
+[![Atlas overview showing live system evidence, recent activity, top CPU consumers, and measured history](docs/screenshots/overview.png)](docs/screenshots/overview.png)
+
+<table>
+  <tr>
+    <td width="50%">
+      <a href="docs/screenshots/live-activity.png">
+        <img src="docs/screenshots/live-activity.png" alt="Atlas Live Activity showing measured process CPU, GPU, memory, and a selected process trace">
+      </a>
+    </td>
+    <td width="50%">
+      <a href="docs/screenshots/gaming.png">
+        <img src="docs/screenshots/gaming.png" alt="Atlas Gaming showing detected games, readiness evidence, frame pacing, and prioritized findings">
+      </a>
+    </td>
+  </tr>
+  <tr>
+    <td><strong>Live Activity</strong><br>Measured process positions and changes, with a live trace for the selected process.</td>
+    <td><strong>Gaming</strong><br>Reversible recommendations grounded in hardware checks and recorded frame evidence.</td>
+  </tr>
+</table>
+
+[Browse all seven full-resolution screenshots →](docs/screenshots/README.md)
+
 ## What it does
 
 - **Collection (user-mode only, no kernel driver — see [ADR-0001](docs/adr/0001-kernel-driver-decision-gate.md)):** ETW process/image events, `NtQuerySystemInformation`, SCM/services, registry & ConsentStore watchers, Restart Manager, GPU (D3DKMT + vendor libraries), battery, ACPI thermal via WMI, and per-process security metadata (Authenticode + cert chain, token privileges, mitigation policies).
