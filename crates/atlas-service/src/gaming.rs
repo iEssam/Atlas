@@ -132,6 +132,17 @@ struct ActiveSession {
     handle: Option<JoinHandle<()>>,
 }
 
+struct SessionLoopContext {
+    query: Arc<QueryService>,
+    store: SharedStore,
+    game: GameInstall,
+    session_id: i64,
+    plan_id: i64,
+    process_id: u32,
+    started_ms: i64,
+    stop: Arc<AtomicBool>,
+}
+
 pub struct GamingService {
     query: Arc<QueryService>,
     store: SharedStore,
@@ -1368,16 +1379,16 @@ impl AtlasGamingControl for GamingService {
         let store = self.store.clone();
         let game_thread = game.clone();
         let handle = std::thread::spawn(move || {
-            collect_session_loop(
+            collect_session_loop(SessionLoopContext {
                 query,
                 store,
-                game_thread,
-                id,
-                req.applied_plan_id,
+                game: game_thread,
+                session_id: id,
+                plan_id: req.applied_plan_id,
                 process_id,
-                start,
-                stop_thread,
-            )
+                started_ms: start,
+                stop: stop_thread,
+            })
         });
         self.sessions
             .lock()
@@ -1679,16 +1690,17 @@ fn rollback_step(store: &SharedStore, plan_id: i64, step: &GamingPlanStepRow) ->
     result.is_ok()
 }
 
-fn collect_session_loop(
-    query: Arc<QueryService>,
-    store: SharedStore,
-    game: GameInstall,
-    session_id: i64,
-    plan_id: i64,
-    process_id: u32,
-    started_ms: i64,
-    stop: Arc<AtomicBool>,
-) {
+fn collect_session_loop(context: SessionLoopContext) {
+    let SessionLoopContext {
+        query,
+        store,
+        game,
+        session_id,
+        plan_id,
+        process_id,
+        started_ms,
+        stop,
+    } = context;
     let mut game_seen = false;
     let (mut frame_capture, mut frame_limitations) =
         match PresentMonCapture::start(process_id, session_id, started_ms) {
