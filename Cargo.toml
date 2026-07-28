@@ -37,7 +37,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # serve_with_incoming + Connected transport surface this crate wires against.
 tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "io-util", "macros", "sync", "signal"] }
 tonic = "0.13"
-prost = "0.13"
+prost = "0.14"
 tower = "0.5"
 tokio-stream = "0.1"
 tonic-build = "0.13"
