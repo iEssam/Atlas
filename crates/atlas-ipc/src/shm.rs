@@ -830,7 +830,7 @@ mod tests {
                 // publishes at 1 Hz, not in an unthrottled spin. The invariant
                 // under test (no torn snapshot) holds regardless of the pause;
                 // the pause only affects how often a copy races a publish.
-                std::hint::spin_loop();
+                std::thread::yield_now();
             }
         });
 
