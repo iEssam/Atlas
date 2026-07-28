@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net10.0-windows10.0.19041": {
+      "CommunityToolkit.Mvvm": {
+        "type": "Direct",
+        "requested": "[8.4.0, )",
+        "resolved": "8.4.0",
+        "contentHash": "tqVU8yc/ADO9oiTRyTnwhFN68hCwvkliMierptWOudIAvWY1mWCh5VFh+guwHJmpMwfg0J0rY+yyd5Oy7ty9Uw=="
+      },
+      "Microsoft.Windows.SDK.BuildTools": {
+        "type": "Direct",
+        "requested": "[10.0.26100.1742, )",
+        "resolved": "10.0.26100.1742",
+        "contentHash": "ypcHjr4KEi6xQhgClnbXoANHcyyX/QsC4Rky4igs6M4GiDa+weegPo8JuV/VMxqrZCV4zlqDsp2krgkN7ReAAg=="
+      },
+      "Microsoft.WindowsAppSDK": {
+        "type": "Direct",
+        "requested": "[1.6.250205002, )",
+        "resolved": "1.6.250205002",
+        "contentHash": "zcOHaqII9erAmn3w3MP5rSmBzWf/IC8yU4nPCtwDquhy3vadW6Pm/0lOvnOCcZNN6TztPPODl9CQqDKSAGCeHQ==",
+        "dependencies": {
+          "Microsoft.Web.WebView2": "1.0.2651.64",
+          "Microsoft.Windows.SDK.BuildTools": "10.0.22621.756"
+        }
+      },
+      "Google.Protobuf": {
+        "type": "Transitive",
+        "resolved": "3.28.3",
+        "contentHash": "OewySX3aQCdKfMJsj2DzBMXQJPI+lm0CBzamU9ViFu3CU9tXYrQWqJ1CZ+/UWtkwOjUeIzbXmoOjRc7B8pbMrA=="
+      },
+      "Grpc.Core.Api": {
+        "type": "Transitive",
+        "resolved": "2.67.0",
+        "contentHash": "cL1/2f8kc8lsAGNdfCU25deedXVehhLA6GXKLLN4hAWx16XN7BmjYn3gFU+FBpir5yJynvDTHEypr3Tl0j7x/Q=="
+      },
+      "Grpc.Net.Client": {
+        "type": "Transitive",
+        "resolved": "2.67.0",
+        "contentHash": "ofTjJQfegWkVlk5R4k/LlwpcucpsBzntygd4iAeuKd/eLMkmBWoXN+xcjYJ5IibAahRpIJU461jABZvT6E9dwA==",
+        "dependencies": {
+          "Grpc.Net.Common": "2.67.0",
+          "Microsoft.Extensions.Logging.Abstractions": "6.0.0"
+        }
+      },
+      "Grpc.Net.Common": {
+        "type": "Transitive",
+        "resolved": "2.67.0",
+        "contentHash": "gazn1cD2Eol0/W5ZJRV4PYbNrxJ9oMs8pGYux5S9E4MymClvl7aqYSmpqgmWAUWvziRqK9K+yt3cjCMfQ3x/5A==",
+        "dependencies": {
+          "Grpc.Core.Api": "2.67.0"
+        }
+      },
+      "Microsoft.Extensions.Logging.Abstractions": {
+        "type": "Transitive",
+        "resolved": "6.0.0",
+        "contentHash": "/HggWBbTwy8TgebGSX5DBZ24ndhzi93sHUBDvP1IxbZD7FDokYzdAr6+vbWGjw2XAfR2EJ1sfKUotpjHnFWPxA=="
+      },
+      "Microsoft.Web.WebView2": {
+        "type": "Transitive",
+        "resolved": "1.0.2651.64",
+        "contentHash": "f5sc/vcAoTCTEW7Nqzp4galAuTRguZViw8ksn+Nx2uskEBPm0/ubzy6gVjvXS/P96jLS89C8T9I0hPc417xpNg=="
+      },
+      "atlas.ipcclient": {
+        "type": "Project",
+        "dependencies": {
+          "Google.Protobuf": "[3.28.3, )",
+          "Grpc.Net.Client": "[2.67.0, )"
+        }
+      }
+    },
+    "net10.0-windows10.0.19041/win-arm64": {
+      "Microsoft.WindowsAppSDK": {
+        "type": "Direct",
+        "requested": "[1.6.250205002, )",
+        "resolved": "1.6.250205002",
+        "contentHash": "zcOHaqII9erAmn3w3MP5rSmBzWf/IC8yU4nPCtwDquhy3vadW6Pm/0lOvnOCcZNN6TztPPODl9CQqDKSAGCeHQ==",
+        "dependencies": {
+          "Microsoft.Web.WebView2": "1.0.2651.64",
+          "Microsoft.Windows.SDK.BuildTools": "10.0.22621.756"
+        }
+      },
+      "Microsoft.Web.WebView2": {
+        "type": "Transitive",
+        "resolved": "1.0.2651.64",
+        "contentHash": "f5sc/vcAoTCTEW7Nqzp4galAuTRguZViw8ksn+Nx2uskEBPm0/ubzy6gVjvXS/P96jLS89C8T9I0hPc417xpNg=="
+      }
+    },
+    "net10.0-windows10.0.19041/win-x64": {
+      "Microsoft.WindowsAppSDK": {
+        "type": "Direct",
+        "requested": "[1.6.250205002, )",
+        "resolved": "1.6.250205002",
+        "contentHash": "zcOHaqII9erAmn3w3MP5rSmBzWf/IC8yU4nPCtwDquhy3vadW6Pm/0lOvnOCcZNN6TztPPODl9CQqDKSAGCeHQ==",
+        "dependencies": {
+          "Microsoft.Web.WebView2": "1.0.2651.64",
+          "Microsoft.Windows.SDK.BuildTools": "10.0.22621.756"
+        }
+      },
+      "Microsoft.Web.WebView2": {
+        "type": "Transitive",
+        "resolved": "1.0.2651.64",
+        "contentHash": "f5sc/vcAoTCTEW7Nqzp4galAuTRguZViw8ksn+Nx2uskEBPm0/ubzy6gVjvXS/P96jLS89C8T9I0hPc417xpNg=="
+      }
+    }
+  }
+}

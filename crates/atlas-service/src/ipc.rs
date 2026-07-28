@@ -32,39 +32,46 @@ use atlas_collectors::{
 use atlas_ipc::v0::atlas_query_server::AtlasQuery;
 use atlas_ipc::{
     BatteryStatus as ProtoBatteryStatus, Bookmark, BootRecord as ProtoBootRecord,
-    CapabilitiesReply, CapabilitiesRequest, CapabilityKind, CertInfo,
-    Connection as ProtoConnection, CrashRecord as ProtoCrashRecord, CreateBookmarkReply,
-    CreateBookmarkRequest, CreatePrivacyAlertRuleReply, CreatePrivacyAlertRuleRequest,
-    DeletePrivacyAlertRuleReply, DeletePrivacyAlertRuleRequest, DiagnoseReply, DiagnoseRequest,
-    EventRow, FindResourceOwnersReply, FindResourceOwnersRequest, FiredAlert, GenerateReportReply,
+    CapabilitiesReply, CapabilitiesRequest, CapabilityKind, CertInfo, CompareExperimentReply,
+    CompareExperimentRequest, Connection as ProtoConnection, CrashRecord as ProtoCrashRecord,
+    CreateBookmarkReply, CreateBookmarkRequest, CreateExperimentReply, CreateExperimentRequest,
+    CreatePrivacyAlertRuleReply, CreatePrivacyAlertRuleRequest, DeletePrivacyAlertRuleReply,
+    DeletePrivacyAlertRuleRequest, DiagnoseReply, DiagnoseRequest, EventRow, EvidenceItem,
+    Experiment as ProtoExperiment, ExperimentPeriodSummary, ExperimentVerdict,
+    FindResourceOwnersReply, FindResourceOwnersRequest, FiredAlert, GenerateReportReply,
     GenerateReportRequest, GetBatteryStatusReply, GetBatteryStatusRequest,
     GetSecurityMetadataReply, GetSecurityMetadataRequest, GetThermalReply, GetThermalRequest,
-    HandleRow, Incident, L4Protocol, ListBookmarksReply, ListBookmarksRequest, ListBootsReply,
-    ListBootsRequest, ListConnectionsReply, ListConnectionsRequest, ListCrashesReply,
-    ListCrashesRequest, ListEventsReply, ListEventsRequest, ListFiredAlertsReply,
-    ListFiredAlertsRequest, ListHandlesReply, ListHandlesRequest, ListIncidentsReply,
-    ListIncidentsRequest, ListListeningPortsReply, ListListeningPortsRequest, ListModulesReply,
-    ListModulesRequest, ListPrivacyAlertRulesReply, ListPrivacyAlertRulesRequest,
-    ListPrivacyEventsReply, ListPrivacyEventsRequest, ListPrivacyUsageReply,
-    ListPrivacyUsageRequest, ListScheduledTasksReply, ListScheduledTasksRequest, ListServicesReply,
-    ListServicesRequest, ListStartupReply, ListStartupRequest, ListSystemChangesReply,
-    ListSystemChangesRequest, ListThreadsReply, ListThreadsRequest,
-    ListeningPort as ProtoListeningPort, MetricKind, ModuleRow, PrivacyAlertRule, PrivacyEvent,
-    PrivacyUsage, ProcessDetail as ProtoProcessDetail, ProcessDetailReply, ProcessDetailRequest,
-    ProcessHit, ProcessRole, ProcessRow, QueryRangeReply, QueryRangeRequest, RangeBucket,
-    ReportFormat, ResourceOwner as ProtoResourceOwner, RingUpdate, RingWriter, RowInput,
-    ScheduledTask as ProtoScheduledTask, SearchHit, SearchReply, SearchRequest,
-    SecurityMetadata as ProtoSecurityMetadata, ServiceEntry, ServiceStartType, ServiceState,
-    SnapshotReply, SnapshotRequest, StartupEntry, StartupSource, SupportBundleReply,
+    GpuAdapterTelemetry, GpuAvailabilityReason, GpuEngineClass, GpuEngineTelemetry,
+    GpuSensorAvailability, GpuSensorKind, GpuTelemetrySource, GpuTemperatureKind,
+    GpuTemperatureTelemetry, GpuThrottleReason, HandleRow, Incident, IncidentKind, InsightStatus,
+    L4Protocol, ListBookmarksReply, ListBookmarksRequest, ListBootsReply, ListBootsRequest,
+    ListConnectionsReply, ListConnectionsRequest, ListCrashesReply, ListCrashesRequest,
+    ListEventsReply, ListEventsRequest, ListExperimentsReply, ListExperimentsRequest,
+    ListFiredAlertsReply, ListFiredAlertsRequest, ListHandlesReply, ListHandlesRequest,
+    ListIncidentsReply, ListIncidentsRequest, ListInsightsReply, ListInsightsRequest,
+    ListListeningPortsReply, ListListeningPortsRequest, ListModulesReply, ListModulesRequest,
+    ListPrivacyAlertRulesReply, ListPrivacyAlertRulesRequest, ListPrivacyEventsReply,
+    ListPrivacyEventsRequest, ListPrivacyUsageReply, ListPrivacyUsageRequest,
+    ListScheduledTasksReply, ListScheduledTasksRequest, ListServicesReply, ListServicesRequest,
+    ListStartupReply, ListStartupRequest, ListSystemChangesReply, ListSystemChangesRequest,
+    ListThreadsReply, ListThreadsRequest, ListeningPort as ProtoListeningPort, MetricKind,
+    ModuleRow, PrivacyAlertRule, PrivacyEvent, PrivacyUsage, ProcessDetail as ProtoProcessDetail,
+    ProcessDetailReply, ProcessDetailRequest, ProcessHit, ProcessRole, ProcessRow, QueryRangeReply,
+    QueryRangeRequest, RangeBucket, ReportFormat, ResourceOwner as ProtoResourceOwner, RingUpdate,
+    RingWriter, RowInput, ScheduledTask as ProtoScheduledTask, SearchHit, SearchReply,
+    SearchRequest, SecurityMetadata as ProtoSecurityMetadata, ServiceEntry, ServiceStartType,
+    ServiceState, SnapshotReply, SnapshotRequest, StartupEntry, StartupSource, SupportBundleReply,
     SupportBundleRequest, SystemChange as ProtoSystemChange, SystemGauges, TcpState,
     ThermalSensor as ProtoThermalSensor, ThreadRow, TimeRange, TokenPrivilege,
     UpdatePrivacyAlertRuleReply, UpdatePrivacyAlertRuleRequest, CAP_BATTERY_STATUS,
     CAP_BOOT_ANALYSIS, CAP_CRASH_ANALYSIS, CAP_DIAGNOSTICS, CAP_DYNAMIC_PROTECTION,
-    CAP_FTS5_SEARCH, CAP_HISTORY_QUERIES, CAP_INCIDENT_DETECTION, CAP_NETWORK_INSPECTOR,
-    CAP_PLUGINS, CAP_PRIVACY_ALERTS, CAP_PRIVACY_EVENTS, CAP_PROCESS_INSPECTOR,
-    CAP_PROCESS_SNAPSHOTS, CAP_PROFILES, CAP_REPORTS, CAP_RESOURCE_OWNERSHIP, CAP_RULES_ENGINE,
-    CAP_SAFE_ACTIONS, CAP_SCHEDULED_TASKS, CAP_SECURITY_METADATA, CAP_SERVICES_INVENTORY,
-    CAP_STARTUP_INVENTORY, CAP_SUPPORT_BUNDLE, CAP_SYSTEM_CHANGES, CAP_THERMAL_SENSORS, RING_ROWS,
+    CAP_EXPERIMENTS, CAP_FTS5_SEARCH, CAP_GPU_CORE_TELEMETRY, CAP_GPU_PROCESS_MEMORY,
+    CAP_GPU_RULE_TRIGGERS, CAP_GPU_VENDOR_SENSORS, CAP_GPU_WDDM_SENSORS, CAP_HISTORY_QUERIES,
+    CAP_INCIDENT_DETECTION, CAP_INSIGHTS, CAP_NETWORK_INSPECTOR, CAP_PLUGINS, CAP_PRIVACY_ALERTS,
+    CAP_PRIVACY_EVENTS, CAP_PROCESS_INSPECTOR, CAP_PROCESS_SNAPSHOTS, CAP_PROFILES, CAP_REPORTS,
+    CAP_RESOURCE_OWNERSHIP, CAP_RULES_ENGINE, CAP_SAFE_ACTIONS, CAP_SCHEDULED_TASKS,
+    CAP_SECURITY_METADATA, CAP_SERVICES_INVENTORY, CAP_STARTUP_INVENTORY, CAP_SUPPORT_BUNDLE,
+    CAP_SYSTEM_CHANGES, CAP_THERMAL_SENSORS, RING_ROWS,
 };
 
 use crate::diagnostics::{self, DiagnoseContext};
@@ -74,8 +81,10 @@ use crate::support_bundle::{
     self, BundleData, ConsumerRow, CrashesSection, DeviceSection, HealthSection, IncidentEntry,
     SelfMetricsSection,
 };
-use atlas_store::Store;
+use atlas_store::{ExperimentRow, Store};
 use atlas_tsdb::Metric;
+
+use crate::experiments::{self, PeriodEvidence, Verdict};
 
 /// Shared handle to the local store for the read path (history queries and
 /// bookmarks) and the broker's audit log. The writer/`record` path owns writes
@@ -97,6 +106,75 @@ fn role_to_proto(role: CollectorRole) -> i32 {
         CollectorRole::Service => ProcessRole::Service,
     };
     r as i32
+}
+
+fn gpu_source_to_proto(source: atlas_collectors::GpuTelemetrySource) -> i32 {
+    (match source {
+        atlas_collectors::GpuTelemetrySource::WindowsWddm => {
+            GpuTelemetrySource::GpuSourceWindowsWddm
+        }
+        atlas_collectors::GpuTelemetrySource::NvidiaNvml => GpuTelemetrySource::GpuSourceNvidiaNvml,
+    }) as i32
+}
+
+fn gpu_sensor_kind_to_proto(kind: atlas_collectors::GpuSensorKind) -> i32 {
+    use atlas_collectors::GpuSensorKind as C;
+    (match kind {
+        C::CoreTemperature => GpuSensorKind::GpuSensorCoreTemperature,
+        C::MemoryTemperature => GpuSensorKind::GpuSensorMemoryTemperature,
+        C::HotspotTemperature => GpuSensorKind::GpuSensorHotspotTemperature,
+        C::BoardTemperature => GpuSensorKind::GpuSensorBoardTemperature,
+        C::PowerWatts => GpuSensorKind::GpuSensorPowerWatts,
+        C::PowerPercent => GpuSensorKind::GpuSensorPowerPercent,
+        C::CoreClock => GpuSensorKind::GpuSensorCoreClock,
+        C::MemoryClock => GpuSensorKind::GpuSensorMemoryClock,
+        C::FanRpm => GpuSensorKind::GpuSensorFanRpm,
+        C::FanPercent => GpuSensorKind::GpuSensorFanPercent,
+        C::ThrottleReasons => GpuSensorKind::GpuSensorThrottleReasons,
+    }) as i32
+}
+
+fn gpu_availability_to_proto(reason: atlas_collectors::GpuAvailabilityReason) -> i32 {
+    use atlas_collectors::GpuAvailabilityReason as C;
+    (match reason {
+        C::None => GpuAvailabilityReason::GpuAvailabilityNone,
+        C::ProviderMissing => GpuAvailabilityReason::GpuAvailabilityProviderMissing,
+        C::HelperStartFailure => GpuAvailabilityReason::GpuAvailabilityHelperStartFailure,
+        C::HelperTimeout => GpuAvailabilityReason::GpuAvailabilityHelperTimeout,
+        C::HelperBackoff => GpuAvailabilityReason::GpuAvailabilityHelperBackoff,
+        C::StaleSample => GpuAvailabilityReason::GpuAvailabilityStaleSample,
+        C::UnsupportedMetric => GpuAvailabilityReason::GpuAvailabilityUnsupportedMetric,
+        C::IdentityUnmatched => GpuAvailabilityReason::GpuAvailabilityIdentityUnmatched,
+        C::DeviceLost => GpuAvailabilityReason::GpuAvailabilityDeviceLost,
+        C::DriverError => GpuAvailabilityReason::GpuAvailabilityDriverError,
+    }) as i32
+}
+
+fn gpu_temperature_kind_to_proto(kind: atlas_collectors::GpuTemperatureKind) -> i32 {
+    use atlas_collectors::GpuTemperatureKind as C;
+    (match kind {
+        C::Core => GpuTemperatureKind::GpuTemperatureCore,
+        C::Memory => GpuTemperatureKind::GpuTemperatureMemory,
+        C::Hotspot => GpuTemperatureKind::GpuTemperatureHotspot,
+        C::Board => GpuTemperatureKind::GpuTemperatureBoard,
+        C::Other => GpuTemperatureKind::GpuTemperatureOther,
+    }) as i32
+}
+
+fn gpu_throttle_to_proto(reason: atlas_collectors::GpuThrottleReason) -> i32 {
+    use atlas_collectors::GpuThrottleReason as C;
+    (match reason {
+        C::SoftwareThermal => GpuThrottleReason::GpuThrottleSoftwareThermal,
+        C::HardwareThermal => GpuThrottleReason::GpuThrottleHardwareThermal,
+        C::SoftwarePowerCap => GpuThrottleReason::GpuThrottleSoftwarePowerCap,
+        C::HardwareSlowdown => GpuThrottleReason::GpuThrottleHardwareSlowdown,
+        C::HardwarePowerBrake => GpuThrottleReason::GpuThrottleHardwarePowerBrake,
+        C::Idle => GpuThrottleReason::GpuThrottleIdle,
+        C::ApplicationClocks => GpuThrottleReason::GpuThrottleApplicationClocks,
+        C::SyncBoost => GpuThrottleReason::GpuThrottleSyncBoost,
+        C::DisplayClockSetting => GpuThrottleReason::GpuThrottleDisplayClockSetting,
+        C::Other => GpuThrottleReason::GpuThrottleOther,
+    }) as i32
 }
 
 /// Converts a collector [`SampleSet`] into the proto [`SnapshotReply`], sorted
@@ -140,6 +218,9 @@ fn to_reply(set: &SampleSet) -> SnapshotReply {
                 thread_count: p.thread_count,
                 app_group,
                 role,
+                gpu_permille: p.gpu_permille,
+                gpu_dedicated_bytes: p.gpu_dedicated_bytes,
+                gpu_shared_bytes: p.gpu_shared_bytes,
             }
         })
         .collect();
@@ -155,8 +236,105 @@ fn to_reply(set: &SampleSet) -> SnapshotReply {
             process_count: s.process_count,
             thread_count: s.thread_count,
             handle_count: s.handle_count,
+            gpu_permille: s.gpu_permille,
+            gpu_dedicated_used: s.gpu_dedicated_used,
+            gpu_dedicated_budget: s.gpu_dedicated_budget,
+            gpu_shared_used: s.gpu_shared_used,
+            gpu_shared_budget: s.gpu_shared_budget,
         }),
         processes,
+        gpu_adapters: set
+            .gpu
+            .adapters
+            .iter()
+            .map(|a| GpuAdapterTelemetry {
+                adapter_key: a.stable_key(),
+                name: a.name.clone(),
+                driver_version: a.driver_version.clone(),
+                active_display: a.active_display,
+                utilization_permille: a.utilization_permille,
+                dedicated_used: a.dedicated_used,
+                dedicated_budget: a.dedicated_budget,
+                shared_used: a.shared_used,
+                shared_budget: a.shared_budget,
+                engines: a
+                    .engines
+                    .iter()
+                    .map(|e| GpuEngineTelemetry {
+                        engine_class: match e.class {
+                            atlas_collectors::GpuEngineClass::ThreeD => {
+                                GpuEngineClass::GpuEngine3d as i32
+                            }
+                            atlas_collectors::GpuEngineClass::Compute => {
+                                GpuEngineClass::GpuEngineCompute as i32
+                            }
+                            atlas_collectors::GpuEngineClass::Copy => {
+                                GpuEngineClass::GpuEngineCopy as i32
+                            }
+                            atlas_collectors::GpuEngineClass::VideoEncode => {
+                                GpuEngineClass::GpuEngineVideoEncode as i32
+                            }
+                            atlas_collectors::GpuEngineClass::VideoDecode => {
+                                GpuEngineClass::GpuEngineVideoDecode as i32
+                            }
+                            atlas_collectors::GpuEngineClass::Other => {
+                                GpuEngineClass::GpuEngineOther as i32
+                            }
+                        },
+                        utilization_permille: e.utilization_permille,
+                    })
+                    .collect(),
+                temperature_c: a.temperature_c,
+                power_w: a.power_w,
+                core_clock_mhz: a.core_clock_mhz,
+                memory_clock_mhz: a.memory_clock_mhz,
+                fan_rpm: a.fan_rpm,
+                thermal_throttling: a.thermal_throttling,
+                sensor_source: a.sensor_source.clone(),
+                sensor_unavailable_reason: a.sensor_unavailable_reason.clone(),
+                vendor_id: a.vendor_id,
+                device_id: a.device_id,
+                physical_adapter_index: a.physical_index,
+                pci_domain: a.pci_domain,
+                pci_bus: a.pci_bus,
+                pci_device: a.pci_device,
+                pci_function: a.pci_function,
+                driver_date: a.driver_date.clone(),
+                power_percent: a.power_percent,
+                fan_percent: a.fan_percent,
+                temperature_warning_c: a.temperature_warning_c,
+                temperature_max_c: a.temperature_max_c,
+                temperatures: a
+                    .temperatures
+                    .iter()
+                    .map(|t| GpuTemperatureTelemetry {
+                        kind: gpu_temperature_kind_to_proto(t.kind),
+                        celsius: t.celsius,
+                        source: gpu_source_to_proto(t.source),
+                        label: t.label.clone(),
+                    })
+                    .collect(),
+                throttle_reasons: a
+                    .throttle_reasons
+                    .iter()
+                    .copied()
+                    .map(gpu_throttle_to_proto)
+                    .collect(),
+                sensor_availability: a
+                    .sensor_availability
+                    .iter()
+                    .map(|s| GpuSensorAvailability {
+                        kind: gpu_sensor_kind_to_proto(s.kind),
+                        available: s.available,
+                        source: gpu_source_to_proto(s.source),
+                        reason: gpu_availability_to_proto(s.reason),
+                        detail: s.detail.clone(),
+                    })
+                    .collect(),
+                pci_identity_available: a.pci_identity_available,
+            })
+            .collect(),
+        gpu_unavailable_reason: set.gpu.unavailable_reason.clone(),
     }
 }
 
@@ -210,6 +388,8 @@ pub struct QueryService {
     /// flag and are joined on shutdown.
     change_detector: Mutex<Option<std::thread::JoinHandle<()>>>,
     crash_scanner: Mutex<Option<std::thread::JoinHandle<()>>>,
+    /// Automatic incident capture owns blocking store/WMI work off the sampler.
+    incident_capture: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
 impl QueryService {
@@ -223,6 +403,13 @@ impl QueryService {
     /// intervention ledger the sampler-thread applier writes).
     pub fn rules_engine(&self) -> Arc<RulesEngine> {
         self.engine.clone()
+    }
+
+    /// Latest already-collected system snapshot for sibling first-party
+    /// services such as Gaming Intelligence. This never triggers a second
+    /// whole-system collection and returns `None` during startup.
+    pub fn latest_snapshot(&self) -> Option<SnapshotReply> {
+        self.slot.read().ok().and_then(|slot| slot.clone())
     }
 
     /// Spawns the sampler thread and returns the service handle. The thread
@@ -264,6 +451,15 @@ impl QueryService {
             }
         };
 
+        let (incident_tx, incident_rx) = std::sync::mpsc::sync_channel(8);
+        let incident_store = store.clone();
+        let incident_stop = stop.clone();
+        let incident_capture = std::thread::Builder::new()
+            .name("atlas-incident-capture".into())
+            .spawn(move || {
+                crate::detectors::run_live_capture(incident_rx, incident_stop, incident_store)
+            })?;
+
         let thread_slot = slot.clone();
         let thread_tx = tx.clone();
         let thread_stop = stop.clone();
@@ -271,7 +467,14 @@ impl QueryService {
         let sampler = std::thread::Builder::new()
             .name("atlas-ipc-sampler".into())
             .spawn(move || {
-                sampler_loop(thread_slot, thread_tx, thread_stop, ring, thread_engine)
+                sampler_loop(
+                    thread_slot,
+                    thread_tx,
+                    thread_stop,
+                    ring,
+                    thread_engine,
+                    incident_tx,
+                )
             })?;
 
         // R2 advanced privacy alerts: the ConsentStore change-watcher feeds
@@ -312,6 +515,7 @@ impl QueryService {
             privacy_eval: Mutex::new(Some(privacy_eval)),
             change_detector: Mutex::new(Some(change_detector)),
             crash_scanner: Mutex::new(Some(crash_scanner)),
+            incident_capture: Mutex::new(Some(incident_capture)),
         })
     }
 
@@ -337,6 +541,7 @@ impl QueryService {
             (&self.privacy_eval, "privacy-eval"),
             (&self.change_detector, "change-detector"),
             (&self.crash_scanner, "crash-scanner"),
+            (&self.incident_capture, "incident-capture"),
         ] {
             let handle = slot.lock().ok().and_then(|mut g| g.take());
             if let Some(h) = handle {
@@ -356,6 +561,7 @@ fn sampler_loop(
     stop: Arc<AtomicBool>,
     ring: Option<RingWriter>,
     engine: Arc<RulesEngine>,
+    incident_tx: std::sync::mpsc::SyncSender<crate::detectors::LiveFrame>,
 ) {
     let mut sampler = match Sampler::new() {
         Ok(s) => s,
@@ -373,6 +579,12 @@ fn sampler_loop(
                 // ledger; it never blocks the publish path meaningfully (same-user
                 // handle ops on a handful of matched processes).
                 engine.apply_tick(&set);
+
+                // Never block the sampler on WMI. The product service's record
+                // pipeline owns CPU/GPU incident detection; this worker adds
+                // the slower firmware thermal-zone probe without duplicating
+                // those incidents.
+                let _ = incident_tx.try_send(crate::detectors::LiveFrame { ts_ms: set.ts_ms });
 
                 let reply = to_reply(&set);
                 // Publish the top-N rows into the live ring (already CPU-sorted
@@ -406,10 +618,13 @@ fn publish_ring(writer: &RingWriter, reply: &SnapshotReply) {
         .map(|p| RowInput {
             pid: p.pid,
             cpu_permille: p.cpu_permille,
+            gpu_permille: p.gpu_permille,
             working_set: p.working_set,
             private_bytes: p.private_bytes,
             read_bps: p.read_bps,
             write_bps: p.write_bps,
+            gpu_dedicated_bytes: p.gpu_dedicated_bytes,
+            gpu_shared_bytes: p.gpu_shared_bytes,
             name: &p.image_name,
         })
         .collect();
@@ -420,10 +635,15 @@ fn publish_ring(writer: &RingWriter, reply: &SnapshotReply) {
         process_count: s.map(|g| g.process_count).unwrap_or(0),
         thread_count: s.map(|g| g.thread_count).unwrap_or(0),
         handle_count: s.map(|g| g.handle_count).unwrap_or(0),
+        gpu_permille: s.map(|g| g.gpu_permille).unwrap_or(0),
         mem_used: s.map(|g| g.mem_used).unwrap_or(0),
         mem_total: s.map(|g| g.mem_total).unwrap_or(0),
         commit_used: s.map(|g| g.commit_used).unwrap_or(0),
         commit_limit: s.map(|g| g.commit_limit).unwrap_or(0),
+        gpu_dedicated_used: s.map(|g| g.gpu_dedicated_used).unwrap_or(0),
+        gpu_dedicated_budget: s.map(|g| g.gpu_dedicated_budget).unwrap_or(0),
+        gpu_shared_used: s.map(|g| g.gpu_shared_used).unwrap_or(0),
+        gpu_shared_budget: s.map(|g| g.gpu_shared_budget).unwrap_or(0),
         rows: &rows,
     });
 }
@@ -440,6 +660,7 @@ impl AtlasQuery for QueryService {
         let mut flags = vec![
             CAP_PROCESS_SNAPSHOTS.to_string(),
             CAP_HISTORY_QUERIES.to_string(),
+            CAP_EXPERIMENTS.to_string(),
             CAP_SAFE_ACTIONS.to_string(),
         ];
         if self.has_fts5 {
@@ -449,6 +670,7 @@ impl AtlasQuery for QueryService {
         // the store; diagnostics + reports are computed on demand from recorded
         // data. All three are store-backed and always available here.
         flags.push(CAP_INCIDENT_DETECTION.to_string());
+        flags.push(CAP_INSIGHTS.to_string());
         flags.push(CAP_DIAGNOSTICS.to_string());
         flags.push(CAP_REPORTS.to_string());
         // M7 inventories are live OS reads (startup/services) and store-backed
@@ -470,6 +692,27 @@ impl AtlasQuery for QueryService {
             // backed persistence + audit; the applier runs on the sampler thread.
             flags.push(CAP_RULES_ENGINE.to_string());
             flags.push(CAP_PROFILES.to_string());
+            flags.push(CAP_GPU_RULE_TRIGGERS.to_string());
+            let gpu_snapshot = self.slot.read().ok().and_then(|s| s.as_ref().cloned());
+            if gpu_snapshot
+                .as_ref()
+                .map(|s| !s.gpu_adapters.is_empty())
+                .unwrap_or(false)
+            {
+                flags.push(CAP_GPU_CORE_TELEMETRY.to_string());
+                flags.push(CAP_GPU_PROCESS_MEMORY.to_string());
+                flags.push(CAP_GPU_WDDM_SENSORS.to_string());
+            }
+            if gpu_snapshot.as_ref().is_some_and(|snapshot| {
+                snapshot.gpu_adapters.iter().any(|adapter| {
+                    adapter.sensor_availability.iter().any(|sensor| {
+                        sensor.available
+                            && sensor.source == GpuTelemetrySource::GpuSourceNvidiaNvml as i32
+                    })
+                })
+            }) {
+                flags.push(CAP_GPU_VENDOR_SENSORS.to_string());
+            }
             // R3: dynamic responsiveness protection (the watchdog runs on the
             // sampler tick, store-backed config, disabled by default).
             flags.push(CAP_DYNAMIC_PROTECTION.to_string());
@@ -705,6 +948,109 @@ impl AtlasQuery for QueryService {
         }))
     }
 
+    async fn create_experiment(
+        &self,
+        req: Request<CreateExperimentRequest>,
+    ) -> Result<Response<CreateExperimentReply>, Status> {
+        let input = req
+            .into_inner()
+            .experiment
+            .ok_or_else(|| Status::invalid_argument("experiment is required"))?;
+        let row = validate_experiment(input).map_err(|status| *status)?;
+        let store = self.store.lock().map_err(|_| poisoned())?;
+        let id = store
+            .create_experiment(&row)
+            .map_err(|e| Status::internal(format!("create_experiment: {e}")))?;
+        let saved = store
+            .get_experiment(id)
+            .map_err(|e| Status::internal(format!("get_experiment: {e}")))?
+            .ok_or_else(|| Status::internal("created experiment was not found"))?;
+        Ok(Response::new(CreateExperimentReply {
+            experiment: Some(experiment_to_proto(saved)),
+        }))
+    }
+
+    async fn list_experiments(
+        &self,
+        req: Request<ListExperimentsRequest>,
+    ) -> Result<Response<ListExperimentsReply>, Status> {
+        let store = self.store.lock().map_err(|_| poisoned())?;
+        let rows = store
+            .list_experiments(req.into_inner().limit)
+            .map_err(|e| Status::internal(format!("list_experiments: {e}")))?;
+        Ok(Response::new(ListExperimentsReply {
+            experiments: rows.into_iter().map(experiment_to_proto).collect(),
+        }))
+    }
+
+    async fn compare_experiment(
+        &self,
+        req: Request<CompareExperimentRequest>,
+    ) -> Result<Response<CompareExperimentReply>, Status> {
+        const TARGET_BUCKETS: u32 = 240;
+        const EVENT_LIMIT: u32 = 5_000;
+        let id = req.into_inner().id;
+        let store = self.store.lock().map_err(|_| poisoned())?;
+        let row = store
+            .get_experiment(id)
+            .map_err(|e| Status::internal(format!("get_experiment: {e}")))?
+            .ok_or_else(|| Status::not_found("experiment not found"))?;
+        let metric = map_metric(row.metric).ok_or_else(|| {
+            Status::failed_precondition("experiment metric is no longer supported")
+        })?;
+        let baseline = load_period_evidence(
+            &store,
+            metric,
+            row.baseline_from_ms,
+            row.baseline_to_ms,
+            TARGET_BUCKETS,
+            EVENT_LIMIT,
+        )
+        .map_err(|status| *status)?;
+        let followup = load_period_evidence(
+            &store,
+            metric,
+            row.followup_from_ms,
+            row.followup_to_ms,
+            TARGET_BUCKETS,
+            EVENT_LIMIT,
+        )
+        .map_err(|status| *status)?;
+        let result = experiments::compare(
+            &baseline,
+            &followup,
+            row.baseline_to_ms - row.baseline_from_ms,
+            row.followup_to_ms - row.followup_from_ms,
+            row.threshold,
+            TARGET_BUCKETS,
+        );
+        let summary = match result.verdict {
+            Verdict::Insufficient => "Not enough retained evidence to judge this experiment.",
+            Verdict::Improved => "The follow-up average measured at least 5% lower.",
+            Verdict::Regressed => "The follow-up average measured at least 5% higher.",
+            Verdict::NoClearChange => "The measured average stayed within the 5% noise band.",
+        };
+        Ok(Response::new(CompareExperimentReply {
+            experiment: Some(experiment_to_proto(row)),
+            verdict: match result.verdict {
+                Verdict::Insufficient => ExperimentVerdict::ExperimentInsufficientData as i32,
+                Verdict::Improved => ExperimentVerdict::ExperimentImproved as i32,
+                Verdict::Regressed => ExperimentVerdict::ExperimentRegressed as i32,
+                Verdict::NoClearChange => ExperimentVerdict::ExperimentNoClearChange as i32,
+            },
+            summary: summary.to_string(),
+            baseline: Some(period_to_proto(result.baseline)),
+            followup: Some(period_to_proto(result.followup)),
+            average_delta_percent: result.delta_percent,
+            new_processes: result.new_processes,
+            removed_processes: result.removed_processes,
+            incomplete: result.incomplete,
+            data_quality: result.data_quality,
+            caveat: "This is an observational comparison. It does not prove the named change caused the result."
+                .to_string(),
+        }))
+    }
+
     async fn list_privacy_usage(
         &self,
         req: Request<ListPrivacyUsageRequest>,
@@ -889,8 +1235,8 @@ impl AtlasQuery for QueryService {
         &self,
         req: Request<ListIncidentsRequest>,
     ) -> Result<Response<ListIncidentsReply>, Status> {
-        // Pure read of the incidents the record/writer path detected. Detection
-        // itself runs where the samples are written, not on the query path.
+        // Pure read of incidents captured by the always-on detector worker or
+        // the offline record/writer pass. Detection never runs on this query.
         let r = req.into_inner();
         let (from_ms, to_ms) = range_bounds(&r.range);
         let limit = if r.limit == 0 { 100 } else { r.limit };
@@ -916,6 +1262,50 @@ impl AtlasQuery for QueryService {
             .diagnose_inner(&store, r.incident_id, &r.range, now, mem_total)
             .map_err(|e| Status::internal(format!("diagnose: {e}")))?;
         Ok(Response::new(reply))
+    }
+
+    async fn list_insights(
+        &self,
+        req: Request<ListInsightsRequest>,
+    ) -> Result<Response<ListInsightsReply>, Status> {
+        let request = req.into_inner();
+        let now = now_ms();
+        let snapshot = self.slot.read().map_err(|_| poisoned())?.clone();
+        let incidents = {
+            let store = self.store.lock().map_err(|_| poisoned())?;
+            let (rows, _) = store
+                .list_incidents(now - 24 * 60 * 60_000, now, 50)
+                .map_err(|e| Status::internal(format!("list_insights incidents: {e}")))?;
+            rows.iter().map(incident_row_to_proto).collect::<Vec<_>>()
+        };
+
+        let context = crate::insights::InsightContext {
+            now_ms: now,
+            snapshot: snapshot.as_ref(),
+            incidents: &incidents,
+        };
+        let mut insights = crate::insights::generate(&context);
+        if request.active_only {
+            insights.retain(|insight| {
+                matches!(
+                    InsightStatus::try_from(insight.status),
+                    Ok(InsightStatus::Active | InsightStatus::Emerging)
+                )
+            });
+        }
+        let limit = if request.limit == 0 {
+            10
+        } else {
+            request.limit.min(50)
+        } as usize;
+        let truncated = insights.len() > limit;
+        insights.truncate(limit);
+
+        Ok(Response::new(ListInsightsReply {
+            insights,
+            truncated,
+            coverage_summary: crate::insights::COVERAGE_SUMMARY.into(),
+        }))
     }
 
     async fn generate_report(
@@ -1290,6 +1680,63 @@ impl QueryService {
             .1)
     }
 
+    fn enrich_gpu_diagnosis(&self, incident: &Incident, reply: &mut DiagnoseReply) {
+        let is_gpu = matches!(
+            IncidentKind::try_from(incident.kind),
+            Ok(IncidentKind::GpuSaturation
+                | IncidentKind::GpuMemoryExhaustion
+                | IncidentKind::GpuThermalThrottling)
+        );
+        if !is_gpu {
+            return;
+        }
+        let snapshot = self
+            .slot
+            .read()
+            .ok()
+            .and_then(|guard| guard.as_ref().cloned());
+        let Some(snapshot) = snapshot else {
+            return;
+        };
+        let Some(diagnosis) = reply.diagnosis.as_mut() else {
+            return;
+        };
+        for adapter in &snapshot.gpu_adapters {
+            let provider_state = adapter
+                .sensor_availability
+                .iter()
+                .map(|item| {
+                    format!(
+                        "{}:{}:{}:{}",
+                        GpuSensorKind::try_from(item.kind)
+                            .map(|v| v.as_str_name())
+                            .unwrap_or("unknown_metric"),
+                        item.available,
+                        GpuTelemetrySource::try_from(item.source)
+                            .map(|v| v.as_str_name())
+                            .unwrap_or("unknown_source"),
+                        GpuAvailabilityReason::try_from(item.reason)
+                            .map(|v| v.as_str_name())
+                            .unwrap_or("unknown_reason"),
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            diagnosis.evidence.push(EvidenceItem {
+                text: format!(
+                    "Current non-causal adapter context for {}: load {:.1}%, temperature {:?} C, watts {:?}, power percent {:?}, fan RPM {:?}, fan percent {:?}, throttle reasons {:?}; provider availability [{}]",
+                    adapter.name, adapter.utilization_permille as f64 / 10.0, adapter.temperature_c,
+                    adapter.power_w, adapter.power_percent, adapter.fan_rpm, adapter.fan_percent,
+                    adapter.throttle_reasons.iter().map(|v| GpuThrottleReason::try_from(*v).map(|r| r.as_str_name()).unwrap_or("unknown")).collect::<Vec<_>>(),
+                    provider_state,
+                ),
+                ts_ms: snapshot.system.as_ref().map(|s| s.ts_ms).unwrap_or(0),
+                metric: "gpu_adapter_provider_context".into(),
+                value: adapter.utilization_permille as f64 / 10.0,
+            });
+        }
+    }
+
     /// Shared resolution for diagnose + report: returns the proto incident (a
     /// real row, or a synthetic ad-hoc incident) alongside its diagnosis.
     fn resolve_and_diagnose(
@@ -1309,8 +1756,10 @@ impl QueryService {
                         end_ms: row.end_ms.unwrap_or(0),
                         peak_value: row.peak_value,
                     };
-                    let reply = diagnostics::diagnose(store, &ctx, now, mem_total)?;
-                    Ok((incident_row_to_proto(&row), reply))
+                    let mut reply = diagnostics::diagnose(store, &ctx, now, mem_total)?;
+                    let incident = incident_row_to_proto(&row);
+                    self.enrich_gpu_diagnosis(&incident, &mut reply);
+                    Ok((incident, reply))
                 }
                 None => {
                     let reply = DiagnoseReply {
@@ -1501,6 +1950,24 @@ fn health_from_snapshot(snap: &SnapshotReply) -> HealthSection {
             private_bytes: p.private_bytes,
         })
         .collect();
+    let gpu_details = snap.gpu_adapters.iter().map(|adapter| {
+        let availability = adapter.sensor_availability.iter().map(|item| format!(
+            "{}={} source={} reason={}{}",
+            GpuSensorKind::try_from(item.kind).map(|v| v.as_str_name()).unwrap_or("GPU_SENSOR_UNKNOWN"),
+            item.available,
+            GpuTelemetrySource::try_from(item.source).map(|v| v.as_str_name()).unwrap_or("GPU_SOURCE_UNKNOWN"),
+            GpuAvailabilityReason::try_from(item.reason).map(|v| v.as_str_name()).unwrap_or("GPU_AVAILABILITY_UNKNOWN"),
+            if item.detail.is_empty() { String::new() } else { format!(" detail={}", item.detail) },
+        )).collect::<Vec<_>>().join("; ");
+        format!(
+            "{} [{}] load={:.1}% temp={:?}C watts={:?} power_percent={:?} fan_rpm={:?} fan_percent={:?} core_clock={:?}MHz memory_clock={:?}MHz throttle={:?}; {}",
+            adapter.name, adapter.adapter_key, adapter.utilization_permille as f64 / 10.0,
+            adapter.temperature_c, adapter.power_w, adapter.power_percent, adapter.fan_rpm,
+            adapter.fan_percent, adapter.core_clock_mhz, adapter.memory_clock_mhz,
+            adapter.throttle_reasons.iter().map(|v| GpuThrottleReason::try_from(*v).map(|r| r.as_str_name()).unwrap_or("GPU_THROTTLE_UNKNOWN")).collect::<Vec<_>>(),
+            availability,
+        )
+    }).collect();
     HealthSection {
         ts_ms: s.map(|g| g.ts_ms).unwrap_or(0),
         cpu_permille: s.map(|g| g.cpu_permille).unwrap_or(0),
@@ -1511,6 +1978,12 @@ fn health_from_snapshot(snap: &SnapshotReply) -> HealthSection {
         process_count: s.map(|g| g.process_count).unwrap_or(0),
         thread_count: s.map(|g| g.thread_count).unwrap_or(0),
         handle_count: s.map(|g| g.handle_count).unwrap_or(0),
+        gpu_permille: s.map(|g| g.gpu_permille).unwrap_or(0),
+        gpu_dedicated_used: s.map(|g| g.gpu_dedicated_used).unwrap_or(0),
+        gpu_dedicated_budget: s.map(|g| g.gpu_dedicated_budget).unwrap_or(0),
+        gpu_shared_used: s.map(|g| g.gpu_shared_used).unwrap_or(0),
+        gpu_shared_budget: s.map(|g| g.gpu_shared_budget).unwrap_or(0),
+        gpu_details,
         top,
     }
 }
@@ -1956,6 +2429,8 @@ fn thermal_to_proto(r: ThermalReading) -> GetThermalReply {
                 name: s.name,
                 celsius: s.celsius,
                 source: s.source,
+                passive_trip_celsius: s.passive_trip_celsius.unwrap_or(0.0),
+                critical_trip_celsius: s.critical_trip_celsius.unwrap_or(0.0),
             })
             .collect(),
     }
@@ -1972,6 +2447,126 @@ fn get_thermal_impl() -> GetThermalReply {
         available: false,
         unavailable_reason: "thermal sensors are Windows-only".to_string(),
         sensors: Vec::new(),
+    }
+}
+
+fn validate_experiment(input: ProtoExperiment) -> Result<ExperimentRow, Box<Status>> {
+    let name = input.name.trim();
+    let change = input.change_description.trim();
+    if name.is_empty() || name.len() > 120 {
+        return Err(Box::new(Status::invalid_argument(
+            "name must contain 1 to 120 characters",
+        )));
+    }
+    if change.is_empty() || change.len() > 1_000 {
+        return Err(Box::new(Status::invalid_argument(
+            "change description must contain 1 to 1000 characters",
+        )));
+    }
+    let metric = MetricKind::try_from(input.metric)
+        .map_err(|_| Box::new(Status::invalid_argument("unknown metric")))?;
+    if !matches!(
+        metric,
+        MetricKind::SysCpuPermille
+            | MetricKind::SysMemUsed
+            | MetricKind::SysCommitUsed
+            | MetricKind::SysProcessCount
+            | MetricKind::SysGpuPermille
+    ) {
+        return Err(Box::new(Status::invalid_argument(
+            "experiments support system CPU, memory, commit, process count, or GPU",
+        )));
+    }
+    if !input.threshold.is_finite() || input.threshold < 0.0 {
+        return Err(Box::new(Status::invalid_argument(
+            "threshold must be a finite non-negative number",
+        )));
+    }
+    let (baseline_from_ms, baseline_to_ms) = range_bounds(&input.baseline);
+    let (followup_from_ms, followup_to_ms) = range_bounds(&input.followup);
+    if baseline_from_ms >= baseline_to_ms || followup_from_ms >= followup_to_ms {
+        return Err(Box::new(Status::invalid_argument(
+            "both periods must have a positive duration",
+        )));
+    }
+    Ok(ExperimentRow {
+        id: 0,
+        name: name.to_string(),
+        change_description: change.to_string(),
+        metric: input.metric,
+        threshold: input.threshold,
+        baseline_from_ms,
+        baseline_to_ms,
+        followup_from_ms,
+        followup_to_ms,
+        created_ms: crate::now_ms(),
+    })
+}
+
+fn experiment_to_proto(row: ExperimentRow) -> ProtoExperiment {
+    ProtoExperiment {
+        id: row.id,
+        name: row.name,
+        change_description: row.change_description,
+        metric: row.metric,
+        threshold: row.threshold,
+        baseline: Some(TimeRange {
+            from_ms: row.baseline_from_ms,
+            to_ms: row.baseline_to_ms,
+        }),
+        followup: Some(TimeRange {
+            from_ms: row.followup_from_ms,
+            to_ms: row.followup_to_ms,
+        }),
+        created_ms: row.created_ms,
+    }
+}
+
+fn load_period_evidence(
+    store: &Store,
+    metric: Metric,
+    from_ms: i64,
+    to_ms: i64,
+    buckets: u32,
+    event_limit: u32,
+) -> Result<PeriodEvidence, Box<Status>> {
+    let metric_buckets = store
+        .query_range(metric, 0, from_ms, to_ms, buckets)
+        .map_err(|e| Box::new(Status::internal(format!("query experiment metrics: {e}"))))?;
+    let (events, events_truncated) = store
+        .list_events(from_ms, to_ms, &[0], event_limit)
+        .map_err(|e| Box::new(Status::internal(format!("query experiment events: {e}"))))?;
+    let process_starts = events
+        .into_iter()
+        .filter(|event| !event.image_name.is_empty())
+        .map(|event| event.image_name.to_ascii_lowercase())
+        .collect();
+    let (crashes, crashes_truncated) = store
+        .list_crashes(from_ms, to_ms, &[], event_limit)
+        .map_err(|e| Box::new(Status::internal(format!("query experiment crashes: {e}"))))?;
+    let (changes, changes_truncated) = store
+        .list_system_changes(from_ms, to_ms, &[], event_limit)
+        .map_err(|e| Box::new(Status::internal(format!("query experiment changes: {e}"))))?;
+    Ok(PeriodEvidence {
+        buckets: metric_buckets,
+        process_starts,
+        events_truncated,
+        crashes: crashes.len(),
+        crashes_truncated,
+        system_changes: changes.len(),
+        changes_truncated,
+    })
+}
+
+fn period_to_proto(value: experiments::PeriodSummary) -> ExperimentPeriodSummary {
+    ExperimentPeriodSummary {
+        average: value.average,
+        peak: value.peak,
+        duration_above_threshold_ms: value.duration_above_threshold_ms,
+        samples: value.samples,
+        populated_buckets: value.populated_buckets,
+        crashes: value.crashes,
+        system_changes: value.system_changes,
     }
 }
 
@@ -2001,10 +2596,31 @@ fn map_metric(kind: i32) -> Option<Metric> {
         MetricKind::PrivateBytes => Metric::PrivateBytes,
         MetricKind::ReadBps => Metric::ReadBps,
         MetricKind::WriteBps => Metric::WriteBps,
+        MetricKind::GpuPermille => Metric::GpuPermille,
+        MetricKind::GpuDedicatedBytes => Metric::GpuDedicatedBytes,
+        MetricKind::GpuSharedBytes => Metric::GpuSharedBytes,
         MetricKind::SysCpuPermille => Metric::SysCpuPermille,
         MetricKind::SysMemUsed => Metric::SysMemUsed,
         MetricKind::SysCommitUsed => Metric::SysCommitUsed,
         MetricKind::SysProcessCount => Metric::SysProcessCount,
+        MetricKind::SysGpuPermille => Metric::SysGpuPermille,
+        MetricKind::SysGpuDedicatedUsed => Metric::SysGpuDedicatedUsed,
+        MetricKind::SysGpuSharedUsed => Metric::SysGpuSharedUsed,
+        MetricKind::SysGpuMemoryUsed => Metric::SysGpuMemoryUsed,
+        MetricKind::SysGpuMemoryBudget => Metric::SysGpuMemoryBudget,
+        MetricKind::GpuAdapterPermille => Metric::GpuAdapterPermille,
+        MetricKind::GpuAdapterDedicatedUsed => Metric::GpuAdapterDedicatedUsed,
+        MetricKind::GpuAdapterSharedUsed => Metric::GpuAdapterSharedUsed,
+        MetricKind::GpuAdapterTemperatureC => Metric::GpuAdapterTemperatureC,
+        MetricKind::GpuAdapterPowerW => Metric::GpuAdapterPowerW,
+        MetricKind::GpuAdapterCoreClockMhz => Metric::GpuAdapterCoreClockMhz,
+        MetricKind::GpuAdapterMemoryClockMhz => Metric::GpuAdapterMemoryClockMhz,
+        MetricKind::GpuAdapterFanRpm => Metric::GpuAdapterFanRpm,
+        MetricKind::GpuAdapterThrottling => Metric::GpuAdapterThrottling,
+        MetricKind::GpuAdapterPowerPercent => Metric::GpuAdapterPowerPercent,
+        MetricKind::GpuAdapterFanPercent => Metric::GpuAdapterFanPercent,
+        MetricKind::GpuAdapterMemoryTemperatureC => Metric::GpuAdapterMemoryTemperatureC,
+        MetricKind::GpuAdapterHotspotTemperatureC => Metric::GpuAdapterHotspotTemperatureC,
     })
 }
 
@@ -2042,6 +2658,7 @@ mod tests {
             thread_count: 0,
             app_group: String::new(),
             role: 0,
+            ..Default::default()
         }
     }
 
@@ -2049,6 +2666,7 @@ mod tests {
         SnapshotReply {
             system: None,
             processes: rows,
+            ..Default::default()
         }
     }
 
@@ -2133,6 +2751,9 @@ mod tests {
                 write_bps: 0,
                 handle_count: 0,
                 thread_count: 0,
+                gpu_permille: 0,
+                gpu_dedicated_bytes: 0,
+                gpu_shared_bytes: 0,
             }
         }
         let set = SampleSet {
@@ -2146,6 +2767,11 @@ mod tests {
                 process_count: 0,
                 thread_count: 0,
                 handle_count: 0,
+                gpu_permille: 0,
+                gpu_dedicated_used: 0,
+                gpu_dedicated_budget: 0,
+                gpu_shared_used: 0,
+                gpu_shared_budget: 0,
             },
             processes: vec![
                 sample(100, 50, "chrome.exe"),
@@ -2154,6 +2780,7 @@ mod tests {
             ],
             started: vec![],
             exited: vec![],
+            gpu: Default::default(),
         };
         let reply = to_reply(&set);
         let main = reply.processes.iter().find(|p| p.pid == 100).unwrap();

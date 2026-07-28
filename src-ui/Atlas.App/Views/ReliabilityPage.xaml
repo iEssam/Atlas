@@ -7,7 +7,41 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
 
-    <Grid Padding="24" RowSpacing="16">
+    <Grid x:Name="LayoutRoot" Padding="12" RowSpacing="12">
+        <VisualStateManager.VisualStateGroups>
+            <VisualStateGroup x:Name="WindowWidthStates">
+                <VisualState x:Name="Compact">
+                    <VisualState.Setters>
+                        <Setter Target="WindowPicker.(Grid.ColumnSpan)" Value="2" />
+                        <Setter Target="KindPicker.(Grid.Row)" Value="1" />
+                        <Setter Target="KindPicker.(Grid.Column)" Value="0" />
+                        <Setter Target="RefreshButton.(Grid.Row)" Value="1" />
+                        <Setter Target="RefreshButton.(Grid.Column)" Value="3" />
+                    </VisualState.Setters>
+                </VisualState>
+                <VisualState x:Name="Medium">
+                    <VisualState.StateTriggers>
+                        <AdaptiveTrigger MinWindowWidth="640" />
+                    </VisualState.StateTriggers>
+                    <VisualState.Setters>
+                        <Setter Target="LayoutRoot.Padding" Value="20" />
+                    </VisualState.Setters>
+                </VisualState>
+                <VisualState x:Name="Wide">
+                    <VisualState.StateTriggers>
+                        <AdaptiveTrigger MinWindowWidth="1008" />
+                    </VisualState.StateTriggers>
+                    <VisualState.Setters>
+                        <Setter Target="LayoutRoot.Padding" Value="24" />
+                        <Setter Target="WindowPicker.(Grid.ColumnSpan)" Value="1" />
+                        <Setter Target="KindPicker.(Grid.Row)" Value="0" />
+                        <Setter Target="KindPicker.(Grid.Column)" Value="1" />
+                        <Setter Target="RefreshButton.(Grid.Row)" Value="0" />
+                        <Setter Target="RefreshButton.(Grid.Column)" Value="3" />
+                    </VisualState.Setters>
+                </VisualState>
+            </VisualStateGroup>
+        </VisualStateManager.VisualStateGroups>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -16,15 +50,19 @@
         </Grid.RowDefinitions>
 
         <!-- Title -->
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="12">
-            <TextBlock Text="Reliability" Style="{StaticResource TitleTextBlockStyle}" />
-            <TextBlock VerticalAlignment="Bottom"
-                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                       Text="Crashes, hangs and bugchecks — with context, not blame" />
+        <StackPanel Grid.Row="0" Spacing="4">
+            <TextBlock Text="Reliability"
+                       Style="{StaticResource AtlasPageHeadingStyle}" />
+            <TextBlock Text="Crashes, hangs and bugchecks, aligned with nearby evidence without assigning cause."
+                       Style="{StaticResource AtlasPageDescriptionStyle}" />
         </StackPanel>
 
         <!-- Controls: window + kind filter + refresh -->
-        <Grid Grid.Row="1" ColumnSpacing="12">
+        <Grid Grid.Row="1" ColumnSpacing="12" RowSpacing="8">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
@@ -32,13 +70,13 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
 
-            <ComboBox Grid.Column="0"
+            <ComboBox x:Name="WindowPicker" Grid.Column="0"
                       AutomationProperties.Name="Time window for reliability events"
                       MinWidth="150"
                       ItemsSource="{x:Bind ViewModel.Windows}"
                       SelectedItem="{x:Bind ViewModel.SelectedWindow, Mode=TwoWay}" />
 
-            <ComboBox Grid.Column="1"
+            <ComboBox x:Name="KindPicker" Grid.Column="1"
                       AutomationProperties.Name="Filter reliability events by kind"
                       MinWidth="160"
                       ItemsSource="{x:Bind ViewModel.KindFilters}"
@@ -47,6 +85,7 @@
             <Button Grid.Column="3"
                     x:Name="RefreshButton"
                     AutomationProperties.Name="Refresh reliability events"
+                    Style="{StaticResource AtlasGhostButtonStyle}"
                     Click="OnRefreshClick">
                 <StackPanel Orientation="Horizontal" Spacing="8">
                     <FontIcon Glyph="&#xE72C;" FontSize="14" />
@@ -56,19 +95,16 @@
         </Grid>
 
         <!-- Status line -->
-        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="12">
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="10">
             <ProgressRing IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
                           Width="16" Height="16" />
-            <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+            <TextBlock Style="{StaticResource AtlasMonoMutedStyle}"
                        VerticalAlignment="Center"
                        Text="{x:Bind ViewModel.StatusText, Mode=OneWay}" />
         </StackPanel>
 
         <!-- Body: list / empty / unavailable / unsupported -->
-        <Border Grid.Row="3"
-                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                BorderThickness="1" CornerRadius="8">
+        <Border Grid.Row="3" Style="{StaticResource AtlasPanelFlatStyle}">
             <Grid>
                 <!-- Unsupported (server too old) -->
                 <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
@@ -78,14 +114,13 @@
                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                               HorizontalAlignment="Center" />
                     <TextBlock Text="Reliability unavailable"
-                               Style="{StaticResource SubtitleTextBlockStyle}"
+                               Style="{StaticResource AtlasEmptyStateTitleStyle}"
                                HorizontalTextAlignment="Center" />
                     <TextBlock Text="{x:Bind ViewModel.UnavailableMessage, Mode=OneWay}"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                               TextWrapping="Wrap" HorizontalTextAlignment="Center" />
+                               Style="{StaticResource AtlasEmptyStateBodyStyle}" />
                 </StackPanel>
 
-                <!-- In-band unavailable (reliability log off) — honest, calm -->
+                <!-- In-band unavailable (reliability log off) - honest, calm -->
                 <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
                             Padding="24" MaxWidth="440"
                             Visibility="{x:Bind ViewModel.IsUnavailable, Mode=OneWay}">
@@ -93,20 +128,21 @@
                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                               HorizontalAlignment="Center" />
                     <TextBlock Text="Reliability history unavailable"
-                               Style="{StaticResource SubtitleTextBlockStyle}"
+                               Style="{StaticResource AtlasEmptyStateTitleStyle}"
                                HorizontalTextAlignment="Center" />
                     <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
-                            CornerRadius="6" Padding="14,10">
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                            BorderThickness="1" CornerRadius="2" Padding="14,10">
                         <TextBlock Text="{x:Bind ViewModel.UnavailableMessage, Mode=OneWay}"
                                    TextWrapping="Wrap" HorizontalTextAlignment="Center" />
                     </Border>
-                    <TextBlock Text="Atlas reports what the system exposes — it won't invent a history it can't read."
+                    <TextBlock Text="Atlas reports what the system exposes - it won't invent a history it can't read."
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                TextWrapping="Wrap" HorizontalTextAlignment="Center"
                                Style="{StaticResource CaptionTextBlockStyle}" />
                 </StackPanel>
 
-                <!-- Empty (available, nothing recorded) — good news, framed calmly -->
+                <!-- Empty (available, nothing recorded) - good news, framed calmly -->
                 <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
                             Padding="24" MaxWidth="440"
                             Visibility="{x:Bind ViewModel.IsEmpty, Mode=OneWay}">
@@ -114,30 +150,23 @@
                               Foreground="{ThemeResource SystemFillColorSuccessBrush}"
                               HorizontalAlignment="Center" />
                     <TextBlock Text="No reliability events"
-                               Style="{StaticResource SubtitleTextBlockStyle}"
+                               Style="{StaticResource AtlasEmptyStateTitleStyle}"
                                HorizontalTextAlignment="Center" />
-                    <TextBlock Text="No reliability events recorded in this window. That's good news — nothing crashed, hung, or restarted unexpectedly."
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                               TextWrapping="Wrap" HorizontalTextAlignment="Center" />
+                    <TextBlock Text="No reliability events recorded in this window. That's good news - nothing crashed, hung, or restarted unexpectedly."
+                               Style="{StaticResource AtlasEmptyStateBodyStyle}" />
                 </StackPanel>
 
                 <!-- The list of records, each with correlated context inline -->
                 <ListView AutomationProperties.Name="Reliability events"
                           ItemsSource="{x:Bind ViewModel.Crashes, Mode=OneWay}"
                           SelectionMode="None"
-                          Padding="8">
+                          Padding="0">
                     <ListView.ItemContainerStyle>
-                        <Style TargetType="ListViewItem">
-                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                            <Setter Property="Padding" Value="4" />
-                        </Style>
+                        <Style TargetType="ListViewItem" BasedOn="{StaticResource AtlasRowContainerStyle}" />
                     </ListView.ItemContainerStyle>
                     <ListView.ItemTemplate>
                         <DataTemplate x:DataType="vm:CrashRowViewModel">
-                            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                    BorderThickness="1" CornerRadius="8"
-                                    Padding="16,12" Margin="0,4">
+                            <Border Background="Transparent" Padding="4,2">
                                 <StackPanel Spacing="10">
                                     <!-- Header: glyph + kind/subject + time -->
                                     <Grid ColumnSpacing="12">
@@ -158,7 +187,7 @@
                                                        TextWrapping="Wrap" />
                                             <TextBlock Text="{x:Bind FaultLine}"
                                                        Visibility="{x:Bind HasFault}"
-                                                       FontFamily="Consolas"
+                                                       FontFamily="{ThemeResource AtlasMonoFontFamily}"
                                                        Style="{StaticResource CaptionTextBlockStyle}"
                                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                                        IsTextSelectionEnabled="True"
@@ -166,28 +195,27 @@
                                         </StackPanel>
                                         <StackPanel Grid.Column="2" Spacing="0" HorizontalAlignment="Right">
                                             <TextBlock Text="{x:Bind TimeText}"
-                                                       Style="{StaticResource CaptionTextBlockStyle}"
-                                                       HorizontalTextAlignment="Right"
-                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                       Style="{StaticResource AtlasMonoMutedStyle}"
+                                                       HorizontalTextAlignment="Right" />
                                             <TextBlock Text="{x:Bind AbsoluteTimeText}"
-                                                       Style="{StaticResource CaptionTextBlockStyle}"
-                                                       HorizontalTextAlignment="Right"
-                                                       Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                                       Style="{StaticResource AtlasMonoMutedStyle}"
+                                                       FontSize="11"
+                                                       HorizontalTextAlignment="Right" />
                                         </StackPanel>
                                     </Grid>
 
                                     <!-- Correlated context: hedged, correlation-not-blame -->
                                     <Border Visibility="{x:Bind HasContext}"
                                             Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
-                                            CornerRadius="6" Padding="12,10">
+                                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                            BorderThickness="1" CornerRadius="2" Padding="12,10">
                                         <StackPanel Spacing="6">
                                             <StackPanel Orientation="Horizontal" Spacing="8">
                                                 <FontIcon Glyph="&#xE946;" FontSize="12"
                                                           VerticalAlignment="Center"
                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                                <TextBlock Text="Context around this event"
-                                                           Style="{StaticResource CaptionTextBlockStyle}"
-                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                <TextBlock Text="OBSERVED NEARBY"
+                                                           Style="{StaticResource AtlasSectionLabelStyle}" />
                                             </StackPanel>
                                             <ItemsControl ItemsSource="{x:Bind Context}">
                                                 <ItemsControl.ItemTemplate>
@@ -207,10 +235,8 @@
                                                     </DataTemplate>
                                                 </ItemsControl.ItemTemplate>
                                             </ItemsControl>
-                                            <TextBlock Text="This is context Atlas noticed around this time — it may or may not be related. Correlation is not a cause."
-                                                       Style="{StaticResource CaptionTextBlockStyle}"
-                                                       Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                                       TextWrapping="Wrap" />
+                                            <TextBlock Text="This evidence was observed nearby. It may or may not be related; correlation is not cause."
+                                                       Style="{StaticResource AtlasWarningTextStyle}" />
                                         </StackPanel>
                                     </Border>
                                 </StackPanel>

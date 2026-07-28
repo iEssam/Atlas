@@ -1,3 +1,5 @@
+using Atlas.App.Services;
+using Atlas.IpcClient;
 using Microsoft.UI.Xaml;
 
 namespace Atlas.App;
@@ -9,6 +11,8 @@ namespace Atlas.App;
 public partial class App : Application
 {
     private Window? _window;
+
+    public static IUiPreferencesStore Preferences { get; } = new UiPreferencesStore();
 
     /// <summary>
     /// The single main window, exposed so unpackaged pickers/dialogs (e.g. the
@@ -24,7 +28,9 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
-        _window = new MainWindow();
+        var activation = ExplorerActivation.Parse(
+            Environment.GetCommandLineArgs().Skip(1));
+        _window = new MainWindow(activation);
         MainWindow = _window;
         _window.Activate();
     }

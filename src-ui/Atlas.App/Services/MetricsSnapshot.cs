@@ -27,8 +27,10 @@ public enum MetricsSource
 /// </summary>
 public sealed class MetricsSnapshot
 {
+    public long TimestampMs { get; }
     public MetricsSource Source { get; }
     public double CpuPercent { get; }
+    public double GpuPercent { get; }
     public ulong MemUsed { get; }
     public ulong MemTotal { get; }
     public ulong CommitUsed { get; }
@@ -36,15 +38,23 @@ public sealed class MetricsSnapshot
     public uint ProcessCount { get; }
     public uint ThreadCount { get; }
     public uint HandleCount { get; }
+    public ulong GpuDedicatedUsed { get; }
+    public ulong GpuDedicatedBudget { get; }
+    public ulong GpuSharedUsed { get; }
+    public ulong GpuSharedBudget { get; }
     public IReadOnlyList<MetricsRow> Rows { get; }
 
     public MetricsSnapshot(
-        MetricsSource source, double cpuPercent, ulong memUsed, ulong memTotal,
+        long timestampMs, MetricsSource source, double cpuPercent, double gpuPercent,
+        ulong memUsed, ulong memTotal,
         ulong commitUsed, ulong commitLimit, uint processCount, uint threadCount,
-        uint handleCount, IReadOnlyList<MetricsRow> rows)
+        uint handleCount, ulong gpuDedicatedUsed, ulong gpuDedicatedBudget,
+        ulong gpuSharedUsed, ulong gpuSharedBudget, IReadOnlyList<MetricsRow> rows)
     {
+        TimestampMs = timestampMs;
         Source = source;
         CpuPercent = cpuPercent;
+        GpuPercent = gpuPercent;
         MemUsed = memUsed;
         MemTotal = memTotal;
         CommitUsed = commitUsed;
@@ -52,6 +62,10 @@ public sealed class MetricsSnapshot
         ProcessCount = processCount;
         ThreadCount = threadCount;
         HandleCount = handleCount;
+        GpuDedicatedUsed = gpuDedicatedUsed;
+        GpuDedicatedBudget = gpuDedicatedBudget;
+        GpuSharedUsed = gpuSharedUsed;
+        GpuSharedBudget = gpuSharedBudget;
         Rows = rows;
     }
 }
@@ -68,22 +82,36 @@ public sealed class MetricsRow
     public long CreateTime100ns { get; }
     public string ImageName { get; }
     public double CpuPercent { get; }
+    public double GpuPercent { get; }
     public ulong WorkingSet { get; }
     public ulong PrivateBytes { get; }
+    public ulong ReadBps { get; }
+    public ulong WriteBps { get; }
     public uint ThreadCount { get; }
     public uint HandleCount { get; }
+    public ulong GpuDedicatedBytes { get; }
+    public ulong GpuSharedBytes { get; }
+    public string AppGroup { get; }
 
     public MetricsRow(
-        uint pid, long createTime100ns, string imageName, double cpuPercent,
-        ulong workingSet, ulong privateBytes, uint threadCount, uint handleCount)
+        uint pid, long createTime100ns, string imageName, double cpuPercent, double gpuPercent,
+        ulong workingSet, ulong privateBytes, ulong readBps, ulong writeBps,
+        uint threadCount, uint handleCount, ulong gpuDedicatedBytes, ulong gpuSharedBytes,
+        string appGroup)
     {
         Pid = pid;
         CreateTime100ns = createTime100ns;
         ImageName = imageName;
         CpuPercent = cpuPercent;
+        GpuPercent = gpuPercent;
         WorkingSet = workingSet;
         PrivateBytes = privateBytes;
+        ReadBps = readBps;
+        WriteBps = writeBps;
         ThreadCount = threadCount;
         HandleCount = handleCount;
+        GpuDedicatedBytes = gpuDedicatedBytes;
+        GpuSharedBytes = gpuSharedBytes;
+        AppGroup = appGroup;
     }
 }

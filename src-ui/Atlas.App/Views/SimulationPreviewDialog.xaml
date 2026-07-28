@@ -11,6 +11,8 @@
     DefaultButton="Close">
 
     <StackPanel Spacing="10" MinWidth="460" MaxWidth="560">
+        <TextBlock Text="RULE SIMULATION / NO CHANGES APPLIED"
+                   Style="{StaticResource AtlasSectionLabelStyle}" />
         <TextBlock x:Name="SubtitleText" TextWrapping="Wrap"
                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
         <views:SimulationResultView x:Name="SimView" MinHeight="120" MaxHeight="440" />

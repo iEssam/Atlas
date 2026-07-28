@@ -56,6 +56,7 @@ public sealed class RingSnapshot
 {
     public long TsMs { get; }
     public uint CpuPermille { get; }
+    public uint GpuPermille { get; }
     public uint ProcessCount { get; }
     public uint ThreadCount { get; }
     public uint HandleCount { get; }
@@ -63,17 +64,23 @@ public sealed class RingSnapshot
     public ulong MemTotal { get; }
     public ulong CommitUsed { get; }
     public ulong CommitLimit { get; }
+    public ulong GpuDedicatedUsed { get; }
+    public ulong GpuDedicatedBudget { get; }
+    public ulong GpuSharedUsed { get; }
+    public ulong GpuSharedBudget { get; }
 
     /// <summary>Valid process rows, top-N sorted CPU-desc by the writer.</summary>
     public IReadOnlyList<RingRowSnapshot> Rows { get; }
 
     public RingSnapshot(
-        long tsMs, uint cpuPermille, uint processCount, uint threadCount,
+        long tsMs, uint cpuPermille, uint gpuPermille, uint processCount, uint threadCount,
         uint handleCount, ulong memUsed, ulong memTotal, ulong commitUsed,
-        ulong commitLimit, IReadOnlyList<RingRowSnapshot> rows)
+        ulong commitLimit, ulong gpuDedicatedUsed, ulong gpuDedicatedBudget,
+        ulong gpuSharedUsed, ulong gpuSharedBudget, IReadOnlyList<RingRowSnapshot> rows)
     {
         TsMs = tsMs;
         CpuPermille = cpuPermille;
+        GpuPermille = gpuPermille;
         ProcessCount = processCount;
         ThreadCount = threadCount;
         HandleCount = handleCount;
@@ -81,6 +88,10 @@ public sealed class RingSnapshot
         MemTotal = memTotal;
         CommitUsed = commitUsed;
         CommitLimit = commitLimit;
+        GpuDedicatedUsed = gpuDedicatedUsed;
+        GpuDedicatedBudget = gpuDedicatedBudget;
+        GpuSharedUsed = gpuSharedUsed;
+        GpuSharedBudget = gpuSharedBudget;
         Rows = rows;
     }
 }
@@ -90,22 +101,28 @@ public sealed class RingRowSnapshot
 {
     public uint Pid { get; }
     public uint CpuPermille { get; }
+    public uint GpuPermille { get; }
     public ulong WorkingSet { get; }
     public ulong PrivateBytes { get; }
     public ulong ReadBps { get; }
     public ulong WriteBps { get; }
+    public ulong GpuDedicatedBytes { get; }
+    public ulong GpuSharedBytes { get; }
     public string Name { get; }
 
     public RingRowSnapshot(
-        uint pid, uint cpuPermille, ulong workingSet, ulong privateBytes,
-        ulong readBps, ulong writeBps, string name)
+        uint pid, uint cpuPermille, uint gpuPermille, ulong workingSet, ulong privateBytes,
+        ulong readBps, ulong writeBps, ulong gpuDedicatedBytes, ulong gpuSharedBytes, string name)
     {
         Pid = pid;
         CpuPermille = cpuPermille;
+        GpuPermille = gpuPermille;
         WorkingSet = workingSet;
         PrivateBytes = privateBytes;
         ReadBps = readBps;
         WriteBps = writeBps;
+        GpuDedicatedBytes = gpuDedicatedBytes;
+        GpuSharedBytes = gpuSharedBytes;
         Name = name;
     }
 }

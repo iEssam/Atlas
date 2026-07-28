@@ -1,0 +1,403 @@
+<Page
+    x:Class="Atlas.App.Views.GamingPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:Atlas.App.Controls"
+    xmlns:proto="using:Atlas.V0"
+    xmlns:views="using:Atlas.App.Views"
+    xmlns:vm="using:Atlas.App.ViewModels"
+    SizeChanged="Page_SizeChanged">
+
+    <Grid x:Name="PageLayout" Padding="24" RowSpacing="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid x:Name="HeaderGrid" ColumnSpacing="20" RowSpacing="10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition x:Name="HeaderPrimaryColumn" Width="*" />
+                <ColumnDefinition x:Name="HeaderObjectiveColumn" Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <StackPanel Spacing="3">
+                <TextBlock Text="Gaming" Style="{StaticResource AtlasPageHeadingStyle}" />
+                <TextBlock Text="Understand what limits your game, apply only reversible changes, and measure whether they helped."
+                           Style="{StaticResource AtlasPageDescriptionStyle}" />
+            </StackPanel>
+            <StackPanel x:Name="ObjectiveSelector" Grid.Column="1" MinWidth="260" Spacing="4">
+                <ComboBox Header="Objective"
+                          AutomationProperties.Name="Gaming objective"
+                          ItemsSource="{x:Bind ViewModel.ObjectiveOptions}"
+                          DisplayMemberPath="Label"
+                          SelectedItem="{x:Bind ViewModel.SelectedObjectiveOption, Mode=TwoWay}" />
+                <TextBlock Text="{x:Bind ViewModel.ObjectiveExplanation, Mode=OneWay}"
+                           MaxWidth="360"
+                           TextWrapping="Wrap"
+                           Style="{StaticResource CaptionTextBlockStyle}" />
+            </StackPanel>
+        </Grid>
+
+        <InfoBar Grid.Row="1"
+                 IsOpen="{x:Bind ViewModel.HasMessage, Mode=OneWay}"
+                 IsClosable="True"
+                 Severity="{x:Bind ViewModel.MessageSeverity, Mode=OneWay}"
+                 Message="{x:Bind ViewModel.Message, Mode=OneWay}"
+                 AutomationProperties.LiveSetting="Polite" />
+
+        <CommandBar Grid.Row="2"
+                    Background="Transparent"
+                    IsOpen="True"
+                    DefaultLabelPosition="Right">
+            <CommandBar.Content>
+                <ComboBox x:Name="CompactGameSelector"
+                          Width="300"
+                          Header="Game"
+                          AutomationProperties.Name="Selected game"
+                          ItemsSource="{x:Bind ViewModel.Games}"
+                          SelectedItem="{x:Bind ViewModel.SelectedGame, Mode=TwoWay}">
+                    <ComboBox.ItemTemplate>
+                        <DataTemplate x:DataType="proto:GameInstall">
+                            <Grid ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="20" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <controls:AppIcon ExecutablePath="{x:Bind views:GamingPage.GameIconPath(CatalogId, ExecutablePath)}"
+                                                  Width="20"
+                                                  Height="20"
+                                                  AutomationProperties.AccessibilityView="Raw" />
+                                <TextBlock Grid.Column="1"
+                                           Text="{x:Bind DisplayName}"
+                                           TextTrimming="CharacterEllipsis"
+                                           VerticalAlignment="Center" />
+                            </Grid>
+                        </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                </ComboBox>
+            </CommandBar.Content>
+            <AppBarButton Label="Refresh" Click="Refresh_Click">
+                <AppBarButton.Icon><SymbolIcon Symbol="Refresh" /></AppBarButton.Icon>
+            </AppBarButton>
+            <AppBarButton Label="Plan"
+                          IsEnabled="{x:Bind ViewModel.CanPreviewPlan, Mode=OneWay}"
+                          Click="PreviewPlan_Click">
+                <AppBarButton.Icon><FontIcon Glyph="&#xE9D2;" /></AppBarButton.Icon>
+            </AppBarButton>
+            <AppBarButton Label="Record"
+                          IsEnabled="{x:Bind ViewModel.CanRecord, Mode=OneWay}"
+                          Click="StartSession_Click">
+                <AppBarButton.Icon><FontIcon Glyph="&#xE768;" /></AppBarButton.Icon>
+            </AppBarButton>
+            <AppBarButton Label="Stop"
+                          IsEnabled="{x:Bind ViewModel.CanStopRecording, Mode=OneWay}"
+                          Click="StopSession_Click">
+                <AppBarButton.Icon><SymbolIcon Symbol="Stop" /></AppBarButton.Icon>
+            </AppBarButton>
+            <AppBarButton Label="Export recording"
+                          AutomationProperties.Name="Export selected gaming recording"
+                          IsEnabled="{x:Bind ViewModel.CanExportRecording, Mode=OneWay}"
+                          Click="ExportRecording_Click">
+                <AppBarButton.Icon><SymbolIcon Symbol="Save" /></AppBarButton.Icon>
+            </AppBarButton>
+            <CommandBar.SecondaryCommands>
+                <AppBarButton Label="Keep current plan"
+                              IsEnabled="{x:Bind ViewModel.CanKeep, Mode=OneWay}"
+                              Click="Keep_Click" />
+                <AppBarButton Label="Roll back current plan"
+                              IsEnabled="{x:Bind ViewModel.CanRollback, Mode=OneWay}"
+                              Click="Rollback_Click" />
+            </CommandBar.SecondaryCommands>
+        </CommandBar>
+
+        <ScrollViewer Grid.Row="3"
+                      VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled">
+            <Grid x:Name="WorkspaceGrid" ColumnSpacing="16" RowSpacing="16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition x:Name="GameRailColumn" Width="220" />
+                    <ColumnDefinition x:Name="ProofColumn" Width="*" />
+                    <ColumnDefinition x:Name="FindingColumn" Width="360" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <Border x:Name="GameRail" Style="{StaticResource AtlasPanelStyle}" Padding="8">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="Detected games" Style="{StaticResource AtlasSectionHeadingStyle}" Margin="8,6,8,0" />
+                        <ListView ItemsSource="{x:Bind ViewModel.Games}"
+                                  SelectedItem="{x:Bind ViewModel.SelectedGame, Mode=TwoWay}"
+                                  SelectionMode="Single"
+                                  MaxHeight="650"
+                                  AutomationProperties.Name="Detected games">
+                            <ListView.ItemContainerStyle>
+                                <Style TargetType="ListViewItem" BasedOn="{StaticResource AtlasRowContainerStyle}">
+                                    <Setter Property="AutomationProperties.Name" Value="{Binding DisplayName}" />
+                                </Style>
+                            </ListView.ItemContainerStyle>
+                            <ListView.ItemTemplate>
+                                <DataTemplate x:DataType="proto:GameInstall">
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="32" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <controls:AppIcon ExecutablePath="{x:Bind views:GamingPage.GameIconPath(CatalogId, ExecutablePath)}"
+                                                          Width="32"
+                                                          Height="32"
+                                                          Margin="0,2,0,0"
+                                                          VerticalAlignment="Top"
+                                                          AutomationProperties.AccessibilityView="Raw" />
+                                        <StackPanel Grid.Column="1" Spacing="2">
+                                            <TextBlock Text="{x:Bind DisplayName}"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                            <TextBlock Text="{x:Bind Platform}" Style="{StaticResource CaptionTextBlockStyle}" />
+                                            <TextBlock Text="{x:Bind Version}"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       Style="{StaticResource CaptionTextBlockStyle}" />
+                                        </StackPanel>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                    </StackPanel>
+                </Border>
+
+                <StackPanel x:Name="ProofPane" Grid.Column="1" Spacing="16">
+                    <Border Style="{StaticResource AtlasPanelStyle}">
+                        <StackPanel Spacing="14">
+                            <StackPanel Spacing="3">
+                                <TextBlock Text="Ready check" Style="{StaticResource AtlasSectionHeadingStyle}" />
+                                <TextBlock Text="{x:Bind ViewModel.ReadinessSummary, Mode=OneWay}"
+                                           TextWrapping="Wrap"
+                                           Style="{StaticResource AtlasPageDescriptionStyle}" />
+                                <TextBlock Text="{x:Bind ViewModel.CoverageSummary, Mode=OneWay}"
+                                           TextWrapping="Wrap"
+                                           Style="{StaticResource CaptionTextBlockStyle}" />
+                            </StackPanel>
+                            <ListView ItemsSource="{x:Bind ViewModel.Facts}"
+                                      SelectionMode="None"
+                                      MaxHeight="280"
+                                      AutomationProperties.Name="Observed gaming configuration">
+                                <ListView.ItemContainerStyle>
+                                    <Style TargetType="ListViewItem" BasedOn="{StaticResource AtlasRowContainerStyle}" />
+                                </ListView.ItemContainerStyle>
+                                <ListView.ItemTemplate>
+                                    <DataTemplate x:DataType="proto:GamingFact">
+                                        <Grid ColumnSpacing="14">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="150" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="{x:Bind Label}" Style="{StaticResource CaptionTextBlockStyle}" />
+                                            <StackPanel Grid.Column="1" Spacing="2">
+                                                <TextBlock Text="{x:Bind Value}" Style="{StaticResource BodyStrongTextBlockStyle}" TextWrapping="Wrap" />
+                                                <TextBlock Text="{x:Bind Explanation}" TextWrapping="Wrap" Style="{StaticResource CaptionTextBlockStyle}" />
+                                            </StackPanel>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource AtlasPanelStyle}">
+                        <StackPanel Spacing="12">
+                            <Grid ColumnSpacing="14">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Spacing="3">
+                                    <TextBlock Text="Proof Track" Style="{StaticResource AtlasSectionHeadingStyle}" />
+                                    <TextBlock Text="Measured frame pacing sits above synchronized CPU, GPU, and memory activity on the same time axis."
+                                               TextWrapping="Wrap"
+                                               Style="{StaticResource CaptionTextBlockStyle}" />
+                                </StackPanel>
+                                <ComboBox Grid.Column="1"
+                                          Header="Recorded session"
+                                          MinWidth="240"
+                                          AutomationProperties.Name="Recorded gaming session"
+                                          ItemsSource="{x:Bind ViewModel.Sessions}"
+                                          SelectedItem="{x:Bind ViewModel.SelectedSession, Mode=TwoWay}">
+                                    <ComboBox.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:GamingSessionDisplay">
+                                            <TextBlock Text="{x:Bind Label}" />
+                                        </DataTemplate>
+                                    </ComboBox.ItemTemplate>
+                                </ComboBox>
+                            </Grid>
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="{x:Bind ViewModel.PerformanceTitle, Mode=OneWay}"
+                                           Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                <Grid x:Name="FrameMetricGrid" ColumnSpacing="18" RowSpacing="10"
+                                      AutomationProperties.Name="Selected session performance summary">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition x:Name="MetricColumn1" Width="*" />
+                                        <ColumnDefinition x:Name="MetricColumn2" Width="*" />
+                                        <ColumnDefinition x:Name="MetricColumn3" Width="*" />
+                                        <ColumnDefinition x:Name="MetricColumn4" Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <StackPanel x:Name="AverageMetric" Spacing="2">
+                                        <TextBlock Text="Average" Style="{StaticResource CaptionTextBlockStyle}" />
+                                        <TextBlock Text="{x:Bind ViewModel.AverageFps, Mode=OneWay}" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                    </StackPanel>
+                                    <StackPanel x:Name="LowMetric" Grid.Column="1" Spacing="2">
+                                        <TextBlock Text="1% low" Style="{StaticResource CaptionTextBlockStyle}" />
+                                        <TextBlock Text="{x:Bind ViewModel.OnePercentLowFps, Mode=OneWay}" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                    </StackPanel>
+                                    <StackPanel x:Name="P95Metric" Grid.Column="2" Spacing="2">
+                                        <TextBlock Text="Frame p95" Style="{StaticResource CaptionTextBlockStyle}" />
+                                        <TextBlock Text="{x:Bind ViewModel.FrameTimeP95, Mode=OneWay}" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                    </StackPanel>
+                                    <StackPanel x:Name="LongFrameMetric" Grid.Column="3" Spacing="2">
+                                        <TextBlock Text="Long frames" Style="{StaticResource CaptionTextBlockStyle}" />
+                                        <TextBlock Text="{x:Bind ViewModel.LongFrames, Mode=OneWay}" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                    </StackPanel>
+                                </Grid>
+                                <TextBlock Text="{x:Bind ViewModel.PerformanceExplanation, Mode=OneWay}"
+                                           TextWrapping="Wrap" />
+                                <TextBlock Text="{x:Bind ViewModel.PerformanceEvidence, Mode=OneWay}"
+                                           TextWrapping="Wrap"
+                                           Style="{StaticResource CaptionTextBlockStyle}" />
+                            </StackPanel>
+                            <controls:GamingProofTrack x:Name="ProofTrack"
+                                                       EmptyMessage="{x:Bind ViewModel.TraceEmptyMessage, Mode=OneWay}" />
+                            <TextBlock Text="{x:Bind ViewModel.TraceSummaryText, Mode=OneWay}"
+                                       TextWrapping="Wrap"
+                                       Style="{StaticResource CaptionTextBlockStyle}" />
+                            <TextBlock Text="Accessible trace summary" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                            <Grid ColumnSpacing="10" Margin="12,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="1.4*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Time" Style="{StaticResource AtlasColumnHeaderStyle}" />
+                                <TextBlock Grid.Column="1" Text="Frame" Style="{StaticResource AtlasColumnHeaderStyle}" />
+                                <TextBlock Grid.Column="2" Text="CPU" Style="{StaticResource AtlasColumnHeaderStyle}" />
+                                <TextBlock Grid.Column="3" Text="GPU" Style="{StaticResource AtlasColumnHeaderStyle}" />
+                                <TextBlock Grid.Column="4" Text="Memory" Style="{StaticResource AtlasColumnHeaderStyle}" />
+                                <TextBlock Grid.Column="5" Text="Temperature" Style="{StaticResource AtlasColumnHeaderStyle}" />
+                                <TextBlock Grid.Column="6" Text="State" Style="{StaticResource AtlasColumnHeaderStyle}" />
+                            </Grid>
+                            <ListView ItemsSource="{x:Bind ViewModel.TraceSummary}"
+                                      SelectionMode="None"
+                                      MaxHeight="260"
+                                      AutomationProperties.Name="Accessible synchronized trace summary">
+                                <ListView.ItemContainerStyle>
+                                    <Style TargetType="ListViewItem" BasedOn="{StaticResource AtlasRowContainerStyle}" />
+                                </ListView.ItemContainerStyle>
+                                <ListView.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:GamingTraceSummaryRow">
+                                        <Grid ColumnSpacing="10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="1.4*" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="{x:Bind Time}" />
+                                            <TextBlock Grid.Column="1" Text="{x:Bind Frame}" />
+                                            <TextBlock Grid.Column="2" Text="{x:Bind Cpu}" />
+                                            <TextBlock Grid.Column="3" Text="{x:Bind Gpu}" />
+                                            <TextBlock Grid.Column="4" Text="{x:Bind Memory}" />
+                                            <TextBlock Grid.Column="5" Text="{x:Bind Temperature}" />
+                                            <TextBlock Grid.Column="6" Text="{x:Bind State}" TextWrapping="Wrap" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+
+                <Border x:Name="FindingsPane" Grid.Column="2" Style="{StaticResource AtlasPanelStyle}">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="What matters first" Style="{StaticResource AtlasSectionHeadingStyle}" />
+                        <TextBlock Text="Each finding includes the observation, impact, evidence, tradeoff, rollback, and proof method."
+                                   TextWrapping="Wrap"
+                                   Style="{StaticResource CaptionTextBlockStyle}" />
+                        <ListView ItemsSource="{x:Bind ViewModel.Findings}"
+                                  SelectionMode="Single"
+                                  MaxHeight="900"
+                                  AutomationProperties.Name="Prioritized gaming findings">
+                            <ListView.ItemContainerStyle>
+                                <Style TargetType="ListViewItem" BasedOn="{StaticResource AtlasRowContainerStyle}" />
+                            </ListView.ItemContainerStyle>
+                            <ListView.ItemTemplate>
+                                <DataTemplate x:DataType="vm:GamingFindingViewModel">
+                                    <StackPanel Spacing="8" Padding="0,4,0,10">
+                                        <TextBlock Text="{x:Bind Title}" Style="{StaticResource BodyStrongTextBlockStyle}" TextWrapping="Wrap" />
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Observed" Style="{StaticResource CaptionTextBlockStyle}" />
+                                            <TextBlock Text="{x:Bind Observed}" TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Why it matters" Style="{StaticResource CaptionTextBlockStyle}" />
+                                            <TextBlock Text="{x:Bind WhyItMatters}" TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Evidence and confidence" Style="{StaticResource CaptionTextBlockStyle}" />
+                                            <TextBlock Text="{x:Bind Evidence}" TextWrapping="Wrap" />
+                                            <TextBlock Text="{x:Bind Confidence}" TextWrapping="Wrap" Style="{StaticResource CaptionTextBlockStyle}" />
+                                        </StackPanel>
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Expected benefit and tradeoff" Style="{StaticResource CaptionTextBlockStyle}" />
+                                            <TextBlock Text="{x:Bind ExpectedBenefit}" TextWrapping="Wrap" />
+                                            <TextBlock Text="{x:Bind Tradeoff}" TextWrapping="Wrap" Style="{StaticResource CaptionTextBlockStyle}" />
+                                        </StackPanel>
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Rollback and verification" Style="{StaticResource CaptionTextBlockStyle}" />
+                                            <TextBlock Text="{x:Bind Rollback}" TextWrapping="Wrap" />
+                                            <TextBlock Text="{x:Bind Verification}" TextWrapping="Wrap" Style="{StaticResource CaptionTextBlockStyle}" />
+                                        </StackPanel>
+                                        <TextBlock Text="{x:Bind Timing}" TextWrapping="Wrap" Style="{StaticResource CaptionTextBlockStyle}" />
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Data limits and sources" Style="{StaticResource CaptionTextBlockStyle}" />
+                                            <TextBlock Text="{x:Bind Limitations}" TextWrapping="Wrap" />
+                                            <TextBlock Text="{x:Bind Sources}" TextWrapping="Wrap" Style="{StaticResource CaptionTextBlockStyle}" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                    </StackPanel>
+                </Border>
+
+                <StackPanel x:Name="EmptyLibraryState"
+                            Grid.ColumnSpan="3"
+                            Padding="24,80"
+                            Visibility="{x:Bind ViewModel.IsEmptyLibrary, Mode=OneWay}"
+                            Spacing="8">
+                    <TextBlock Text="No detected game library" Style="{StaticResource AtlasEmptyStateTitleStyle}" />
+                    <TextBlock Text="Atlas checks known Steam, Riot, Epic, EA, Battle.net, and Xbox/MSIX registration points. It never starts with an unbounded drive scan."
+                               Style="{StaticResource AtlasEmptyStateBodyStyle}" />
+                    <Button Content="Check launcher manifests again"
+                            HorizontalAlignment="Center"
+                            Click="Refresh_Click" />
+                </StackPanel>
+            </Grid>
+        </ScrollViewer>
+    </Grid>
+</Page>

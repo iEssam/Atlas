@@ -52,6 +52,12 @@ public sealed partial class SensorsViewModel : ObservableObject
 
     public ObservableCollection<ThermalSensorItem> Sensors { get; } = new();
 
+    // ---- GPU vendor sensor coverage --------------------------------------
+    [ObservableProperty] private bool _gpuAbsent;
+    [ObservableProperty] private bool _gpuPresent;
+    [ObservableProperty] private string _gpuNote = string.Empty;
+    public ObservableCollection<GpuSensorItem> GpuSensors { get; } = new();
+
     // ---- Startup history (boots) card -------------------------------------
     [ObservableProperty] private bool _bootsUnsupported;
     [ObservableProperty] private bool _bootsAbsent;
@@ -81,6 +87,7 @@ public sealed partial class SensorsViewModel : ObservableObject
             await Task.WhenAll(
                 LoadBatteryAsync(channel, ct),
                 LoadThermalAsync(channel, ct),
+                LoadGpuAsync(channel, ct),
                 LoadBootsAsync(channel, ct)).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
@@ -210,6 +217,70 @@ public sealed partial class SensorsViewModel : ObservableObject
         ThermalNote = note;
     }
 
+    private async Task LoadGpuAsync(AtlasChannel channel, CancellationToken ct)
+    {
+        try
+        {
+            var reply = await channel.GetSnapshotAsync(0, ct).ConfigureAwait(false);
+            if (ct.IsCancellationRequested) return;
+            Post(() =>
+            {
+                GpuSensors.Clear();
+                foreach (var a in reply.GpuAdapters)
+                {
+                    var readings = new List<string>();
+                    AddGpuReading(readings, a, GpuSensorKind.GpuSensorCoreTemperature, a.HasTemperatureC ? $"core {a.TemperatureC:F1} °C" : null);
+                    AddGpuReading(readings, a, GpuSensorKind.GpuSensorPowerWatts, a.HasPowerW ? $"draw {a.PowerW:F1} W" : null);
+                    AddGpuReading(readings, a, GpuSensorKind.GpuSensorPowerPercent, a.HasPowerPercent ? $"power load {a.PowerPercent:F1} %" : null);
+                    AddGpuReading(readings, a, GpuSensorKind.GpuSensorCoreClock, a.HasCoreClockMhz ? $"core {a.CoreClockMhz} MHz" : null);
+                    AddGpuReading(readings, a, GpuSensorKind.GpuSensorMemoryClock, a.HasMemoryClockMhz ? $"memory {a.MemoryClockMhz} MHz" : null);
+                    AddGpuReading(readings, a, GpuSensorKind.GpuSensorFanRpm, a.HasFanRpm ? $"fan {a.FanRpm} RPM" : null);
+                    AddGpuReading(readings, a, GpuSensorKind.GpuSensorFanPercent, a.HasFanPercent ? $"fan target {a.FanPercent:F1} %" : null);
+                    readings.AddRange(a.Temperatures
+                        .Where(t => t.Kind != GpuTemperatureKind.GpuTemperatureCore)
+                        .Select(t => $"{t.Label} {t.Celsius:F1} °C · {GpuAdapterItem.SourceName(t.Source)}"));
+                    var unavailable = a.SensorAvailability
+                        .Where(v => !v.Available)
+                        .Select(v => $"{GpuAdapterItem.SourceName(v.Source)} {v.Kind.ToString().Replace("GpuSensor", string.Empty)}: {GpuAdapterItem.ReasonCode(v.Reason)}")
+                        .Distinct()
+                        .ToList();
+                    var source = unavailable.Count == 0
+                        ? (string.IsNullOrWhiteSpace(a.SensorSource) ? "No provider status was reported." : a.SensorSource)
+                        : string.Join(" · ", unavailable);
+                    GpuSensors.Add(new GpuSensorItem(
+                        string.IsNullOrWhiteSpace(a.Name) ? "GPU" : a.Name,
+                        string.Join(" · ", readings), source));
+                }
+                GpuPresent = GpuSensors.Count > 0;
+                GpuAbsent = !GpuPresent;
+                GpuNote = GpuAbsent
+                    ? MonitorFormatter.UnavailableReason(reply.GpuUnavailableReason, "Windows did not expose GPU adapters for this session.")
+                    : string.Empty;
+            });
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Post(() =>
+            {
+                GpuSensors.Clear();
+                GpuPresent = false;
+                GpuAbsent = true;
+                GpuNote = $"GPU sensor coverage could not be read: {ex.Message}";
+            });
+        }
+    }
+
+    private static void AddGpuReading(List<string> readings, GpuAdapterTelemetry adapter, GpuSensorKind kind, string? value)
+    {
+        if (value is null) return;
+        var source = adapter.SensorAvailability
+            .Where(v => v.Kind == kind && v.Available)
+            .OrderByDescending(v => v.Source == GpuTelemetrySource.GpuSourceNvidiaNvml)
+            .Select(v => GpuAdapterItem.SourceName(v.Source))
+            .FirstOrDefault();
+        readings.Add(string.IsNullOrWhiteSpace(source) ? value : $"{value} · {source}");
+    }
+
     private async Task LoadBootsAsync(AtlasChannel channel, CancellationToken ct)
     {
         RpcOutcome<ListBootsReply> outcome;
@@ -287,6 +358,20 @@ public sealed class ThermalSensorItem
         Name = name;
         TemperatureText = temperatureText;
         SourceText = sourceText;
+    }
+}
+
+public sealed class GpuSensorItem
+{
+    public string Name { get; }
+    public string ReadingsText { get; }
+    public string CoverageText { get; }
+
+    public GpuSensorItem(string name, string readingsText, string coverageText)
+    {
+        Name = name;
+        ReadingsText = readingsText;
+        CoverageText = coverageText;
     }
 }
 

@@ -15,8 +15,7 @@
 
             <!-- Name -->
             <StackPanel Spacing="4">
-                <TextBlock Text="Rule name" Style="{StaticResource CaptionTextBlockStyle}"
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <TextBlock Text="RULE NAME" Style="{StaticResource AtlasSectionLabelStyle}" />
                 <TextBox x:Name="NameBox"
                          AutomationProperties.Name="Rule name"
                          PlaceholderText="e.g. Tame background Chrome" />
@@ -24,9 +23,9 @@
 
             <!-- Match image -->
             <StackPanel Spacing="4">
-                <TextBlock Text="Match process image" Style="{StaticResource CaptionTextBlockStyle}"
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <TextBlock Text="MATCH PROCESS IMAGE" Style="{StaticResource AtlasSectionLabelStyle}" />
                 <TextBox x:Name="MatchBox"
+                         FontFamily="{ThemeResource AtlasMonoFontFamily}"
                          AutomationProperties.Name="Match process image name"
                          PlaceholderText="e.g. chrome.exe" />
                 <TextBlock Text="Case-insensitive image name. This rule applies only to processes with this image."
@@ -37,22 +36,32 @@
 
             <!-- Trigger -->
             <StackPanel Spacing="4">
-                <TextBlock Text="When to apply" Style="{StaticResource CaptionTextBlockStyle}"
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <TextBlock Text="WHEN TO APPLY" Style="{StaticResource AtlasSectionLabelStyle}" />
                 <ComboBox x:Name="TriggerBox"
                           AutomationProperties.Name="When to apply the rule"
-                          HorizontalAlignment="Stretch" SelectedIndex="0">
+                          HorizontalAlignment="Stretch" SelectedIndex="0"
+                          SelectionChanged="TriggerBox_SelectionChanged">
                     <ComboBoxItem Content="While running" Tag="while" />
                     <ComboBoxItem Content="On AC power" Tag="ac" />
                     <ComboBoxItem Content="On battery" Tag="dc" />
                     <ComboBoxItem Content="In fullscreen apps" Tag="fullscreen" />
+                    <ComboBoxItem Content="After sustained GPU load" Tag="gpu" />
+                    <ComboBoxItem Content="During reported GPU thermal throttling" Tag="gpu-thermal" />
                 </ComboBox>
+                <Grid x:Name="GpuThresholdPanel" Visibility="Collapsed" ColumnSpacing="12">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                    <NumberBox x:Name="GpuThresholdBox" Header="GPU load (%)" Value="80"
+                               Minimum="1" Maximum="100" SmallChange="5" SpinButtonPlacementMode="Inline"
+                               AutomationProperties.Name="GPU load threshold percent" />
+                    <NumberBox x:Name="GpuDurationBox" Grid.Column="1" Header="Sustain for (seconds)" Value="5"
+                               Minimum="1" Maximum="300" SmallChange="1" SpinButtonPlacementMode="Inline"
+                               AutomationProperties.Name="GPU load duration seconds" />
+                </Grid>
             </StackPanel>
 
             <!-- Priority -->
             <StackPanel Spacing="4">
-                <TextBlock Text="Priority class" Style="{StaticResource CaptionTextBlockStyle}"
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <TextBlock Text="PRIORITY CLASS" Style="{StaticResource AtlasSectionLabelStyle}" />
                 <ComboBox x:Name="PriorityBox"
                           AutomationProperties.Name="Priority class"
                           HorizontalAlignment="Stretch" SelectedIndex="0">
@@ -67,8 +76,7 @@
 
             <!-- Affinity -->
             <StackPanel Spacing="4">
-                <TextBlock Text="Core affinity" Style="{StaticResource CaptionTextBlockStyle}"
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <TextBlock Text="CORE AFFINITY" Style="{StaticResource AtlasSectionLabelStyle}" />
                 <ComboBox x:Name="AffinityBox"
                           AutomationProperties.Name="Core affinity mode"
                           HorizontalAlignment="Stretch" SelectedIndex="0"
@@ -81,6 +89,7 @@
                 </ComboBox>
                 <StackPanel x:Name="CustomMaskPanel" Spacing="4" Visibility="Collapsed">
                     <TextBox x:Name="CustomMaskBox"
+                             FontFamily="{ThemeResource AtlasMonoFontFamily}"
                              AutomationProperties.Name="Custom core list"
                              PlaceholderText="e.g. 0-3,8" />
                     <TextBlock x:Name="CustomMaskError"
@@ -100,8 +109,7 @@
 
             <!-- Precedence -->
             <StackPanel Spacing="4">
-                <TextBlock Text="Precedence" Style="{StaticResource CaptionTextBlockStyle}"
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <TextBlock Text="PRECEDENCE" Style="{StaticResource AtlasSectionLabelStyle}" />
                 <NumberBox x:Name="PrecedenceBox"
                            AutomationProperties.Name="Rule precedence"
                            Value="0" SpinButtonPlacementMode="Inline"
@@ -136,8 +144,9 @@
                 <StackPanel Spacing="10" Margin="0,4,0,0">
                     <TextBlock TextWrapping="Wrap"
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                               Text="See exactly which running processes this rule would change — nothing is applied until you save." />
+                               Text="See exactly which running processes this rule would change - nothing is applied until you save." />
                     <Button x:Name="PreviewButton"
+                            Style="{StaticResource AtlasGhostButtonStyle}"
                             AutomationProperties.Name="Run preview"
                             Content="Run preview"
                             Click="PreviewButton_Click" />

@@ -17,7 +17,11 @@ pub mod deviceinfo;
 #[cfg(windows)]
 pub mod events;
 pub mod ffi;
+#[cfg(windows)]
+pub mod gaming;
 pub mod gauges;
+pub mod gpu;
+pub mod gpu_vendor;
 pub mod grouping;
 #[cfg(windows)]
 pub mod handles;
@@ -68,7 +72,21 @@ pub use crashes::{
 pub use deviceinfo::{device_info, DeviceInfo};
 #[cfg(windows)]
 pub use events::{EventError, ProcessEvent, ProcessEventKind, ProcessEventWatcher, WatcherOptions};
+#[cfg(windows)]
+pub use gaming::{
+    discover_games, primary_display, DiscoveredGame, DiscoveryCapability, GameDiscoveryReport,
+    GamePlatform as DiscoveredGamePlatform, GameSupportLevel as DiscoveredGameSupportLevel,
+    PrimaryDisplayReading, GAMING_ADAPTER_VERSION,
+};
 pub use gauges::{cpu_times, memory_status, processor_count, CpuTimes, MemoryStatus};
+pub use gpu::{
+    AdapterId, AdapterLuid, AvailabilityReason as GpuAvailabilityReason,
+    EngineClass as GpuEngineClass, GpuAdapterSample, GpuCollector, GpuEngineSample,
+    GpuProcessSample, GpuSnapshot, SensorAvailability as GpuSensorAvailability,
+    SensorKind as GpuSensorKind, TelemetrySource as GpuTelemetrySource,
+    TemperatureKind as GpuTemperatureKind, TemperatureSample as GpuTemperatureSample,
+    ThrottleReason as GpuThrottleReason,
+};
 pub use grouping::{group_processes, image_family, GroupInput, GroupOutput, ProcessRole};
 #[cfg(windows)]
 pub use handles::{list_handles, HandleRow, HandlesResult};
@@ -85,9 +103,9 @@ pub use network::{
 #[cfg(windows)]
 pub use policy::{
     cpu_topology, eco_is_on, foreground_pid, get_affinity, get_default_cpu_sets, get_eco_qos,
-    get_priority_class, power_is_ac, priority_class_name, restore_eco_qos, set_affinity_mask,
-    set_default_cpu_sets, set_eco_qos, set_power_overlay, set_priority_class, AffinityView,
-    CpuTopology, EcoState, PolicyOutcome,
+    get_power_overlay_state, get_priority_class, power_is_ac, priority_class_name, restore_eco_qos,
+    restore_power_overlay_state, set_affinity_mask, set_default_cpu_sets, set_eco_qos,
+    set_power_overlay, set_priority_class, AffinityView, CpuTopology, EcoState, PolicyOutcome,
 };
 #[cfg(windows)]
 pub use power::{battery_status, thermal_status, BatteryReading, ThermalReading, ThermalSensor};

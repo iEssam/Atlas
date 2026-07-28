@@ -149,6 +149,7 @@ public static class R3Formatter
         CrashKind.Bugcheck => "System bugcheck",
         CrashKind.ServiceFailure => "Service failure",
         CrashKind.UnexpectedShutdown => "Unexpected shutdown",
+        CrashKind.GpuDriverReset => "GPU driver reset",
         _ => "Reliability event",
     };
 
@@ -178,6 +179,7 @@ public static class R3Formatter
         CrashKind.Bugcheck => "caution",
         CrashKind.ServiceFailure => "caution",
         CrashKind.UnexpectedShutdown => "neutral",
+        CrashKind.GpuDriverReset => "caution",
         _ => "neutral",
     };
 

@@ -16,21 +16,28 @@
         </Grid.RowDefinitions>
 
         <!-- Title + New -->
-        <Grid Grid.Row="0">
-            <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
-                <TextBlock Text="Privacy Alerts" Style="{StaticResource TitleTextBlockStyle}" />
-                <TextBlock VerticalAlignment="Bottom"
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                           Text="Get told when camera, microphone, or location is used" />
-                <Border x:Name="DemoBadge" Visibility="Collapsed"
-                        VerticalAlignment="Center"
-                        Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
-                        CornerRadius="4" Padding="8,2">
-                    <TextBlock Text="Demo data" Style="{StaticResource CaptionTextBlockStyle}" />
-                </Border>
+        <Grid Grid.Row="0" ColumnSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0" Spacing="4">
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                    <Border x:Name="DemoBadge" Visibility="Collapsed"
+                            VerticalAlignment="Center"
+                            Background="{ThemeResource AtlasAmberTintBrush}"
+                            CornerRadius="2" Padding="8,2">
+                        <TextBlock Text="DEMO DATA" Style="{StaticResource AtlasSectionLabelStyle}"
+                                   Foreground="{ThemeResource AtlasAmberBrush}" />
+                    </Border>
+                </StackPanel>
+                <TextBlock Text="Privacy Alerts" Style="{StaticResource AtlasPageHeadingStyle}" />
+                <TextBlock Style="{StaticResource AtlasPageDescriptionStyle}"
+                           Text="Informational rules that notify you when an app uses the camera, microphone, or location. Alerts only inform - they never block an app." />
             </StackPanel>
             <Button x:Name="NewAlertButton"
-                    HorizontalAlignment="Right"
+                    Grid.Column="1"
+                    VerticalAlignment="Top"
                     AutomationProperties.Name="New privacy alert"
                     Style="{StaticResource AccentButtonStyle}"
                     Click="NewAlert_Click">
@@ -44,7 +51,8 @@
         <!-- Status line -->
         <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="12">
             <ProgressRing IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}" Width="16" Height="16" />
-            <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+            <TextBlock VerticalAlignment="Center"
+                       Style="{StaticResource AtlasMonoMutedStyle}"
                        Text="{x:Bind ViewModel.StatusText, Mode=OneWay}" />
         </StackPanel>
 
@@ -54,30 +62,24 @@
             <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
                         Visibility="{x:Bind ViewModel.IsUnavailable, Mode=OneWay}">
                 <FontIcon Glyph="&#xE7BA;" FontSize="28"
-                          Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                          Foreground="{ThemeResource AtlasDimBrush}"
                           HorizontalAlignment="Center" />
                 <TextBlock Text="Privacy alerts unavailable"
-                           Style="{StaticResource SubtitleTextBlockStyle}"
-                           HorizontalAlignment="Center" />
+                           Style="{StaticResource AtlasEmptyStateTitleStyle}" />
                 <TextBlock Text="The connected service is too old to manage privacy alerts. Update the Atlas service to use them."
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                           TextWrapping="Wrap" MaxWidth="420"
-                           HorizontalTextAlignment="Center" />
+                           Style="{StaticResource AtlasEmptyStateBodyStyle}" MaxWidth="420" />
             </StackPanel>
 
             <!-- Empty -->
             <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
                         Visibility="{x:Bind ViewModel.IsEmpty, Mode=OneWay}">
                 <FontIcon Glyph="&#xEA8F;" FontSize="28"
-                          Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                          Foreground="{ThemeResource AtlasDimBrush}"
                           HorizontalAlignment="Center" />
                 <TextBlock Text="No alert rules yet"
-                           Style="{StaticResource SubtitleTextBlockStyle}"
-                           HorizontalAlignment="Center" />
-                <TextBlock Text="Add an alert to be told when an app uses your camera, microphone, or location — for example, in the background or while your screen is locked. Alerts only inform you; they never block anything."
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                           TextWrapping="Wrap" MaxWidth="440"
-                           HorizontalTextAlignment="Center" />
+                           Style="{StaticResource AtlasEmptyStateTitleStyle}" />
+                <TextBlock Text="Add an alert to be told when an app uses your camera, microphone, or location - for example, in the background or while your screen is locked. Alerts only inform you; they never block anything."
+                           Style="{StaticResource AtlasEmptyStateBodyStyle}" MaxWidth="440" />
             </StackPanel>
 
             <Grid Visibility="{x:Bind ViewModel.IsUnavailable, Mode=OneWay, Converter={StaticResource InverseBoolToVisibility}}">
@@ -88,6 +90,8 @@
 
                 <!-- Header -->
                 <Grid Grid.Row="0" Padding="16,4,16,8" ColumnSpacing="12"
+                      BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                      BorderThickness="0,0,0,1"
                       Visibility="{x:Bind ViewModel.IsEmpty, Mode=OneWay, Converter={StaticResource InverseBoolToVisibility}}">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="2*" />
@@ -96,14 +100,10 @@
                         <ColumnDefinition Width="Auto" MinWidth="96" />
                         <ColumnDefinition Width="Auto" MinWidth="96" />
                     </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="Name" Style="{StaticResource CaptionTextBlockStyle}"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                    <TextBlock Grid.Column="1" Text="Capability" Style="{StaticResource CaptionTextBlockStyle}"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                    <TextBlock Grid.Column="2" Text="Alert when" Style="{StaticResource CaptionTextBlockStyle}"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                    <TextBlock Grid.Column="3" Text="Enabled" Style="{StaticResource CaptionTextBlockStyle}"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <TextBlock Grid.Column="0" Text="NAME" Style="{StaticResource AtlasColumnHeaderStyle}" />
+                    <TextBlock Grid.Column="1" Text="CAPABILITY" Style="{StaticResource AtlasColumnHeaderStyle}" />
+                    <TextBlock Grid.Column="2" Text="ALERT WHEN" Style="{StaticResource AtlasColumnHeaderStyle}" />
+                    <TextBlock Grid.Column="3" Text="ENABLED" Style="{StaticResource AtlasColumnHeaderStyle}" />
                 </Grid>
 
                 <!-- Rows -->
@@ -116,6 +116,9 @@
                             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
                             <Setter Property="Padding" Value="8,6" />
                             <Setter Property="MinHeight" Value="0" />
+                            <Setter Property="CornerRadius" Value="0" />
+                            <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+                            <Setter Property="BorderThickness" Value="0,0,0,1" />
                         </Style>
                     </ListView.ItemContainerStyle>
                     <ListView.ItemTemplate>
@@ -135,14 +138,14 @@
                                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8"
                                             VerticalAlignment="Center">
                                     <FontIcon Glyph="{x:Bind CapabilityGlyph}" FontSize="14"
-                                              Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                              Foreground="{ThemeResource AtlasMutedBrush}" />
                                     <TextBlock Text="{x:Bind CapabilityText}"
                                                TextTrimming="CharacterEllipsis" />
                                 </StackPanel>
                                 <TextBlock Grid.Column="2" VerticalAlignment="Center"
                                            Text="{x:Bind ConditionText}"
                                            TextTrimming="CharacterEllipsis"
-                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                           Style="{StaticResource AtlasMonoMutedStyle}" />
                                 <ToggleSwitch Grid.Column="3" VerticalAlignment="Center"
                                               MinWidth="0"
                                               AutomationProperties.Name="Enable alert"
@@ -173,11 +176,10 @@
             </Grid>
         </Grid>
 
-        <!-- Recent alerts (the log — factual, PRD §9.10.3) -->
+        <!-- Recent alerts (the log - factual, PRD §9.10.3) -->
         <Border Grid.Row="3"
-                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                BorderThickness="1" CornerRadius="8" Padding="16,12"
+                Style="{StaticResource AtlasPanelStyle}"
+                Padding="16,12"
                 MaxHeight="260">
             <Grid RowSpacing="8">
                 <Grid.RowDefinitions>
@@ -187,15 +189,16 @@
                 </Grid.RowDefinitions>
 
                 <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8">
-                    <FontIcon Glyph="&#xEA8F;" FontSize="16" VerticalAlignment="Center" />
-                    <TextBlock Text="Recent alerts"
-                               Style="{StaticResource BodyStrongTextBlockStyle}"
+                    <FontIcon Glyph="&#xEA8F;" FontSize="14" VerticalAlignment="Center"
+                              Foreground="{ThemeResource AtlasMutedBrush}" />
+                    <TextBlock Text="RECENT ALERTS"
+                               Style="{StaticResource AtlasSectionLabelStyle}"
                                VerticalAlignment="Center" />
                 </StackPanel>
 
                 <TextBlock Grid.Row="1"
                            Text="{x:Bind ViewModel.AlertsStatus, Mode=OneWay}"
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                           Style="{StaticResource AtlasMonoMutedStyle}"
                            TextWrapping="Wrap" />
 
                 <!-- Unavailable note -->
@@ -211,9 +214,9 @@
                                   AutomationProperties.Name="Recent alerts list">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate x:DataType="vm:FiredAlertRowViewModel">
-                                <Grid ColumnSpacing="12" Padding="0,6"
+                                <Grid ColumnSpacing="12" Padding="0,7"
                                       ToolTipService.ToolTip="{x:Bind Line}"
-                                      BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                                      BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                                       BorderThickness="0,0,0,1">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto" />
@@ -224,21 +227,21 @@
                                     </Grid.ColumnDefinitions>
                                     <FontIcon Grid.Column="0" Glyph="{x:Bind Glyph}" FontSize="14"
                                               VerticalAlignment="Center"
-                                              Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                              Foreground="{ThemeResource AtlasDimBrush}" />
                                     <TextBlock Grid.Column="1" VerticalAlignment="Center"
                                                Text="{x:Bind Capability}" />
                                     <TextBlock Grid.Column="2" VerticalAlignment="Center"
                                                Text="{x:Bind AppName}"
+                                               Style="{StaticResource AtlasMonoStyle}"
                                                TextTrimming="CharacterEllipsis" />
                                     <TextBlock Grid.Column="3" VerticalAlignment="Center"
                                                Text="{x:Bind Detail}"
                                                TextTrimming="CharacterEllipsis"
-                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                               Style="{StaticResource AtlasMonoMutedStyle}" />
                                     <TextBlock Grid.Column="4" VerticalAlignment="Center"
                                                HorizontalAlignment="Right"
                                                Text="{x:Bind TimeText}"
-                                               Style="{StaticResource CaptionTextBlockStyle}"
-                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                               Style="{StaticResource AtlasMonoMutedStyle}" />
                                 </Grid>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>

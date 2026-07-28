@@ -7,23 +7,75 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
 
-    <Grid Padding="24" RowSpacing="16">
+    <Grid x:Name="LayoutRoot" Padding="12" RowSpacing="16">
+        <VisualStateManager.VisualStateGroups>
+            <VisualStateGroup x:Name="WindowWidthStates">
+                <VisualState x:Name="Compact">
+                    <VisualState.Setters>
+                        <Setter Target="WindowPicker.(Grid.ColumnSpan)" Value="4" />
+                        <Setter Target="DiagnoseWindowButton.(Grid.Row)" Value="1" />
+                        <Setter Target="DiagnoseWindowButton.(Grid.Column)" Value="0" />
+                        <Setter Target="IncidentStatus.(Grid.Row)" Value="2" />
+                        <Setter Target="IncidentStatus.(Grid.Column)" Value="0" />
+                        <Setter Target="IncidentStatus.(Grid.ColumnSpan)" Value="4" />
+                        <Setter Target="RefreshButton.(Grid.Row)" Value="1" />
+                        <Setter Target="RefreshButton.(Grid.Column)" Value="3" />
+                    </VisualState.Setters>
+                </VisualState>
+                <VisualState x:Name="Medium">
+                    <VisualState.StateTriggers>
+                        <AdaptiveTrigger MinWindowWidth="640" />
+                    </VisualState.StateTriggers>
+                    <VisualState.Setters>
+                        <Setter Target="LayoutRoot.Padding" Value="20" />
+                        <Setter Target="IncidentListRow.Height" Value="2*" />
+                        <Setter Target="DiagnosisRow.Height" Value="3*" />
+                    </VisualState.Setters>
+                </VisualState>
+                <VisualState x:Name="Wide">
+                    <VisualState.StateTriggers>
+                        <AdaptiveTrigger MinWindowWidth="1008" />
+                    </VisualState.StateTriggers>
+                    <VisualState.Setters>
+                        <Setter Target="LayoutRoot.Padding" Value="24" />
+                        <Setter Target="WindowPicker.(Grid.ColumnSpan)" Value="1" />
+                        <Setter Target="DiagnoseWindowButton.(Grid.Row)" Value="0" />
+                        <Setter Target="DiagnoseWindowButton.(Grid.Column)" Value="1" />
+                        <Setter Target="IncidentStatus.(Grid.Row)" Value="0" />
+                        <Setter Target="IncidentStatus.(Grid.Column)" Value="2" />
+                        <Setter Target="IncidentStatus.(Grid.ColumnSpan)" Value="1" />
+                        <Setter Target="RefreshButton.(Grid.Row)" Value="0" />
+                        <Setter Target="RefreshButton.(Grid.Column)" Value="3" />
+                        <Setter Target="IncidentListColumn.Width" Value="340" />
+                        <Setter Target="DiagnosisColumn.Width" Value="*" />
+                        <Setter Target="IncidentListRow.Height" Value="*" />
+                        <Setter Target="DiagnosisRow.Height" Value="0" />
+                        <Setter Target="DiagnosisPanel.(Grid.Row)" Value="0" />
+                        <Setter Target="DiagnosisPanel.(Grid.Column)" Value="1" />
+                    </VisualState.Setters>
+                </VisualState>
+            </VisualStateGroup>
+        </VisualStateManager.VisualStateGroups>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <!-- Title -->
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="12">
-            <TextBlock Text="Diagnostics" Style="{StaticResource TitleTextBlockStyle}" />
-            <TextBlock VerticalAlignment="Bottom"
-                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                       Text="Explains recorded incidents — read-only, never invented" />
+        <!-- ===== Page heading ===== -->
+        <StackPanel Grid.Row="0" Spacing="4">
+            <TextBlock Text="Diagnostics" Style="{StaticResource AtlasPageHeadingStyle}" />
+            <TextBlock Style="{StaticResource AtlasPageDescriptionStyle}"
+                       Text="Explains recorded incidents from measured evidence - read-only, never invented. Facts and correlations are marked apart." />
         </StackPanel>
 
         <!-- Controls: window + ad-hoc diagnose -->
-        <Grid Grid.Row="1" ColumnSpacing="12">
+        <Grid Grid.Row="1" ColumnSpacing="12" RowSpacing="8">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
@@ -31,7 +83,7 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
 
-            <ComboBox Grid.Column="0"
+            <ComboBox x:Name="WindowPicker" Grid.Column="0"
                       AutomationProperties.Name="Diagnostics window"
                       MinWidth="160"
                       ItemsSource="{x:Bind ViewModel.Windows}"
@@ -39,20 +91,22 @@
 
             <Button Grid.Column="1"
                     x:Name="DiagnoseWindowButton"
+                    Style="{StaticResource AtlasGhostButtonStyle}"
                     AutomationProperties.Name="Diagnose the current window"
                     Content="Diagnose current window"
                     Click="OnDiagnoseWindowClick" />
 
-            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+            <StackPanel x:Name="IncidentStatus" Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                 <ProgressRing IsActive="{x:Bind ViewModel.IsLoadingIncidents, Mode=OneWay}"
                               Width="16" Height="16" />
-                <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                <TextBlock Style="{StaticResource AtlasMonoMutedStyle}"
                            VerticalAlignment="Center"
                            Text="{x:Bind ViewModel.IncidentsStatus, Mode=OneWay}" />
             </StackPanel>
 
             <Button Grid.Column="3"
                     x:Name="RefreshButton"
+                    Style="{StaticResource AtlasGhostButtonStyle}"
                     AutomationProperties.Name="Refresh incidents"
                     Click="OnRefreshClick">
                 <StackPanel Orientation="Horizontal" Spacing="8">
@@ -63,31 +117,30 @@
         </Grid>
 
         <!-- Body: incident list (left) + diagnosis (right) -->
-        <Grid Grid.Row="2" ColumnSpacing="16">
+        <Grid Grid.Row="2" ColumnSpacing="16" RowSpacing="12">
+            <Grid.RowDefinitions>
+                <RowDefinition x:Name="IncidentListRow" Height="2*" />
+                <RowDefinition x:Name="DiagnosisRow" Height="3*" />
+            </Grid.RowDefinitions>
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="340" />
-                <ColumnDefinition Width="*" />
+                <ColumnDefinition x:Name="IncidentListColumn" Width="*" />
+                <ColumnDefinition x:Name="DiagnosisColumn" Width="0" />
             </Grid.ColumnDefinitions>
 
             <!-- Incident list -->
-            <Border Grid.Column="0"
-                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                    BorderThickness="1" CornerRadius="8">
+            <Border Grid.Column="0" Style="{StaticResource AtlasPanelFlatStyle}">
                 <Grid>
                     <!-- Unavailable -->
                     <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
                                 Padding="16"
                                 Visibility="{x:Bind ViewModel.IncidentsUnavailable, Mode=OneWay}">
                         <FontIcon Glyph="&#xE7BA;" FontSize="24"
-                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                  Foreground="{ThemeResource AtlasMutedBrush}"
                                   HorizontalAlignment="Center" />
                         <TextBlock Text="Diagnostics unavailable"
-                                   Style="{StaticResource BodyStrongTextBlockStyle}"
-                                   HorizontalAlignment="Center" />
+                                   Style="{StaticResource AtlasEmptyStateTitleStyle}" />
                         <TextBlock Text="The connected service is too old to detect incidents."
-                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                   TextWrapping="Wrap" HorizontalTextAlignment="Center" />
+                                   Style="{StaticResource AtlasEmptyStateBodyStyle}" />
                     </StackPanel>
 
                     <!-- Empty -->
@@ -95,14 +148,12 @@
                                 Padding="16"
                                 Visibility="{x:Bind ViewModel.IncidentsEmpty, Mode=OneWay}">
                         <FontIcon Glyph="&#xE73E;" FontSize="24"
-                                  Foreground="{ThemeResource SystemFillColorSuccessBrush}"
+                                  Foreground="{ThemeResource AtlasGreenBrush}"
                                   HorizontalAlignment="Center" />
                         <TextBlock Text="No incidents"
-                                   Style="{StaticResource BodyStrongTextBlockStyle}"
-                                   HorizontalAlignment="Center" />
+                                   Style="{StaticResource AtlasEmptyStateTitleStyle}" />
                         <TextBlock Text="Nothing notable was detected in this window."
-                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                   TextWrapping="Wrap" HorizontalTextAlignment="Center" />
+                                   Style="{StaticResource AtlasEmptyStateBodyStyle}" />
                     </StackPanel>
 
                     <!-- List -->
@@ -113,7 +164,11 @@
                         <ListView.ItemContainerStyle>
                             <Style TargetType="ListViewItem">
                                 <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                <Setter Property="MinHeight" Value="0" />
                                 <Setter Property="Padding" Value="12,10" />
+                                <Setter Property="CornerRadius" Value="0" />
+                                <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+                                <Setter Property="BorderThickness" Value="0,0,0,1" />
                             </Style>
                         </ListView.ItemContainerStyle>
                         <ListView.ItemTemplate>
@@ -126,22 +181,20 @@
                                     <FontIcon Grid.Column="0" VerticalAlignment="Top" Margin="0,2,0,0"
                                               Glyph="{x:Bind KindGlyph}" FontSize="18"
                                               Foreground="{x:Bind SeverityToken, Converter={StaticResource SeverityToBrush}}" />
-                                    <StackPanel Grid.Column="1" Spacing="2">
+                                    <StackPanel Grid.Column="1" Spacing="3">
                                         <StackPanel Orientation="Horizontal" Spacing="8">
                                             <TextBlock Text="{x:Bind KindLabel}"
                                                        Style="{StaticResource BodyStrongTextBlockStyle}" />
-                                            <Border VerticalAlignment="Center"
-                                                    Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
-                                                    CornerRadius="4" Padding="6,1">
+                                            <Border Style="{StaticResource AtlasStatusPillStyle}"
+                                                    Padding="6,1">
                                                 <TextBlock Text="{x:Bind SeverityLabel}"
-                                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                                           Style="{StaticResource AtlasSectionLabelStyle}"
                                                            Foreground="{x:Bind SeverityToken, Converter={StaticResource SeverityToBrush}}" />
                                             </Border>
                                         </StackPanel>
                                         <TextBlock Text="{x:Bind Summary}" TextWrapping="Wrap" />
                                         <TextBlock Text="{x:Bind TimeText}"
-                                                   Style="{StaticResource CaptionTextBlockStyle}"
-                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                   Style="{StaticResource AtlasMonoMutedStyle}" />
                                     </StackPanel>
                                 </Grid>
                             </DataTemplate>
@@ -151,20 +204,18 @@
             </Border>
 
             <!-- Diagnosis panel -->
-            <Grid Grid.Column="1">
+            <Grid x:Name="DiagnosisPanel" Grid.Row="1" Grid.Column="0">
                 <!-- Idle -->
                 <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
                             MaxWidth="420"
                             Visibility="{x:Bind ViewModel.DiagnosisIdle, Mode=OneWay}">
                     <FontIcon Glyph="&#xE9D9;" FontSize="28"
-                              Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                              Foreground="{ThemeResource AtlasMutedBrush}"
                               HorizontalAlignment="Center" />
                     <TextBlock Text="Select an incident to diagnose"
-                               Style="{StaticResource SubtitleTextBlockStyle}"
-                               HorizontalTextAlignment="Center" />
-                    <TextBlock Text="Pick an incident on the left, or diagnose the whole window. Atlas explains what was measured and how sure it is — it never guesses."
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                               TextWrapping="Wrap" HorizontalTextAlignment="Center" />
+                               Style="{StaticResource AtlasEmptyStateTitleStyle}" />
+                    <TextBlock Text="Pick an incident on the left, or diagnose the whole window. Atlas explains what was measured and how sure it is - it never guesses."
+                               Style="{StaticResource AtlasEmptyStateBodyStyle}" />
                 </StackPanel>
 
                 <!-- Busy -->
@@ -173,7 +224,7 @@
                     <ProgressRing IsActive="{x:Bind ViewModel.IsDiagnosing, Mode=OneWay}"
                                   Width="32" Height="32" />
                     <TextBlock Text="Diagnosing…"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                               Style="{StaticResource AtlasMonoMutedStyle}" />
                 </StackPanel>
 
                 <!-- Unsupported (server too old) -->
@@ -181,35 +232,29 @@
                             MaxWidth="420"
                             Visibility="{x:Bind ViewModel.DiagnosisUnsupported, Mode=OneWay}">
                     <FontIcon Glyph="&#xE7BA;" FontSize="28"
-                              Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                              Foreground="{ThemeResource AtlasMutedBrush}"
                               HorizontalAlignment="Center" />
                     <TextBlock Text="Diagnostics unavailable"
-                               Style="{StaticResource SubtitleTextBlockStyle}"
-                               HorizontalTextAlignment="Center" />
+                               Style="{StaticResource AtlasEmptyStateTitleStyle}" />
                     <TextBlock Text="{x:Bind ViewModel.DiagnosisMessage, Mode=OneWay}"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                               TextWrapping="Wrap" HorizontalTextAlignment="Center" />
+                               Style="{StaticResource AtlasEmptyStateBodyStyle}" />
                 </StackPanel>
 
-                <!-- Insufficient evidence — a FIRST-CLASS honest state -->
+                <!-- Insufficient evidence - a FIRST-CLASS honest state -->
                 <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="10"
                             MaxWidth="440"
                             Visibility="{x:Bind ViewModel.DiagnosisInsufficient, Mode=OneWay}">
                     <FontIcon Glyph="&#xE946;" FontSize="28"
-                              Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                              Foreground="{ThemeResource AtlasCyanBrush}"
                               HorizontalAlignment="Center" />
                     <TextBlock Text="Not enough evidence to diagnose"
-                               Style="{StaticResource SubtitleTextBlockStyle}"
-                               HorizontalTextAlignment="Center" />
-                    <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
-                            CornerRadius="6" Padding="14,10">
+                               Style="{StaticResource AtlasEmptyStateTitleStyle}" />
+                    <Border Style="{StaticResource AtlasInsetStyle}" Padding="14,10">
                         <TextBlock Text="{x:Bind ViewModel.DiagnosisMessage, Mode=OneWay}"
                                    TextWrapping="Wrap" HorizontalTextAlignment="Center" />
                     </Border>
                     <TextBlock Text="Atlas won't invent an explanation it can't support. Try a wider window, or check that monitoring was on."
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                               TextWrapping="Wrap" HorizontalTextAlignment="Center"
-                               Style="{StaticResource CaptionTextBlockStyle}" />
+                               Style="{StaticResource AtlasEmptyStateBodyStyle}" />
                 </StackPanel>
 
                 <!-- Diagnosis -->
@@ -230,6 +275,7 @@
                                            TextWrapping="Wrap" />
                                 <Button Grid.Column="1" VerticalAlignment="Top"
                                         x:Name="ExportButton"
+                                        Style="{StaticResource AtlasGhostButtonStyle}"
                                         AutomationProperties.Name="Export report"
                                         Click="OnExportClick">
                                     <StackPanel Orientation="Horizontal" Spacing="8">
@@ -241,29 +287,26 @@
 
                             <StackPanel Orientation="Horizontal" Spacing="12">
                                 <!-- Overall confidence badge (calm) -->
-                                <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
-                                        CornerRadius="12" Padding="10,3">
+                                <Border Style="{StaticResource AtlasStatusPillStyle}" Padding="10,3">
                                     <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
                                         <Ellipse Width="8" Height="8"
                                                  Fill="{x:Bind ViewModel.Diagnosis.OverallConfidenceToken, Mode=OneWay, Converter={StaticResource ConfidenceToBrush}}" />
                                         <TextBlock Text="{x:Bind ViewModel.Diagnosis.OverallConfidenceLabel, Mode=OneWay}"
-                                                   Style="{StaticResource CaptionTextBlockStyle}" />
+                                                   Style="{StaticResource AtlasSectionLabelStyle}" />
                                     </StackPanel>
                                 </Border>
                                 <TextBlock Text="{x:Bind ViewModel.Diagnosis.WindowText, Mode=OneWay}"
                                            VerticalAlignment="Center"
-                                           Style="{StaticResource CaptionTextBlockStyle}"
-                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                           Style="{StaticResource AtlasMonoMutedStyle}" />
                             </StackPanel>
                         </StackPanel>
 
-                        <!-- Evidence -->
+                        <!-- Evidence - measured FACTS -->
                         <StackPanel Spacing="8"
                                     Visibility="{x:Bind ViewModel.Diagnosis.HasEvidence, Mode=OneWay}">
-                            <TextBlock Text="Evidence" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                            <TextBlock Text="EVIDENCE" Style="{StaticResource AtlasSectionLabelStyle}" />
                             <TextBlock Text="Measured facts backing this diagnosis."
-                                       Style="{StaticResource CaptionTextBlockStyle}"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                       Style="{StaticResource AtlasMonoMutedStyle}" />
                             <ItemsControl ItemsSource="{x:Bind ViewModel.Diagnosis.Evidence, Mode=OneWay}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate x:DataType="vm:EvidenceRowViewModel">
@@ -275,15 +318,15 @@
                                             </Grid.ColumnDefinitions>
                                             <FontIcon Grid.Column="0" Glyph="&#xE73E;" FontSize="12"
                                                       VerticalAlignment="Top" Margin="0,4,0,0"
-                                                      Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                                      Foreground="{ThemeResource AtlasDimBrush}" />
                                             <TextBlock Grid.Column="1" Text="{x:Bind Text}" TextWrapping="Wrap" />
                                             <Border Grid.Column="2"
                                                     Visibility="{x:Bind HasMetric}"
-                                                    Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
-                                                    CornerRadius="4" Padding="6,1" VerticalAlignment="Top">
+                                                    Style="{StaticResource AtlasInsetStyle}"
+                                                    Padding="6,1" VerticalAlignment="Top">
                                                 <TextBlock Text="{x:Bind MetricText}"
-                                                           FontFamily="Consolas"
-                                                           Style="{StaticResource CaptionTextBlockStyle}" />
+                                                           Style="{StaticResource AtlasMonoStyle}"
+                                                           FontSize="11.5" />
                                             </Border>
                                         </Grid>
                                     </DataTemplate>
@@ -291,20 +334,20 @@
                             </ItemsControl>
                         </StackPanel>
 
-                        <!-- Contributing factors -->
+                        <!-- Contributing factors - ranked CORRELATIONS, not proven cause -->
                         <StackPanel Spacing="8"
                                     Visibility="{x:Bind ViewModel.Diagnosis.HasFactors, Mode=OneWay}">
-                            <TextBlock Text="Likely contributing factors"
-                                       Style="{StaticResource BodyStrongTextBlockStyle}" />
+                            <TextBlock Text="LIKELY CONTRIBUTING FACTORS"
+                                       Style="{StaticResource AtlasSectionLabelStyle}" />
                             <TextBlock Text="Ranked most likely first. Each shows how confident Atlas is."
-                                       Style="{StaticResource CaptionTextBlockStyle}"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                       Style="{StaticResource AtlasMonoMutedStyle}" />
+                            <!-- Honest framing: these are correlations, not established causes -->
+                            <TextBlock Style="{StaticResource AtlasWarningTextStyle}"
+                                       Text="These are ranked correlations weighted by confidence - correlation, not proven cause." />
                             <ItemsControl ItemsSource="{x:Bind ViewModel.Diagnosis.Factors, Mode=OneWay}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate x:DataType="vm:FactorRowViewModel">
-                                        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                                BorderThickness="1" CornerRadius="8"
+                                        <Border Style="{StaticResource AtlasPanelStyle}"
                                                 Padding="14,10" Margin="0,3">
                                             <Grid ColumnSpacing="12">
                                                 <Grid.ColumnDefinitions>
@@ -314,32 +357,32 @@
                                                 </Grid.ColumnDefinitions>
                                                 <TextBlock Grid.Column="0" Text="{x:Bind RankText}"
                                                            VerticalAlignment="Top"
-                                                           Style="{StaticResource BodyStrongTextBlockStyle}"
-                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                           Style="{StaticResource AtlasMetricValueStyle}"
+                                                           FontSize="16"
+                                                           Foreground="{ThemeResource AtlasMutedBrush}" />
                                                 <StackPanel Grid.Column="1" Spacing="4">
                                                     <TextBlock Text="{x:Bind Description}" TextWrapping="Wrap" />
                                                     <StackPanel Orientation="Horizontal" Spacing="12">
                                                         <TextBlock Visibility="{x:Bind HasProcess}"
                                                                    Text="{x:Bind ProcessText}"
-                                                                   FontFamily="Consolas"
-                                                                   Style="{StaticResource CaptionTextBlockStyle}"
-                                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                                   Style="{StaticResource AtlasMonoMutedStyle}"
+                                                                   FontSize="11.5" />
                                                         <TextBlock Visibility="{x:Bind HasAttribution}"
                                                                    Text="{x:Bind AttributionText}"
-                                                                   Style="{StaticResource CaptionTextBlockStyle}"
-                                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                                   Style="{StaticResource AtlasMonoMutedStyle}"
+                                                                   FontSize="11.5" />
                                                     </StackPanel>
                                                 </StackPanel>
                                                 <!-- Confidence badge (calm color token) -->
                                                 <Border Grid.Column="2" VerticalAlignment="Top"
-                                                        Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
-                                                        CornerRadius="12" Padding="10,3">
+                                                        Style="{StaticResource AtlasStatusPillStyle}"
+                                                        Padding="10,3">
                                                     <StackPanel Orientation="Horizontal" Spacing="6"
                                                                 VerticalAlignment="Center">
                                                         <Ellipse Width="8" Height="8"
                                                                  Fill="{x:Bind ConfidenceToken, Converter={StaticResource ConfidenceToBrush}}" />
                                                         <TextBlock Text="{x:Bind ConfidenceLabel}"
-                                                                   Style="{StaticResource CaptionTextBlockStyle}" />
+                                                                   Style="{StaticResource AtlasSectionLabelStyle}" />
                                                     </StackPanel>
                                                 </Border>
                                             </Grid>
@@ -352,8 +395,8 @@
                         <!-- Alternative explanations -->
                         <StackPanel Spacing="8"
                                     Visibility="{x:Bind ViewModel.Diagnosis.HasAlternatives, Mode=OneWay}">
-                            <TextBlock Text="Alternative explanations"
-                                       Style="{StaticResource BodyStrongTextBlockStyle}" />
+                            <TextBlock Text="ALTERNATIVE EXPLANATIONS"
+                                       Style="{StaticResource AtlasSectionLabelStyle}" />
                             <ItemsControl ItemsSource="{x:Bind ViewModel.Diagnosis.Alternatives, Mode=OneWay}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate x:DataType="x:String">
@@ -364,7 +407,7 @@
                                             </Grid.ColumnDefinitions>
                                             <FontIcon Grid.Column="0" Glyph="&#xE8B9;" FontSize="12"
                                                       VerticalAlignment="Top" Margin="0,4,0,0"
-                                                      Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                                      Foreground="{ThemeResource AtlasDimBrush}" />
                                             <TextBlock Grid.Column="1" Text="{x:Bind}" TextWrapping="Wrap" />
                                         </Grid>
                                     </DataTemplate>
@@ -374,19 +417,16 @@
 
                         <!-- Action plan: recommendation / risk / reversibility / verification -->
                         <StackPanel Spacing="10">
-                            <TextBlock Text="What to do" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                            <TextBlock Text="WHAT TO DO" Style="{StaticResource AtlasSectionLabelStyle}" />
 
                             <Border Visibility="{x:Bind ViewModel.Diagnosis.HasRecommendation, Mode=OneWay}"
-                                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                    BorderThickness="1" CornerRadius="8" Padding="14,10">
+                                    Style="{StaticResource AtlasPanelStyle}" Padding="14,10">
                                 <StackPanel Spacing="4">
                                     <StackPanel Orientation="Horizontal" Spacing="8">
                                         <FontIcon Glyph="&#xE9F5;" FontSize="14"
-                                                  Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
-                                        <TextBlock Text="Recommended action"
-                                                   Style="{StaticResource CaptionTextBlockStyle}"
-                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                  Foreground="{ThemeResource AtlasCyanBrush}" />
+                                        <TextBlock Text="RECOMMENDED ACTION"
+                                                   Style="{StaticResource AtlasSectionLabelStyle}" />
                                     </StackPanel>
                                     <TextBlock Text="{x:Bind ViewModel.Diagnosis.Recommendation, Mode=OneWay}"
                                                TextWrapping="Wrap" />
@@ -400,26 +440,20 @@
                                 </Grid.ColumnDefinitions>
                                 <Border Grid.Column="0"
                                         Visibility="{x:Bind ViewModel.Diagnosis.HasRisk, Mode=OneWay}"
-                                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                        BorderThickness="1" CornerRadius="8" Padding="14,10">
+                                        Style="{StaticResource AtlasPanelStyle}" Padding="14,10">
                                     <StackPanel Spacing="4">
-                                        <TextBlock Text="Risk"
-                                                   Style="{StaticResource CaptionTextBlockStyle}"
-                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        <TextBlock Text="RISK"
+                                                   Style="{StaticResource AtlasSectionLabelStyle}" />
                                         <TextBlock Text="{x:Bind ViewModel.Diagnosis.Risk, Mode=OneWay}"
                                                    TextWrapping="Wrap" />
                                     </StackPanel>
                                 </Border>
                                 <Border Grid.Column="1"
                                         Visibility="{x:Bind ViewModel.Diagnosis.HasReversibility, Mode=OneWay}"
-                                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                        BorderThickness="1" CornerRadius="8" Padding="14,10">
+                                        Style="{StaticResource AtlasPanelStyle}" Padding="14,10">
                                     <StackPanel Spacing="4">
-                                        <TextBlock Text="Reversibility"
-                                                   Style="{StaticResource CaptionTextBlockStyle}"
-                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        <TextBlock Text="REVERSIBILITY"
+                                                   Style="{StaticResource AtlasSectionLabelStyle}" />
                                         <TextBlock Text="{x:Bind ViewModel.Diagnosis.Reversibility, Mode=OneWay}"
                                                    TextWrapping="Wrap" />
                                     </StackPanel>
@@ -427,16 +461,13 @@
                             </Grid>
 
                             <Border Visibility="{x:Bind ViewModel.Diagnosis.HasVerificationPlan, Mode=OneWay}"
-                                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                    BorderThickness="1" CornerRadius="8" Padding="14,10">
+                                    Style="{StaticResource AtlasPanelStyle}" Padding="14,10">
                                 <StackPanel Spacing="4">
                                     <StackPanel Orientation="Horizontal" Spacing="8">
                                         <FontIcon Glyph="&#xE73E;" FontSize="14"
-                                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                        <TextBlock Text="How to verify"
-                                                   Style="{StaticResource CaptionTextBlockStyle}"
-                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                  Foreground="{ThemeResource AtlasMutedBrush}" />
+                                        <TextBlock Text="HOW TO VERIFY"
+                                                   Style="{StaticResource AtlasSectionLabelStyle}" />
                                     </StackPanel>
                                     <TextBlock Text="{x:Bind ViewModel.Diagnosis.VerificationPlan, Mode=OneWay}"
                                                TextWrapping="Wrap" />

@@ -3,6 +3,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:vm="using:Atlas.App.ViewModels"
+    xmlns:controls="using:Atlas.App.Controls"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
@@ -20,14 +21,14 @@
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
-            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
-                <TextBlock Text="Privacy" Style="{StaticResource TitleTextBlockStyle}" />
-                <TextBlock VerticalAlignment="Bottom"
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                           Text="Camera, microphone, and location access" />
+            <StackPanel Grid.Column="0" Spacing="4">
+                <TextBlock Text="Privacy" Style="{StaticResource AtlasPageHeadingStyle}" />
+                <TextBlock Style="{StaticResource AtlasPageDescriptionStyle}"
+                           Text="Recorded camera, microphone, and location access by app. Access history only - Atlas does not change permissions." />
             </StackPanel>
             <Button Grid.Column="1"
-                    VerticalAlignment="Center"
+                    VerticalAlignment="Top"
+                    Style="{StaticResource AtlasGhostButtonStyle}"
                     AutomationProperties.Name="Refresh privacy activity"
                     Click="Refresh_Click">
                 <StackPanel Orientation="Horizontal" Spacing="8">
@@ -41,7 +42,8 @@
         <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="12">
             <ProgressRing IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
                           Width="16" Height="16" />
-            <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+            <TextBlock VerticalAlignment="Center"
+                       Style="{StaticResource AtlasMonoMutedStyle}"
                        Text="{x:Bind ViewModel.StatusText, Mode=OneWay}" />
         </StackPanel>
 
@@ -51,30 +53,24 @@
             <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
                         Visibility="{x:Bind ViewModel.IsUnavailable, Mode=OneWay}">
                 <FontIcon Glyph="&#xE7BA;" FontSize="28"
-                          Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                          Foreground="{ThemeResource AtlasDimBrush}"
                           HorizontalAlignment="Center" />
                 <TextBlock Text="Privacy activity unavailable"
-                           Style="{StaticResource SubtitleTextBlockStyle}"
-                           HorizontalAlignment="Center" />
+                           Style="{StaticResource AtlasEmptyStateTitleStyle}" />
                 <TextBlock Text="The connected service is too old to report camera, microphone, or location access."
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                           TextWrapping="Wrap" MaxWidth="380"
-                           HorizontalTextAlignment="Center" />
+                           Style="{StaticResource AtlasEmptyStateBodyStyle}" />
             </StackPanel>
 
             <!-- Empty placeholder -->
             <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8"
                         Visibility="{x:Bind ViewModel.IsEmpty, Mode=OneWay}">
                 <FontIcon Glyph="&#xE72E;" FontSize="28"
-                          Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                          Foreground="{ThemeResource AtlasDimBrush}"
                           HorizontalAlignment="Center" />
                 <TextBlock Text="No recorded access"
-                           Style="{StaticResource SubtitleTextBlockStyle}"
-                           HorizontalAlignment="Center" />
+                           Style="{StaticResource AtlasEmptyStateTitleStyle}" />
                 <TextBlock Text="No app has used the camera, microphone, or location recently."
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                           TextWrapping="Wrap" MaxWidth="380"
-                           HorizontalTextAlignment="Center" />
+                           Style="{StaticResource AtlasEmptyStateBodyStyle}" />
             </StackPanel>
 
             <!-- Grouped usage + recent activity -->
@@ -88,54 +84,59 @@
                             <DataTemplate x:DataType="vm:PrivacyCapabilityGroup">
                                 <StackPanel Margin="0,0,0,4">
                                     <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,0,0,8">
-                                        <FontIcon Glyph="{x:Bind Glyph}" FontSize="18"
-                                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        <FontIcon Glyph="{x:Bind Glyph}" FontSize="14"
+                                                  VerticalAlignment="Center"
+                                                  Foreground="{ThemeResource AtlasMutedBrush}" />
                                         <TextBlock Text="{x:Bind Title}"
-                                                   Style="{StaticResource SubtitleTextBlockStyle}" />
+                                                   VerticalAlignment="Center"
+                                                   Style="{StaticResource AtlasSectionLabelStyle}" />
                                     </StackPanel>
 
                                     <!-- Empty within a capability -->
                                     <TextBlock Text="{x:Bind EmptyText}"
                                                Margin="28,0,0,8"
-                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                               Style="{StaticResource AtlasMonoMutedStyle}"
                                                Visibility="{x:Bind Items.Count, Mode=OneWay, Converter={StaticResource CountToInverseVisibility}}" />
 
-                                    <ItemsControl ItemsSource="{x:Bind Items}">
+                                    <ItemsControl ItemsSource="{x:Bind Items}" Margin="28,0,0,8">
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate x:DataType="vm:PrivacyUsageItem">
-                                                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                                                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                                        BorderThickness="1" CornerRadius="8"
-                                                        Padding="16,10" Margin="28,0,0,8">
+                                                <Border BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                                        BorderThickness="0,0,0,1"
+                                                        Padding="12,9">
                                                     <Grid ColumnSpacing="12">
                                                         <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="Auto" />
                                                             <ColumnDefinition Width="*" />
                                                             <ColumnDefinition Width="Auto" />
                                                             <ColumnDefinition Width="Auto" />
                                                         </Grid.ColumnDefinitions>
-                                                        <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                                        <controls:AppIcon Grid.Column="0" ExecutablePath="{x:Bind AppId}"
+                                                                          Width="22" Height="22"
+                                                                          AutomationProperties.AccessibilityView="Raw" />
+                                                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                                             <TextBlock Text="{x:Bind DisplayName}"
                                                                        TextTrimming="CharacterEllipsis" />
                                                             <TextBlock Text="{x:Bind PackagedText}"
-                                                                       Style="{StaticResource CaptionTextBlockStyle}"
-                                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                                       Style="{StaticResource AtlasMonoMutedStyle}"
+                                                                       FontSize="11.5" />
                                                         </StackPanel>
-                                                        <!-- In-use badge -->
-                                                        <Border Grid.Column="1" VerticalAlignment="Center"
-                                                                Background="{ThemeResource SystemFillColorSuccessBackgroundBrush}"
-                                                                CornerRadius="10" Padding="10,3"
+                                                        <!-- In-use badge (live state - cyan) -->
+                                                        <Border Grid.Column="2" VerticalAlignment="Center"
+                                                                Background="{ThemeResource AtlasCyanTintBrush}"
+                                                                CornerRadius="2" Padding="10,3"
                                                                 Visibility="{x:Bind InUse}">
                                                             <StackPanel Orientation="Horizontal" Spacing="6">
                                                                 <Ellipse Width="8" Height="8"
-                                                                         Fill="{ThemeResource SystemFillColorSuccessBrush}" />
-                                                                <TextBlock Text="In use now"
-                                                                           Foreground="{ThemeResource SystemFillColorSuccessBrush}"
-                                                                           Style="{StaticResource CaptionTextBlockStyle}" />
+                                                                         Fill="{ThemeResource AtlasCyanBrush}" />
+                                                                <TextBlock Text="IN USE NOW"
+                                                                           Foreground="{ThemeResource AtlasCyanBrush}"
+                                                                           Style="{StaticResource AtlasSectionLabelStyle}" />
                                                             </StackPanel>
                                                         </Border>
-                                                        <TextBlock Grid.Column="2" VerticalAlignment="Center"
+                                                        <TextBlock Grid.Column="3" VerticalAlignment="Center"
                                                                    Text="{x:Bind StatusText}"
-                                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                                   Style="{StaticResource AtlasMonoMutedStyle}" />
                                                     </Grid>
                                                 </Border>
                                             </DataTemplate>
@@ -149,12 +150,14 @@
                     <!-- Recent activity -->
                     <StackPanel Spacing="8"
                                 Visibility="{x:Bind ViewModel.HasRecentActivity, Mode=OneWay}">
-                        <TextBlock Text="Recent activity"
-                                   Style="{StaticResource SubtitleTextBlockStyle}" />
+                        <TextBlock Text="RECENT ACTIVITY"
+                                   Style="{StaticResource AtlasSectionLabelStyle}" />
                         <ItemsControl ItemsSource="{x:Bind ViewModel.RecentActivity, Mode=OneWay}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate x:DataType="vm:PrivacyEventItem">
-                                    <Grid Padding="4,4" ColumnSpacing="10">
+                                    <Grid Padding="4,7" ColumnSpacing="10"
+                                          BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                          BorderThickness="0,0,0,1">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="Auto" />
                                             <ColumnDefinition Width="*" />
@@ -162,14 +165,13 @@
                                         </Grid.ColumnDefinitions>
                                         <FontIcon Grid.Column="0" Glyph="{x:Bind Glyph}" FontSize="10"
                                                   VerticalAlignment="Center"
-                                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                  Foreground="{ThemeResource AtlasDimBrush}" />
                                         <TextBlock Grid.Column="1" Text="{x:Bind Text}"
                                                    VerticalAlignment="Center"
                                                    TextTrimming="CharacterEllipsis" />
                                         <TextBlock Grid.Column="2" Text="{x:Bind TimeText}"
                                                    VerticalAlignment="Center"
-                                                   Style="{StaticResource CaptionTextBlockStyle}"
-                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                   Style="{StaticResource AtlasMonoMutedStyle}" />
                                     </Grid>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>

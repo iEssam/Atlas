@@ -14,121 +14,177 @@
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
-            <!-- Title + refresh -->
+            <!-- ===== Page heading + refresh ===== -->
             <Grid Grid.Row="0">
-                <StackPanel Orientation="Horizontal" Spacing="12">
-                    <TextBlock Text="Sensors" Style="{StaticResource TitleTextBlockStyle}" />
-                    <ProgressRing IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
-                                  Width="16" Height="16" VerticalAlignment="Center" />
-                    <TextBlock VerticalAlignment="Bottom"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                               Text="Battery, thermal and startup history" />
+                <StackPanel Spacing="4">
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <TextBlock Text="Sensors" Style="{StaticResource AtlasPageHeadingStyle}" />
+                        <ProgressRing IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
+                                      Width="16" Height="16" VerticalAlignment="Center" />
+                    </StackPanel>
+                    <TextBlock Style="{StaticResource AtlasPageDescriptionStyle}"
+                               Text="Battery, thermal, and startup history. Measured hardware values only - sensors the device does not expose are stated plainly." />
                 </StackPanel>
-                <Button HorizontalAlignment="Right" Content="Refresh"
+                <Button HorizontalAlignment="Right" VerticalAlignment="Top"
+                        Style="{StaticResource AtlasGhostButtonStyle}"
+                        Content="Refresh"
                         AutomationProperties.Name="Refresh sensors"
                         Click="Refresh_Click" />
             </Grid>
 
-            <!-- Battery card -->
-            <Border Grid.Row="1"
-                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                    BorderThickness="1" CornerRadius="8" Padding="20,16">
-                <StackPanel Spacing="10">
-                    <StackPanel Orientation="Horizontal" Spacing="10">
-                        <FontIcon Glyph="&#xE83F;" FontSize="18" VerticalAlignment="Center" />
-                        <TextBlock Text="Battery" Style="{StaticResource SubtitleTextBlockStyle}" />
+            <!-- ===== Battery section ===== -->
+            <Border Grid.Row="1" Style="{StaticResource AtlasPanelStyle}">
+                <StackPanel Spacing="12">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xE83F;" FontSize="13"
+                                  Foreground="{ThemeResource AtlasMutedBrush}"
+                                  VerticalAlignment="Center" />
+                        <TextBlock Text="BATTERY" Style="{StaticResource AtlasSectionLabelStyle}"
+                                   VerticalAlignment="Center" />
                     </StackPanel>
 
-                    <!-- Unsupported (service too old) -->
+                    <!-- Unsupported (service too old) - honest degradation note -->
                     <TextBlock Text="{x:Bind ViewModel.BatteryNote, Mode=OneWay}"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                               TextWrapping="Wrap"
+                               Style="{StaticResource AtlasWarningTextStyle}"
                                Visibility="{x:Bind ViewModel.BatteryUnsupported, Mode=OneWay}" />
 
-                    <!-- Absent (no battery — desktop) — calm, not an error -->
+                    <!-- Absent (no battery - desktop) - calm, not an error -->
                     <StackPanel Orientation="Horizontal" Spacing="8"
                                 Visibility="{x:Bind ViewModel.BatteryAbsent, Mode=OneWay}">
                         <FontIcon Glyph="&#xE7F4;" FontSize="14"
-                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                  Foreground="{ThemeResource AtlasDimBrush}"
                                   VerticalAlignment="Center" />
                         <TextBlock Text="{x:Bind ViewModel.BatteryNote, Mode=OneWay}"
-                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                   TextWrapping="Wrap" />
+                                   Style="{StaticResource AtlasMonoMutedStyle}"
+                                   TextWrapping="Wrap" VerticalAlignment="Center" />
                     </StackPanel>
 
                     <!-- Present -->
-                    <StackPanel Spacing="8"
+                    <StackPanel Spacing="10"
                                 Visibility="{x:Bind ViewModel.BatteryPresent, Mode=OneWay}">
-                        <StackPanel Orientation="Horizontal" Spacing="12">
+                        <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Bottom">
                             <TextBlock Text="{x:Bind ViewModel.BatteryPercentText, Mode=OneWay}"
-                                       Style="{StaticResource TitleTextBlockStyle}" />
+                                       Style="{StaticResource AtlasMetricValueStyle}" />
                             <TextBlock Text="{x:Bind ViewModel.BatteryStateText, Mode=OneWay}"
-                                       VerticalAlignment="Bottom" Margin="0,0,0,4"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                       Style="{StaticResource AtlasMonoMutedStyle}"
+                                       VerticalAlignment="Bottom" Margin="0,0,0,5" />
                         </StackPanel>
                         <ProgressBar Minimum="0" Maximum="100"
                                      Value="{x:Bind ViewModel.BatteryPercentValue, Mode=OneWay}" />
-                        <StackPanel Orientation="Horizontal" Spacing="20" Margin="0,4,0,0">
+                        <StackPanel Orientation="Horizontal" Spacing="24" Margin="0,2,0,0">
                             <TextBlock Text="{x:Bind ViewModel.BatteryHealthText, Mode=OneWay}"
-                                       Style="{StaticResource CaptionTextBlockStyle}"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                       Style="{StaticResource AtlasMonoMutedStyle}" />
                             <TextBlock Text="{x:Bind ViewModel.BatteryCycleText, Mode=OneWay}"
-                                       Style="{StaticResource CaptionTextBlockStyle}"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                       Style="{StaticResource AtlasMonoMutedStyle}" />
                         </StackPanel>
                     </StackPanel>
                 </StackPanel>
             </Border>
 
-            <!-- Thermal card -->
-            <Border Grid.Row="2"
-                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                    BorderThickness="1" CornerRadius="8" Padding="20,16">
-                <StackPanel Spacing="10">
-                    <StackPanel Orientation="Horizontal" Spacing="10">
-                        <FontIcon Glyph="&#xE9CA;" FontSize="18" VerticalAlignment="Center" />
-                        <TextBlock Text="Thermal" Style="{StaticResource SubtitleTextBlockStyle}" />
+            <!-- ===== Thermal section ===== -->
+            <Border Grid.Row="2" Style="{StaticResource AtlasPanelStyle}">
+                <StackPanel Spacing="12">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xE9CA;" FontSize="13"
+                                  Foreground="{ThemeResource AtlasMutedBrush}"
+                                  VerticalAlignment="Center" />
+                        <TextBlock Text="THERMAL" Style="{StaticResource AtlasSectionLabelStyle}"
+                                   VerticalAlignment="Center" />
                     </StackPanel>
 
-                    <!-- Unsupported -->
+                    <!-- Unsupported (service too old) - honest degradation note -->
                     <TextBlock Text="{x:Bind ViewModel.ThermalNote, Mode=OneWay}"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                               TextWrapping="Wrap"
+                               Style="{StaticResource AtlasWarningTextStyle}"
                                Visibility="{x:Bind ViewModel.ThermalUnsupported, Mode=OneWay}" />
 
-                    <!-- Absent (no sensors exposed) — honest, no alarm -->
-                    <StackPanel Orientation="Horizontal" Spacing="8"
+                    <!-- Absent (no thermal sensors exposed) - honest, no alarm -->
+                    <StackPanel Spacing="4"
                                 Visibility="{x:Bind ViewModel.ThermalAbsent, Mode=OneWay}">
-                        <FontIcon Glyph="&#xE946;" FontSize="14"
-                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                  VerticalAlignment="Center" />
-                        <TextBlock Text="{x:Bind ViewModel.ThermalNote, Mode=OneWay}"
-                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                   TextWrapping="Wrap" />
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon Glyph="&#xE946;" FontSize="14"
+                                      Foreground="{ThemeResource AtlasDimBrush}"
+                                      VerticalAlignment="Center" />
+                            <TextBlock Text="{x:Bind ViewModel.ThermalNote, Mode=OneWay}"
+                                       Style="{StaticResource AtlasMonoMutedStyle}"
+                                       TextWrapping="Wrap" VerticalAlignment="Center" />
+                        </StackPanel>
                     </StackPanel>
 
                     <!-- Sensor list -->
-                    <ItemsControl ItemsSource="{x:Bind ViewModel.Sensors, Mode=OneWay}"
-                                  Visibility="{x:Bind ViewModel.ThermalPresent, Mode=OneWay}">
+                    <StackPanel Spacing="0"
+                                Visibility="{x:Bind ViewModel.ThermalPresent, Mode=OneWay}">
+                        <Grid ColumnSpacing="12" Padding="0,0,0,6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" MinWidth="90" />
+                                <ColumnDefinition Width="1.4*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="SENSOR"
+                                       Style="{StaticResource AtlasColumnHeaderStyle}" />
+                            <TextBlock Grid.Column="1" Text="TEMP" HorizontalTextAlignment="Right"
+                                       Style="{StaticResource AtlasColumnHeaderStyle}" />
+                            <TextBlock Grid.Column="2" Text="SOURCE"
+                                       Style="{StaticResource AtlasColumnHeaderStyle}" />
+                        </Grid>
+                        <ItemsControl ItemsSource="{x:Bind ViewModel.Sensors, Mode=OneWay}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="vm:ThermalSensorItem">
+                                    <Border BorderBrush="{ThemeResource AtlasLineBrush}"
+                                            BorderThickness="0,0,0,1" Padding="0,7">
+                                        <Grid ColumnSpacing="12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" MinWidth="90" />
+                                                <ColumnDefinition Width="1.4*" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="{x:Bind Name}"
+                                                       Style="{StaticResource AtlasMonoStyle}"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       VerticalAlignment="Center" />
+                                            <TextBlock Grid.Column="1" Text="{x:Bind TemperatureText}"
+                                                       Style="{StaticResource AtlasMonoStyle}"
+                                                       HorizontalTextAlignment="Right"
+                                                       VerticalAlignment="Center" />
+                                            <TextBlock Grid.Column="2" Text="{x:Bind SourceText}"
+                                                       Style="{StaticResource AtlasMonoMutedStyle}"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       VerticalAlignment="Center" />
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- GPU vendor sensor coverage. Missing readings remain explicit. -->
+            <Border Grid.Row="3" Style="{StaticResource AtlasPanelStyle}">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="GPU SENSOR COVERAGE" Style="{StaticResource AtlasSectionLabelStyle}" />
+                    <TextBlock Text="{x:Bind ViewModel.GpuNote, Mode=OneWay}"
+                               Style="{StaticResource AtlasMonoMutedStyle}"
+                               TextWrapping="Wrap"
+                               Visibility="{x:Bind ViewModel.GpuAbsent, Mode=OneWay}" />
+                    <ItemsControl ItemsSource="{x:Bind ViewModel.GpuSensors, Mode=OneWay}"
+                                  Visibility="{x:Bind ViewModel.GpuPresent, Mode=OneWay}"
+                                  AutomationProperties.Name="GPU sensor coverage by adapter">
                         <ItemsControl.ItemTemplate>
-                            <DataTemplate x:DataType="vm:ThermalSensorItem">
-                                <Grid ColumnSpacing="12" Padding="0,4">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" MinWidth="90" />
-                                        <ColumnDefinition Width="1.4*" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="{x:Bind Name}"
-                                               TextTrimming="CharacterEllipsis" />
-                                    <TextBlock Grid.Column="1" Text="{x:Bind TemperatureText}"
-                                               HorizontalTextAlignment="Right" />
-                                    <TextBlock Grid.Column="2" Text="{x:Bind SourceText}"
-                                               TextTrimming="CharacterEllipsis"
-                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            <DataTemplate x:DataType="vm:GpuSensorItem">
+                                <Grid Padding="0,7" RowSpacing="3">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Text="{x:Bind Name}" Style="{StaticResource AtlasMonoStyle}" />
+                                    <TextBlock Grid.Row="1" Text="{x:Bind ReadingsText}"
+                                               TextWrapping="Wrap" Style="{StaticResource AtlasMonoMutedStyle}" />
+                                    <TextBlock Grid.Row="2" Text="{x:Bind CoverageText}"
+                                               TextWrapping="Wrap" Style="{StaticResource AtlasPageDescriptionStyle}" />
                                 </Grid>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
@@ -136,30 +192,31 @@
                 </StackPanel>
             </Border>
 
-            <!-- Startup history (boots) card -->
-            <Border Grid.Row="3"
-                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                    BorderThickness="1" CornerRadius="8" Padding="20,16">
-                <StackPanel Spacing="10">
-                    <StackPanel Orientation="Horizontal" Spacing="10">
-                        <FontIcon Glyph="&#xE7E8;" FontSize="18" VerticalAlignment="Center" />
-                        <TextBlock Text="Startup history" Style="{StaticResource SubtitleTextBlockStyle}" />
+            <!-- ===== Startup history (boots) section ===== -->
+            <Border Grid.Row="4" Style="{StaticResource AtlasPanelStyle}">
+                <StackPanel Spacing="12">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xE7E8;" FontSize="13"
+                                  Foreground="{ThemeResource AtlasMutedBrush}"
+                                  VerticalAlignment="Center" />
+                        <TextBlock Text="STARTUP HISTORY" Style="{StaticResource AtlasSectionLabelStyle}"
+                                   VerticalAlignment="Center" />
                     </StackPanel>
 
-                    <!-- Unsupported / absent (same calm treatment) -->
+                    <!-- Unsupported (service too old) - honest degradation note -->
                     <TextBlock Text="{x:Bind ViewModel.BootsNote, Mode=OneWay}"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                               TextWrapping="Wrap"
+                               Style="{StaticResource AtlasWarningTextStyle}"
                                Visibility="{x:Bind ViewModel.BootsUnsupported, Mode=OneWay}" />
+
+                    <!-- Absent (no boot log) - honest, no alarm -->
                     <StackPanel Orientation="Horizontal" Spacing="8"
                                 Visibility="{x:Bind ViewModel.BootsAbsent, Mode=OneWay}">
                         <FontIcon Glyph="&#xE946;" FontSize="14"
-                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                  Foreground="{ThemeResource AtlasDimBrush}"
                                   VerticalAlignment="Center" />
                         <TextBlock Text="{x:Bind ViewModel.BootsNote, Mode=OneWay}"
-                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                   TextWrapping="Wrap" />
+                                   Style="{StaticResource AtlasMonoMutedStyle}"
+                                   TextWrapping="Wrap" VerticalAlignment="Center" />
                     </StackPanel>
 
                     <!-- Boot list -->
@@ -171,37 +228,42 @@
                                 <ColumnDefinition Width="Auto" MinWidth="90" />
                                 <ColumnDefinition Width="1.4*" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="Boot"
-                                       Style="{StaticResource CaptionTextBlockStyle}"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                            <TextBlock Grid.Column="1" Text="Duration"
+                            <TextBlock Grid.Column="0" Text="BOOT"
+                                       Style="{StaticResource AtlasColumnHeaderStyle}" />
+                            <TextBlock Grid.Column="1" Text="DURATION"
                                        HorizontalTextAlignment="Right"
-                                       Style="{StaticResource CaptionTextBlockStyle}"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                            <TextBlock Grid.Column="2" Text="Status"
-                                       Style="{StaticResource CaptionTextBlockStyle}"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                       Style="{StaticResource AtlasColumnHeaderStyle}" />
+                            <TextBlock Grid.Column="2" Text="STATUS"
+                                       Style="{StaticResource AtlasColumnHeaderStyle}" />
                         </Grid>
                         <ItemsControl ItemsSource="{x:Bind ViewModel.Boots, Mode=OneWay}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate x:DataType="vm:BootItem">
-                                    <Grid ColumnSpacing="12" Padding="0,4">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="1.6*" />
-                                            <ColumnDefinition Width="Auto" MinWidth="90" />
-                                            <ColumnDefinition Width="1.4*" />
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="{x:Bind TimeText}" />
-                                        <TextBlock Grid.Column="1" Text="{x:Bind DurationText}"
-                                                   HorizontalTextAlignment="Right" />
-                                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8"
-                                                    VerticalAlignment="Center">
-                                            <Ellipse Width="8" Height="8"
-                                                     Fill="{x:Bind DegradedToken, Converter={StaticResource MonitorTokenToBrush}}" />
-                                            <TextBlock Text="{x:Bind DegradedText}"
-                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                        </StackPanel>
-                                    </Grid>
+                                    <Border BorderBrush="{ThemeResource AtlasLineBrush}"
+                                            BorderThickness="0,0,0,1" Padding="0,7">
+                                        <Grid ColumnSpacing="12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="1.6*" />
+                                                <ColumnDefinition Width="Auto" MinWidth="90" />
+                                                <ColumnDefinition Width="1.4*" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="{x:Bind TimeText}"
+                                                       Style="{StaticResource AtlasMonoStyle}"
+                                                       VerticalAlignment="Center" />
+                                            <TextBlock Grid.Column="1" Text="{x:Bind DurationText}"
+                                                       Style="{StaticResource AtlasMonoStyle}"
+                                                       HorizontalTextAlignment="Right"
+                                                       VerticalAlignment="Center" />
+                                            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8"
+                                                        VerticalAlignment="Center">
+                                                <Ellipse Width="8" Height="8"
+                                                         Fill="{x:Bind DegradedToken, Converter={StaticResource MonitorTokenToBrush}}" />
+                                                <TextBlock Text="{x:Bind DegradedText}"
+                                                           Style="{StaticResource AtlasMonoMutedStyle}"
+                                                           VerticalAlignment="Center" />
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>

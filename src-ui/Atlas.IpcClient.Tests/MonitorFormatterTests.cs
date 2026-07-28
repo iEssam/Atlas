@@ -294,6 +294,22 @@ public class MonitorFormatterTests
         Assert.Equal("ACPI thermal zone", MonitorFormatter.ThermalSourceText("ACPI thermal zone"));
     }
 
+    [Theory]
+    [InlineData(GpuTelemetrySource.GpuSourceWindowsWddm, "Windows WDDM")]
+    [InlineData(GpuTelemetrySource.GpuSourceNvidiaNvml, "NVIDIA NVML")]
+    [InlineData(GpuTelemetrySource.GpuSourceUnspecified, "source unavailable")]
+    public void GpuSourceText_IsExplicit(GpuTelemetrySource source, string expected) =>
+        Assert.Equal(expected, MonitorFormatter.GpuSourceText(source));
+
+    [Theory]
+    [InlineData(GpuAvailabilityReason.GpuAvailabilityProviderMissing, "provider_missing")]
+    [InlineData(GpuAvailabilityReason.GpuAvailabilityHelperTimeout, "helper_timeout")]
+    [InlineData(GpuAvailabilityReason.GpuAvailabilityHelperBackoff, "helper_backoff")]
+    [InlineData(GpuAvailabilityReason.GpuAvailabilityUnsupportedMetric, "unsupported_metric")]
+    [InlineData(GpuAvailabilityReason.GpuAvailabilityDeviceLost, "device_lost")]
+    public void GpuAvailabilityCode_RemainsStable(GpuAvailabilityReason reason, string expected) =>
+        Assert.Equal(expected, MonitorFormatter.GpuAvailabilityCode(reason));
+
     // ---- Shared unavailable helper -----------------------------------------
 
     [Fact]

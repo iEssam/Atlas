@@ -37,6 +37,7 @@ public sealed class LiveMetricsService
     private readonly DispatcherQueue _dispatcher;
     private readonly string? _who;
     private readonly DispatcherQueueTimer _timer;
+    private readonly bool _preferRing;
 
     private MetricsSource _source = MetricsSource.None;
     private string _status = "Disconnected";
@@ -46,7 +47,6 @@ public sealed class LiveMetricsService
 
     private AtlasChannel? _channel;
     private CancellationTokenSource? _streamCts;
-    private MetricsSnapshot? _lastStreamSnapshot;
     private int _ringRetryCountdown;
 
     // A short run of failed ring reads before dropping to the stream. A live 1 Hz
@@ -66,10 +66,14 @@ public sealed class LiveMetricsService
 
     /// <param name="dispatcher">The UI thread's dispatcher queue.</param>
     /// <param name="who">Ring/pipe discriminator (default: USERNAME).</param>
-    public LiveMetricsService(DispatcherQueue dispatcher, string? who = null)
+    public LiveMetricsService(
+        DispatcherQueue dispatcher,
+        string? who = null,
+        bool preferRing = true)
     {
         _dispatcher = dispatcher;
         _who = who;
+        _preferRing = preferRing;
         _timer = dispatcher.CreateTimer();
         _timer.Interval = TimeSpan.FromSeconds(1);
         _timer.IsRepeating = true;
@@ -87,8 +91,10 @@ public sealed class LiveMetricsService
     public void Stop()
     {
         _timer.Stop();
-        _streamCts?.Cancel();
+        var streamCts = _streamCts;
         _streamCts = null;
+        streamCts?.Cancel();
+        streamCts?.Dispose();
         _channel?.Dispose();
         _channel = null;
         _ring?.Dispose();
@@ -106,9 +112,8 @@ public sealed class LiveMetricsService
 
             case MetricsSource.Stream:
                 // The stream pushes on its own; here we just re-probe the ring
-                // occasionally to reclaim the hot path, and re-emit the last
-                // stream snapshot so gauges stay live between stream messages.
-                if (--_ringRetryCountdown <= 0)
+                // occasionally to reclaim the hot path.
+                if (_preferRing && --_ringRetryCountdown <= 0)
                 {
                     _ringRetryCountdown = RingRetryTicks;
                     if (TryEnterRing())
@@ -120,7 +125,7 @@ public sealed class LiveMetricsService
 
             default:
                 // Not connected: prefer the ring, else start the stream.
-                if (!TryEnterRing())
+                if (!_preferRing || !TryEnterRing())
                 {
                     EnsureStream();
                 }
@@ -150,11 +155,12 @@ public sealed class LiveMetricsService
         }
 
         // Tear down the stream fallback if it was running.
-        _streamCts?.Cancel();
+        var streamCts = _streamCts;
         _streamCts = null;
+        streamCts?.Cancel();
+        streamCts?.Dispose();
         _channel?.Dispose();
         _channel = null;
-        _lastStreamSnapshot = null;
 
         _ring?.Dispose();
         _ring = result.Ring;
@@ -213,18 +219,20 @@ public sealed class LiveMetricsService
         {
             return;
         }
-        _streamCts = new CancellationTokenSource();
-        _ = RunStreamAsync(_streamCts.Token);
+        var cts = new CancellationTokenSource();
+        _streamCts = cts;
+        _ = RunStreamAsync(cts);
     }
 
-    private async Task RunStreamAsync(CancellationToken ct)
+    private async Task RunStreamAsync(CancellationTokenSource cts)
     {
+        string? disconnectReason = null;
         try
         {
             var channel = AtlasChannel.Connect(_who);
             _channel = channel;
 
-            await foreach (var reply in channel.StreamSnapshotsAsync(0, ct).ConfigureAwait(false))
+            await foreach (var reply in channel.StreamSnapshotsAsync(0, cts.Token).ConfigureAwait(false))
             {
                 var snap = FromReply(reply);
                 Post(() =>
@@ -233,8 +241,9 @@ public sealed class LiveMetricsService
                     // ring; ignore it unless the stream is still the source.
                     if (_source == MetricsSource.Stream || _source == MetricsSource.None)
                     {
-                        _lastStreamSnapshot = snap;
-                        SetStatus(MetricsSource.Stream, "Connected (stream)");
+                        SetStatus(
+                            MetricsSource.Stream,
+                            _preferRing ? "Connected (stream)" : "Connected (full stream)");
                         Emit(snap);
                     }
                 });
@@ -246,11 +255,28 @@ public sealed class LiveMetricsService
         }
         catch (Exception ex)
         {
+            disconnectReason = $"Stream error: {ex.Message}";
+        }
+        finally
+        {
             Post(() =>
             {
+                // Ignore cleanup from an older stream after Stop(), a restart,
+                // or a successful transition back to the ring.
+                if (!ReferenceEquals(_streamCts, cts))
+                {
+                    return;
+                }
+
+                _streamCts = null;
+                cts.Dispose();
+                _channel?.Dispose();
+                _channel = null;
                 if (_source != MetricsSource.Ring)
                 {
-                    SetStatus(MetricsSource.Stream, $"Stream error: {ex.Message}");
+                    SetStatus(
+                        MetricsSource.None,
+                        disconnectReason ?? "Stream ended; reconnecting...");
                 }
             });
         }
@@ -266,16 +292,24 @@ public sealed class LiveMetricsService
                 createTime100ns: 0, // the ring carries pid only
                 r.Name,
                 r.CpuPermille / 10.0,
+                r.GpuPermille / 10.0,
                 r.WorkingSet,
                 r.PrivateBytes,
+                r.ReadBps,
+                r.WriteBps,
                 threadCount: 0, // not carried in the ring rows
-                handleCount: 0));
+                handleCount: 0,
+                r.GpuDedicatedBytes, r.GpuSharedBytes,
+                appGroup: string.Empty));
         }
         return new MetricsSnapshot(
+            s.TsMs,
             MetricsSource.Ring,
             s.CpuPermille / 10.0,
+            s.GpuPermille / 10.0,
             s.MemUsed, s.MemTotal, s.CommitUsed, s.CommitLimit,
             s.ProcessCount, s.ThreadCount, s.HandleCount,
+            s.GpuDedicatedUsed, s.GpuDedicatedBudget, s.GpuSharedUsed, s.GpuSharedBudget,
             rows);
     }
 
@@ -289,15 +323,22 @@ public sealed class LiveMetricsService
                 p.CreateTime100Ns,
                 p.ImageName,
                 p.CpuPermille / 10.0,
+                p.GpuPermille / 10.0,
                 p.WorkingSet,
                 p.PrivateBytes,
+                p.ReadBps,
+                p.WriteBps,
                 p.ThreadCount,
-                p.HandleCount));
+                p.HandleCount,
+                p.GpuDedicatedBytes, p.GpuSharedBytes,
+                p.AppGroup));
         }
         var sys = reply.System;
         return new MetricsSnapshot(
+            sys?.TsMs ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             MetricsSource.Stream,
             sys?.CpuPermille / 10.0 ?? 0,
+            sys?.GpuPermille / 10.0 ?? 0,
             sys?.MemUsed ?? 0,
             sys?.MemTotal ?? 0,
             sys?.CommitUsed ?? 0,
@@ -305,6 +346,10 @@ public sealed class LiveMetricsService
             sys?.ProcessCount ?? 0,
             sys?.ThreadCount ?? 0,
             sys?.HandleCount ?? 0,
+            sys?.GpuDedicatedUsed ?? 0,
+            sys?.GpuDedicatedBudget ?? 0,
+            sys?.GpuSharedUsed ?? 0,
+            sys?.GpuSharedBudget ?? 0,
             rows);
     }
 

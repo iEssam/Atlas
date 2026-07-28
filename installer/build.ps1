@@ -39,6 +39,10 @@ param(
     # fresh build outputs, or for a pure "does the WiX compile?" check.
     [switch]$SkipPrereqs,
 
+    # Optional production-signed sparse package. When omitted, the shell build
+    # emits an unsigned package suitable for CI validation but not deployment.
+    [string]$SignedShellPackage,
+
     # Emit an unsigned MSI. Signing is a separate, documented post-build step
     # (installer/README.md "Signing"); this harness never signs.
     [switch]$NoSign
@@ -115,9 +119,35 @@ function Build-Prereqs {
     & dotnet publish $appProj -c Release -r $DotnetRid --self-contained true `
         -p:Platform=$Platform
     if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed ($LASTEXITCODE)." }
+
+    Write-Step "Building Explorer command and sparse identity package"
+    $shellPlatform = if ($Platform -eq "x64") { "x64" } else { "ARM64" }
+    & (Join-Path $RepoRoot "shell-ext\build.ps1") -Configuration Release `
+        -Platform $shellPlatform -Version $Version
+    if ($LASTEXITCODE -ne 0) { throw "shell extension build failed ($LASTEXITCODE)." }
+
 }
 
-# Resolve the two inputs Package.wxs needs, whether freshly built or staged.
+function Stage-ShellIntegration([string]$AppPublishDir) {
+    $shellPlatform = if ($Platform -eq "x64") { "x64" } else { "ARM64" }
+    $shellOutput = Join-Path $RepoRoot "shell-ext\out\$shellPlatform\Release"
+    $shellDll = Join-Path $shellOutput "SystemAtlas.ShellExtension.dll"
+    if (-not (Test-Path -LiteralPath $shellDll)) {
+        throw "Explorer command DLL not found at '$shellDll'. Run shell-ext/build.ps1 -Configuration Release -Platform $shellPlatform."
+    }
+    $identityPackage = if ($SignedShellPackage) {
+        (Resolve-Path -LiteralPath $SignedShellPackage).Path
+    } else {
+        Join-Path $shellOutput "SystemAtlas.Desktop-$Version.msix"
+    }
+    if (-not (Test-Path -LiteralPath $identityPackage)) {
+        throw "Sparse identity package not found at '$identityPackage'. Run shell-ext/build.ps1 -Configuration Release -Platform $shellPlatform -Version $Version."
+    }
+    Copy-Item $shellDll $AppPublishDir -Force
+    Copy-Item $identityPackage (Join-Path $AppPublishDir "SystemAtlas.Desktop.msix") -Force
+}
+
+# Resolve the inputs Package.wxs needs, whether freshly built or staged.
 function Resolve-Inputs {
     # Service exe: prefer staged copy, else the cargo target dir.
     $svc = Join-Path $StageDir "atlas-service.exe"
@@ -130,8 +160,9 @@ function Resolve-Inputs {
 
     # App publish dir: the RID publish output.
     $appPub = Join-Path $RepoRoot "src-ui\Atlas.App\bin\$Platform\Release\net10.0-windows10.0.19041.0\$DotnetRid\publish"
+    $presentMonDir = Join-Path $RepoRoot "third_party\presentmon"
 
-    return [pscustomobject]@{ ServiceExe = $svc; AppPublishDir = $appPub }
+    return [pscustomobject]@{ ServiceExe = $svc; AppPublishDir = $appPub; PresentMonDir = $presentMonDir }
 }
 
 # --- Main --------------------------------------------------------------------
@@ -152,6 +183,11 @@ if (-not (Test-Path $inputs.ServiceExe)) {
 if (-not (Test-Path $inputs.AppPublishDir)) {
     throw "WinUI publish dir not found at '$($inputs.AppPublishDir)'. Publish it with: dotnet publish src-ui/Atlas.App -c Release -r $DotnetRid --self-contained true"
 }
+if ($Platform -eq "x64" -and -not (Test-Path (Join-Path $inputs.PresentMonDir "PresentMon-2.5.1-x64.exe"))) {
+    throw "Pinned PresentMon 2.5.1 x64 runtime not found at '$($inputs.PresentMonDir)'."
+}
+
+Stage-ShellIntegration $inputs.AppPublishDir
 
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $msiName = "SystemAtlas-$Version-$Platform.msi"
@@ -167,12 +203,18 @@ Write-Step "Compiling MSI -> $msiPath"
     -d "ProductVersion=$Version" `
     -d "ServiceExe=$($inputs.ServiceExe)" `
     -d "AppPublishDir=$($inputs.AppPublishDir)" `
+    -d "PresentMonDir=$($inputs.PresentMonDir)" `
     -d "Platform=$Platform" `
     -ext WixToolset.Util.wixext `
     -o $msiPath
 if ($LASTEXITCODE -ne 0) { throw "wix build failed ($LASTEXITCODE)." }
 
 Write-Step "MSI written: $msiPath"
+
+if (-not $SignedShellPackage) {
+    Write-Host "NOTE: the embedded sparse identity package is unsigned. The classic Explorer fallback works," -ForegroundColor Yellow
+    Write-Host "but the Windows 11 primary-menu command must not be registered until a signed package is supplied." -ForegroundColor Yellow
+}
 
 if (-not $NoSign) {
     Write-Host ""

@@ -13,14 +13,17 @@
                   MaxHeight="600">
         <StackPanel Spacing="16" Width="480">
 
+            <TextBlock Text="SUPPORT EVIDENCE / LOCAL EXPORT"
+                       Style="{StaticResource AtlasSectionLabelStyle}" />
+
             <!-- What this is -->
             <TextBlock TextWrapping="Wrap"
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                       Text="A support bundle is one self-contained file you can hand to an IT or support engineer. Atlas assembles it from data it already has — nothing new is collected. It is read-only and it is generated on your machine." />
+                       Text="A support bundle is one self-contained file you can hand to an IT or support engineer. Atlas assembles it from data it already has - nothing new is collected. It is read-only and it is generated on your machine." />
 
             <!-- Sections -->
             <StackPanel Spacing="8">
-                <TextBlock Text="What to include" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                <TextBlock Text="WHAT TO INCLUDE" Style="{StaticResource AtlasSectionLabelStyle}" />
                 <TextBlock Text="All sections are included by default. Uncheck anything you'd rather leave out."
                            TextWrapping="Wrap"
                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
@@ -38,7 +41,7 @@
                           AutomationProperties.Name="Include health section">
                     <StackPanel>
                         <TextBlock Text="Health" />
-                        <TextBlock Text="Recent system health — CPU, memory, and disk trends."
+                        <TextBlock Text="Recent system health - CPU, memory, and disk trends."
                                    TextWrapping="Wrap" Style="{StaticResource CaptionTextBlockStyle}"
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                     </StackPanel>
@@ -101,7 +104,7 @@
 
             <!-- Time window -->
             <StackPanel Spacing="6">
-                <TextBlock Text="Time window" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                <TextBlock Text="TIME WINDOW" Style="{StaticResource AtlasSectionLabelStyle}" />
                 <TextBlock Text="How far back to look for incidents, system changes, and crashes."
                            TextWrapping="Wrap"
                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
@@ -119,10 +122,10 @@
 
             <!-- Redaction (safety framing) -->
             <StackPanel Spacing="8">
-                <TextBlock Text="Redaction" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                <TextBlock Text="REDACTION" Style="{StaticResource AtlasSectionLabelStyle}" />
                 <InfoBar IsOpen="True" IsClosable="False" Severity="Informational"
                          Title="This file is meant to leave your machine"
-                         Message="This bundle contains diagnostic evidence for a support engineer. Redaction removes the selected personal details before the file is created, so unrelated personal activity stays off it. These are on by default — leave them on unless your support contact asks otherwise." />
+                         Message="This bundle contains diagnostic evidence for a support engineer. Redaction removes the selected personal details before the file is created, so unrelated personal activity stays off it. These are on by default - leave them on unless your support contact asks otherwise." />
                 <CheckBox x:Name="RedactUserNames" Content="User names" IsChecked="True"
                           AutomationProperties.Name="Redact user names"
                           Checked="OnRedactionChanged" Unchecked="OnRedactionChanged" />
@@ -136,7 +139,7 @@
                           AutomationProperties.Name="Redact command lines"
                           Checked="OnRedactionChanged" Unchecked="OnRedactionChanged" />
                 <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
-                        CornerRadius="6" Padding="12,8">
+                        CornerRadius="2" Padding="12,8">
                     <TextBlock x:Name="RedactionSummaryText"
                                TextWrapping="Wrap"
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
@@ -145,7 +148,7 @@
 
             <!-- Format -->
             <StackPanel Spacing="6">
-                <TextBlock Text="Format" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                <TextBlock Text="FORMAT" Style="{StaticResource AtlasSectionLabelStyle}" />
                 <ComboBox x:Name="FormatCombo"
                           AutomationProperties.Name="Bundle format"
                           HorizontalAlignment="Stretch"
@@ -176,22 +179,24 @@
                          Severity="Success"
                          Title="What was removed" />
 
-                <TextBlock Text="Preview" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                <TextBlock Text="PREVIEW" Style="{StaticResource AtlasSectionLabelStyle}" />
                 <TextBox x:Name="PreviewBox"
                          AutomationProperties.Name="Support bundle preview"
                          IsReadOnly="True"
                          AcceptsReturn="True"
                          TextWrapping="NoWrap"
-                         FontFamily="Consolas"
+                         FontFamily="{ThemeResource AtlasMonoFontFamily}"
                          Height="200"
                          ScrollViewer.HorizontalScrollBarVisibility="Auto"
                          ScrollViewer.VerticalScrollBarVisibility="Auto" />
                 <StackPanel Orientation="Horizontal" Spacing="12">
                     <Button x:Name="SaveButton" Content="Save to file…"
                             AutomationProperties.Name="Save support bundle to file"
+                            Style="{StaticResource AtlasGhostButtonStyle}"
                             Click="OnSaveClick" />
                     <Button x:Name="CopyButton" Content="Copy"
                             AutomationProperties.Name="Copy support bundle to clipboard"
+                            Style="{StaticResource AtlasGhostButtonStyle}"
                             Click="OnCopyClick" />
                 </StackPanel>
             </StackPanel>

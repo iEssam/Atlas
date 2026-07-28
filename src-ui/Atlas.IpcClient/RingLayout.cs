@@ -23,16 +23,16 @@ internal static class RingLayout
 
     /// <summary>
     /// The row array immediately follows the header. shm.rs RingHeader is
-    /// 80 bytes (see <see cref="RingHeaderLayout.Size"/>); RingRow is 8-byte
+    /// 120 bytes (see <see cref="RingHeaderLayout.Size"/>); RingRow is 8-byte
     /// aligned so no gap is inserted between header and rows.
     /// </summary>
     public const long RowsOffset = RingHeaderLayout.Size;
 
     /// <summary>
-    /// Full section size = header (80) + 64 rows × 104 = 80 + 6656 = 6736.
+    /// Full section size = header (120) + 64 rows x 128 = 8312 bytes.
     /// shm.rs: <c>pub const RING_SIZE: usize = size_of::&lt;RingLayout&gt;();</c>
     /// </summary>
-    public const long Size = RowsOffset + (long)MetricsRing.RingRows * RingRowLayout.Size;
+    public const long Size = RowsOffset + 64L * RingRowLayout.Size;
 }
 
 /// <summary>
@@ -72,15 +72,21 @@ internal static class RingHeaderLayout
     public const long ProcessCountOffset = 28;
     public const long ThreadCountOffset = 32;
     public const long HandleCountOffset = 36;
-    public const long MemUsedOffset = 40;
-    public const long MemTotalOffset = 48;
-    public const long CommitUsedOffset = 56;
-    public const long CommitLimitOffset = 64;
-    public const long RowCountOffset = 72;
-    public const long Pad2Offset = 76;
+    public const long GpuPermilleOffset = 40;
+    public const long GpuPadOffset = 44;
+    public const long MemUsedOffset = 48;
+    public const long MemTotalOffset = 56;
+    public const long CommitUsedOffset = 64;
+    public const long CommitLimitOffset = 72;
+    public const long GpuDedicatedUsedOffset = 80;
+    public const long GpuDedicatedBudgetOffset = 88;
+    public const long GpuSharedUsedOffset = 96;
+    public const long GpuSharedBudgetOffset = 104;
+    public const long RowCountOffset = 112;
+    public const long Pad2Offset = 116;
 
     /// <summary>Header size in bytes (multiple of 8). shm.rs RingHeader.</summary>
-    public const long Size = 80;
+    public const long Size = 120;
 }
 
 /// <summary>
@@ -104,14 +110,18 @@ internal static class RingRowLayout
 {
     public const long PidOffset = 0;
     public const long CpuPermilleOffset = 4;
-    public const long WorkingSetOffset = 8;
-    public const long PrivateBytesOffset = 16;
-    public const long ReadBpsOffset = 24;
-    public const long WriteBpsOffset = 32;
-    public const long NameOffset = 40;
+    public const long GpuPermilleOffset = 8;
+    public const long PadGpuOffset = 12;
+    public const long WorkingSetOffset = 16;
+    public const long PrivateBytesOffset = 24;
+    public const long ReadBpsOffset = 32;
+    public const long WriteBpsOffset = 40;
+    public const long GpuDedicatedBytesOffset = 48;
+    public const long GpuSharedBytesOffset = 56;
+    public const long NameOffset = 64;
 
     /// <summary>Row size in bytes. shm.rs RingRow.</summary>
-    public const long Size = 104;
+    public const long Size = 128;
 }
 
 // ---------------------------------------------------------------------------
@@ -139,10 +149,16 @@ internal struct RingHeaderBlittable
     public uint ProcessCount;
     public uint ThreadCount;
     public uint HandleCount;
+    public uint GpuPermille;
+    public uint GpuPad;
     public ulong MemUsed;
     public ulong MemTotal;
     public ulong CommitUsed;
     public ulong CommitLimit;
+    public ulong GpuDedicatedUsed;
+    public ulong GpuDedicatedBudget;
+    public ulong GpuSharedUsed;
+    public ulong GpuSharedBudget;
     public uint RowCount;
     public uint Pad2;
 }
@@ -153,10 +169,14 @@ internal struct RingRowBlittable
 {
     public uint Pid;
     public uint CpuPermille;
+    public uint GpuPermille;
+    public uint PadGpu;
     public ulong WorkingSet;
     public ulong PrivateBytes;
     public ulong ReadBps;
     public ulong WriteBps;
+    public ulong GpuDedicatedBytes;
+    public ulong GpuSharedBytes;
 
     [MarshalAs(UnmanagedType.ByValArray, SizeConst = MetricsRing.RingNameLen)]
     public ushort[] Name;

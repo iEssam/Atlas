@@ -564,6 +564,108 @@ pub fn set_power_overlay(mode: &str) -> PolicyOutcome {
     }
 }
 
+/// Returns the active power-overlay GUID as stable lowercase hex. The raw GUID
+/// is retained so Gaming Intelligence can restore an uncommon OEM overlay
+/// exactly rather than assuming Balanced.
+pub fn get_power_overlay_state() -> Option<(String, String)> {
+    use crate::ffi::{
+        FreeLibrary, GetProcAddress, LoadLibraryW, PowerGetActualOverlaySchemeFn, GUID,
+        OVERLAY_BALANCED, OVERLAY_HIGH_PERFORMANCE, OVERLAY_POWER_SAVER,
+    };
+    unsafe {
+        let dll: Vec<u16> = "powrprof.dll\0".encode_utf16().collect();
+        let module = LoadLibraryW(dll.as_ptr());
+        if module.is_null() {
+            return None;
+        }
+        let addr = GetProcAddress(module, c"PowerGetActualOverlayScheme".as_ptr() as *const u8);
+        if addr.is_null() {
+            FreeLibrary(module);
+            return None;
+        }
+        let func: PowerGetActualOverlaySchemeFn = std::mem::transmute(addr);
+        let mut guid = GUID {
+            Data1: 0,
+            Data2: 0,
+            Data3: 0,
+            Data4: [0; 8],
+        };
+        let rc = func(&mut guid);
+        FreeLibrary(module);
+        if rc != 0 {
+            return None;
+        }
+        let label = if guid_eq(guid, OVERLAY_BALANCED) {
+            "Balanced"
+        } else if guid_eq(guid, OVERLAY_POWER_SAVER) {
+            "Power saver"
+        } else if guid_eq(guid, OVERLAY_HIGH_PERFORMANCE) {
+            "Best performance"
+        } else {
+            "OEM or custom overlay"
+        };
+        Some((guid_to_hex(guid), label.to_string()))
+    }
+}
+
+/// Restores an exact raw overlay GUID previously returned by
+/// [`get_power_overlay_state`]. Invalid input fails closed.
+pub fn restore_power_overlay_state(hex: &str) -> PolicyOutcome {
+    use crate::ffi::{FreeLibrary, GetProcAddress, LoadLibraryW, PowerSetActiveOverlaySchemeFn};
+    let Some(guid) = guid_from_hex(hex) else {
+        return PolicyOutcome::fail("stored power overlay GUID was invalid");
+    };
+    unsafe {
+        let dll: Vec<u16> = "powrprof.dll\0".encode_utf16().collect();
+        let module = LoadLibraryW(dll.as_ptr());
+        if module.is_null() {
+            return PolicyOutcome::fail("powrprof.dll could not be loaded");
+        }
+        let addr = GetProcAddress(module, c"PowerSetActiveOverlayScheme".as_ptr() as *const u8);
+        if addr.is_null() {
+            FreeLibrary(module);
+            return PolicyOutcome::fail("PowerSetActiveOverlayScheme unavailable");
+        }
+        let func: PowerSetActiveOverlaySchemeFn = std::mem::transmute(addr);
+        let rc = func(&guid);
+        FreeLibrary(module);
+        if rc == 0 {
+            PolicyOutcome::ok("power overlay restored")
+        } else {
+            PolicyOutcome::fail(format!("power overlay restore returned {rc}"))
+        }
+    }
+}
+
+fn guid_eq(a: crate::ffi::GUID, b: crate::ffi::GUID) -> bool {
+    a.Data1 == b.Data1 && a.Data2 == b.Data2 && a.Data3 == b.Data3 && a.Data4 == b.Data4
+}
+
+fn guid_to_hex(guid: crate::ffi::GUID) -> String {
+    let mut bytes = Vec::with_capacity(16);
+    bytes.extend_from_slice(&guid.Data1.to_le_bytes());
+    bytes.extend_from_slice(&guid.Data2.to_le_bytes());
+    bytes.extend_from_slice(&guid.Data3.to_le_bytes());
+    bytes.extend_from_slice(&guid.Data4);
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn guid_from_hex(text: &str) -> Option<crate::ffi::GUID> {
+    if text.len() != 32 {
+        return None;
+    }
+    let mut bytes = [0u8; 16];
+    for (index, byte) in bytes.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&text[index * 2..index * 2 + 2], 16).ok()?;
+    }
+    Some(crate::ffi::GUID {
+        Data1: u32::from_le_bytes(bytes[0..4].try_into().ok()?),
+        Data2: u16::from_le_bytes(bytes[4..6].try_into().ok()?),
+        Data3: u16::from_le_bytes(bytes[6..8].try_into().ok()?),
+        Data4: bytes[8..16].try_into().ok()?,
+    })
+}
+
 /// The pid that owns the current foreground window (the ON_FULLSCREEN /
 /// foreground-app trigger). 0 when there is no foreground window.
 pub fn foreground_pid() -> u32 {

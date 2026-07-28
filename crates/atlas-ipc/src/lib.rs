@@ -36,6 +36,10 @@ pub use transport::{connect, default_pipe_name, pipe_name, serve, PipeConnectInf
 // atlas-ipc rather than pinning tonic/prost versions themselves.
 pub use v0::atlas_control_client::AtlasControlClient;
 pub use v0::atlas_control_server::{AtlasControl, AtlasControlServer};
+pub use v0::atlas_gaming_control_client::AtlasGamingControlClient;
+pub use v0::atlas_gaming_control_server::{AtlasGamingControl, AtlasGamingControlServer};
+pub use v0::atlas_gaming_query_client::AtlasGamingQueryClient;
+pub use v0::atlas_gaming_query_server::{AtlasGamingQuery, AtlasGamingQueryServer};
 pub use v0::atlas_plugins_client::AtlasPluginsClient;
 pub use v0::atlas_plugins_server::{AtlasPlugins, AtlasPluginsServer};
 pub use v0::atlas_query_client::AtlasQueryClient;
@@ -48,21 +52,30 @@ pub use v0::{
     CreateBookmarkRequest, DiagnoseReply, DiagnoseRequest, Diagnosis, EventRow, EvidenceItem,
     ExecuteActionReply, ExecuteActionRequest, FindResourceOwnersReply, FindResourceOwnersRequest,
     GenerateReportReply, GenerateReportRequest, GetBatteryStatusReply, GetBatteryStatusRequest,
-    GetThermalReply, GetThermalRequest, HandleRow, Incident, IncidentKind, L4Protocol,
+    GetThermalReply, GetThermalRequest, GpuAdapterTelemetry, GpuAvailabilityReason, GpuEngineClass,
+    GpuEngineTelemetry, GpuSensorAvailability, GpuSensorKind, GpuTelemetrySource,
+    GpuTemperatureKind, GpuTemperatureTelemetry, GpuThrottleReason, HandleRow, Incident,
+    IncidentKind, Insight, InsightKind, InsightRecommendation, InsightStatus, L4Protocol,
     ListBookmarksReply, ListBookmarksRequest, ListBootsReply, ListBootsRequest,
     ListConnectionsReply, ListConnectionsRequest, ListEventsReply, ListEventsRequest,
     ListHandlesReply, ListHandlesRequest, ListIncidentsReply, ListIncidentsRequest,
-    ListListeningPortsReply, ListListeningPortsRequest, ListModulesReply, ListModulesRequest,
-    ListPrivacyEventsReply, ListPrivacyEventsRequest, ListPrivacyUsageReply,
-    ListPrivacyUsageRequest, ListScheduledTasksReply, ListScheduledTasksRequest, ListServicesReply,
-    ListServicesRequest, ListStartupReply, ListStartupRequest, ListThreadsReply,
-    ListThreadsRequest, ListeningPort, MetricKind, ModuleRow, PrepareActionReply,
-    PrepareActionRequest, PrivacyEvent, PrivacyUsage, ProcessActionKind, ProcessDetail,
-    ProcessDetailReply, ProcessDetailRequest, ProcessHit, ProcessRole, ProcessRow, QueryRangeReply,
-    QueryRangeRequest, RangeBucket, RedactionOptions, ReportFormat, ResourceOwner, ScheduledTask,
-    SearchHit, SearchReply, SearchRequest, ServiceEntry, ServiceStartType, ServiceState, Severity,
-    SnapshotReply, SnapshotRequest, StartupEntry, StartupSource, SystemGauges, TcpState,
-    ThermalSensor, ThreadRow, TimeRange,
+    ListInsightsReply, ListInsightsRequest, ListListeningPortsReply, ListListeningPortsRequest,
+    ListModulesReply, ListModulesRequest, ListPrivacyEventsReply, ListPrivacyEventsRequest,
+    ListPrivacyUsageReply, ListPrivacyUsageRequest, ListScheduledTasksReply,
+    ListScheduledTasksRequest, ListServicesReply, ListServicesRequest, ListStartupReply,
+    ListStartupRequest, ListThreadsReply, ListThreadsRequest, ListeningPort, MetricKind, ModuleRow,
+    PrepareActionReply, PrepareActionRequest, PrivacyEvent, PrivacyUsage, ProcessActionKind,
+    ProcessDetail, ProcessDetailReply, ProcessDetailRequest, ProcessHit, ProcessRole, ProcessRow,
+    QueryRangeReply, QueryRangeRequest, RangeBucket, RedactionOptions, ReportFormat, ResourceOwner,
+    ScheduledTask, SearchHit, SearchReply, SearchRequest, ServiceEntry, ServiceStartType,
+    ServiceState, Severity, SnapshotReply, SnapshotRequest, StartupEntry, StartupSource,
+    SystemGauges, TcpState, ThermalSensor, ThreadRow, TimeRange,
+};
+// Before/after experiments (AtlasQuery, PRD §9.3.5/§9.15.3).
+pub use v0::{
+    CompareExperimentReply, CompareExperimentRequest, CreateExperimentReply,
+    CreateExperimentRequest, Experiment, ExperimentPeriodSummary, ExperimentVerdict,
+    ListExperimentsReply, ListExperimentsRequest,
 };
 // R2 advanced privacy alerts (AtlasQuery, PRD §9.10.3).
 pub use v0::{
@@ -121,10 +134,19 @@ pub const PLUGIN_TOKEN_METADATA_KEY: &str = "atlas-plugin-token";
 /// serve process snapshots. Always present in M4; sensor/ETW flags follow in
 /// later milestones (degraded-mode propagation, tech-stack §5).
 pub const CAP_PROCESS_SNAPSHOTS: &str = "process_snapshots";
+pub const CAP_GPU_CORE_TELEMETRY: &str = "gpu_core_telemetry";
+pub const CAP_GPU_PROCESS_MEMORY: &str = "gpu_process_memory";
+pub const CAP_GPU_WDDM_SENSORS: &str = "gpu_wddm_performance_sensors";
+pub const CAP_GPU_VENDOR_SENSORS: &str = "gpu_vendor_sensors";
+pub const CAP_GPU_CRASH_MONITORING: &str = "gpu_crash_monitoring";
+pub const CAP_GPU_RULE_TRIGGERS: &str = "gpu_rule_triggers";
 
 /// M6: the service answers historical range/event/search/bookmark queries from
 /// the local store (AtlasQuery's read surface).
 pub const CAP_HISTORY_QUERIES: &str = "history_queries";
+
+/// The service persists and evaluates before/after experiment definitions.
+pub const CAP_EXPERIMENTS: &str = "before_after_experiments";
 
 /// M6: the service exposes the safe-action broker (AtlasControl). Present only
 /// when the store is available (audit trail) — the UI hides the action ladder
@@ -152,6 +174,11 @@ pub const CAP_SERVICES_INVENTORY: &str = "services_inventory";
 /// pressure) over the recorded series and serves them (`ListIncidents`,
 /// PRD §9.3.7).
 pub const CAP_INCIDENT_DETECTION: &str = "incident_detection";
+
+/// Deterministic evidence-backed interpretations over live measurements and
+/// recorded incidents. Read-only; recommendation destinations never authorize
+/// actions and still flow through the first-party consent broker.
+pub const CAP_INSIGHTS: &str = "insights";
 
 /// M8: the service builds evidence-based diagnoses of incidents from recorded
 /// data — no LLM, no fabrication (`Diagnose`, PRD §9.15).

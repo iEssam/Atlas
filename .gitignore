@@ -12,12 +12,22 @@
 # .NET / WinUI (arrives at milestone M5)
 bin/
 obj/
+/shell-ext/out/
 *.user
 .vs/
 
 # Editors
 .idea/
 .vscode/
+
+# Secrets and signing material
+.env
+.env.*
+*.key
+*.pem
+*.pfx
+*.p12
+*.snk
 
 # OS noise
 Thumbs.db

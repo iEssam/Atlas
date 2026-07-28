@@ -106,23 +106,31 @@ public sealed partial class PrivacyViewModel : ObservableObject
                 byCapability[cap] = new List<PrivacyUsageItem>();
             }
 
-            int total = 0;
-            foreach (var u in usage.Value.Usages)
+            var aggregates = PrivacyUsageAggregator.Aggregate(usage.Value.Usages);
+            foreach (var aggregate in aggregates)
             {
-                if (!byCapability.TryGetValue(u.Capability, out var list))
+                if (!byCapability.TryGetValue(aggregate.Capability, out var list))
                 {
                     list = new List<PrivacyUsageItem>();
-                    byCapability[u.Capability] = list;
+                    byCapability[aggregate.Capability] = list;
                 }
+                var type = M7Formatter.PackagedLabel(aggregate.Packaged);
+                var sourceText = aggregate.RecordCount == 1
+                    ? type
+                    : $"{type}, {aggregate.RecordCount} records combined";
                 list.Add(new PrivacyUsageItem(
-                    string.IsNullOrEmpty(u.DisplayName)
-                        ? (string.IsNullOrEmpty(u.AppId) ? "(unknown app)" : u.AppId)
-                        : u.DisplayName,
-                    M7Formatter.UsageStatus(u.InUse, u.LastStartMs, u.LastStopMs, now),
-                    u.InUse,
-                    M7Formatter.PackagedLabel(u.Packaged)));
-                total++;
+                    aggregate.DisplayName,
+                    aggregate.AppId,
+                    M7Formatter.UsageStatus(
+                        aggregate.InUse,
+                        aggregate.LastStartMs,
+                        aggregate.LastStopMs,
+                        now),
+                    aggregate.InUse,
+                    sourceText));
             }
+
+            int total = aggregates.Count;
 
             Post(() =>
             {
@@ -130,8 +138,15 @@ public sealed partial class PrivacyViewModel : ObservableObject
                 foreach (var cap in order)
                 {
                     var items = byCapability[cap];
-                    // Put in-use apps first, then the rest as returned.
-                    items.Sort((a, b) => b.InUse.CompareTo(a.InUse));
+                    // Put active apps first, then keep the consolidated list easy
+                    // to scan instead of exposing ConsentStore record order.
+                    items.Sort((a, b) =>
+                    {
+                        var active = b.InUse.CompareTo(a.InUse);
+                        return active != 0
+                            ? active
+                            : StringComparer.CurrentCultureIgnoreCase.Compare(a.DisplayName, b.DisplayName);
+                    });
                     var group = new PrivacyCapabilityGroup(
                         M7Formatter.CapabilityLabel(cap),
                         M7Formatter.CapabilityGlyph(cap));
@@ -211,13 +226,15 @@ public sealed class PrivacyCapabilityGroup
 public sealed class PrivacyUsageItem
 {
     public string DisplayName { get; }
+    public string AppId { get; }
     public string StatusText { get; }
     public bool InUse { get; }
     public string PackagedText { get; }
 
-    public PrivacyUsageItem(string displayName, string statusText, bool inUse, string packagedText)
+    public PrivacyUsageItem(string displayName, string appId, string statusText, bool inUse, string packagedText)
     {
         DisplayName = displayName;
+        AppId = appId;
         StatusText = statusText;
         InUse = inUse;
         PackagedText = packagedText;

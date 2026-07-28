@@ -1,0 +1,217 @@
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!--
+        Native Evidence Atlas palette. Theme-specific resources use semantic
+        names so pages never depend on a hue. High Contrast points only to
+        system brushes and leaves standard WinUI control resources untouched.
+    -->
+    <ResourceDictionary.ThemeDictionaries>
+        <ResourceDictionary x:Key="Dark">
+            <SolidColorBrush x:Key="AtlasVoidBrush" Color="#FF0C100E" />
+            <SolidColorBrush x:Key="AtlasGraphiteBrush" Color="#FF101512" />
+            <SolidColorBrush x:Key="AtlasPanelBrush" Color="#FF171D19" />
+            <SolidColorBrush x:Key="AtlasPanel2Brush" Color="#FF1C241F" />
+            <SolidColorBrush x:Key="AtlasLineBrush" Color="#FF29332E" />
+            <SolidColorBrush x:Key="AtlasLineStrongBrush" Color="#FF3B4942" />
+            <SolidColorBrush x:Key="AtlasInkBrush" Color="#FFEAF0EB" />
+            <SolidColorBrush x:Key="AtlasMutedBrush" Color="#FFA0ACA6" />
+            <SolidColorBrush x:Key="AtlasDimBrush" Color="#FF7D8983" />
+            <SolidColorBrush x:Key="AtlasLabelBrush" Color="#FFA0ACA6" />
+            <SolidColorBrush x:Key="AtlasCyanBrush" Color="#FF78AAA3" />
+            <SolidColorBrush x:Key="AtlasCyanLightBrush" Color="#FFA4CBC5" />
+            <SolidColorBrush x:Key="AtlasCyanDarkBrush" Color="#FF315E58" />
+            <SolidColorBrush x:Key="AtlasCyanTintBrush" Color="#30315E58" />
+            <SolidColorBrush x:Key="AtlasAmberBrush" Color="#FFC2A16F" />
+            <SolidColorBrush x:Key="AtlasAmberTintBrush" Color="#2AC2A16F" />
+            <SolidColorBrush x:Key="AtlasRedBrush" Color="#FFC47A74" />
+            <SolidColorBrush x:Key="AtlasGreenBrush" Color="#FF88A985" />
+            <SolidColorBrush x:Key="AtlasGreenTintBrush" Color="#2A88A985" />
+
+            <SolidColorBrush x:Key="ApplicationPageBackgroundThemeBrush" Color="#00101512" />
+            <SolidColorBrush x:Key="LayerFillColorDefaultBrush" Color="#CC171D19" />
+            <SolidColorBrush x:Key="LayerFillColorAltBrush" Color="#FF1C241F" />
+            <SolidColorBrush x:Key="SolidBackgroundFillColorBaseBrush" Color="#FF101512" />
+            <SolidColorBrush x:Key="SolidBackgroundFillColorSecondaryBrush" Color="#FF171D19" />
+            <SolidColorBrush x:Key="SolidBackgroundFillColorTertiaryBrush" Color="#FF1C241F" />
+            <SolidColorBrush x:Key="CardBackgroundFillColorDefaultBrush" Color="#D9171D19" />
+            <SolidColorBrush x:Key="CardBackgroundFillColorSecondaryBrush" Color="#FF1C241F" />
+
+            <SolidColorBrush x:Key="TextFillColorPrimaryBrush" Color="#FFEAF0EB" />
+            <SolidColorBrush x:Key="TextFillColorSecondaryBrush" Color="#FFA0ACA6" />
+            <SolidColorBrush x:Key="TextFillColorTertiaryBrush" Color="#FF7D8983" />
+            <SolidColorBrush x:Key="TextFillColorDisabledBrush" Color="#FF5D6862" />
+            <SolidColorBrush x:Key="CardStrokeColorDefaultBrush" Color="#0029332E" />
+            <SolidColorBrush x:Key="CardStrokeColorDefaultSolidBrush" Color="#FF29332E" />
+            <SolidColorBrush x:Key="DividerStrokeColorDefaultBrush" Color="#FF29332E" />
+            <SolidColorBrush x:Key="ControlStrokeColorDefaultBrush" Color="#FF3B4942" />
+            <SolidColorBrush x:Key="ControlStrokeColorSecondaryBrush" Color="#FF29332E" />
+            <SolidColorBrush x:Key="SurfaceStrokeColorDefaultBrush" Color="#FF3B4942" />
+            <SolidColorBrush x:Key="ControlFillColorDefaultBrush" Color="#FF1C241F" />
+            <SolidColorBrush x:Key="ControlFillColorSecondaryBrush" Color="#FF222B26" />
+            <SolidColorBrush x:Key="ControlFillColorTertiaryBrush" Color="#FF171D19" />
+
+            <SolidColorBrush x:Key="SystemFillColorSuccessBrush" Color="#FF88A985" />
+            <SolidColorBrush x:Key="SystemFillColorSuccessBackgroundBrush" Color="#2A88A985" />
+            <SolidColorBrush x:Key="SystemFillColorCautionBrush" Color="#FFC2A16F" />
+            <SolidColorBrush x:Key="SystemFillColorCautionBackgroundBrush" Color="#2AC2A16F" />
+            <SolidColorBrush x:Key="SystemFillColorCriticalBrush" Color="#FFC47A74" />
+            <SolidColorBrush x:Key="SystemFillColorCriticalBackgroundBrush" Color="#2AC47A74" />
+            <SolidColorBrush x:Key="SystemFillColorNeutralBrush" Color="#FFA0ACA6" />
+            <SolidColorBrush x:Key="SystemFillColorNeutralBackgroundBrush" Color="#FF1C241F" />
+            <SolidColorBrush x:Key="SystemFillColorAttentionBrush" Color="#FF78AAA3" />
+
+            <Color x:Key="SystemAccentColor">#FF78AAA3</Color>
+            <Color x:Key="SystemAccentColorLight1">#FF8DB9B2</Color>
+            <Color x:Key="SystemAccentColorLight2">#FFA4CBC5</Color>
+            <Color x:Key="SystemAccentColorLight3">#FFBEDDD8</Color>
+            <Color x:Key="SystemAccentColorDark1">#FF689A93</Color>
+            <Color x:Key="SystemAccentColorDark2">#FF56857F</Color>
+            <Color x:Key="SystemAccentColorDark3">#FF315E58</Color>
+            <SolidColorBrush x:Key="AccentFillColorDefaultBrush" Color="#FF78AAA3" />
+            <SolidColorBrush x:Key="AccentFillColorSecondaryBrush" Color="#E678AAA3" />
+            <SolidColorBrush x:Key="AccentFillColorTertiaryBrush" Color="#CC78AAA3" />
+            <SolidColorBrush x:Key="AccentFillColorDisabledBrush" Color="#FF29332E" />
+            <SolidColorBrush x:Key="AccentTextFillColorPrimaryBrush" Color="#FFA4CBC5" />
+            <SolidColorBrush x:Key="AccentTextFillColorSecondaryBrush" Color="#FFBEDDD8" />
+            <SolidColorBrush x:Key="AccentTextFillColorTertiaryBrush" Color="#FF78AAA3" />
+            <SolidColorBrush x:Key="TextOnAccentFillColorPrimaryBrush" Color="#FF0C100E" />
+            <SolidColorBrush x:Key="TextOnAccentFillColorSecondaryBrush" Color="#DD0C100E" />
+
+            <SolidColorBrush x:Key="NavigationViewContentBackground" Color="#00101512" />
+            <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="#E60C100E" />
+            <SolidColorBrush x:Key="NavigationViewExpandedPaneBackground" Color="#E60C100E" />
+            <SolidColorBrush x:Key="NavigationViewItemForeground" Color="#FFA0ACA6" />
+            <SolidColorBrush x:Key="NavigationViewItemForegroundPointerOver" Color="#FFEAF0EB" />
+            <SolidColorBrush x:Key="NavigationViewItemForegroundPressed" Color="#FFEAF0EB" />
+            <SolidColorBrush x:Key="NavigationViewItemForegroundSelected" Color="#FFEAF0EB" />
+            <SolidColorBrush x:Key="NavigationViewItemForegroundSelectedPointerOver" Color="#FFEAF0EB" />
+            <SolidColorBrush x:Key="NavigationViewItemForegroundSelectedPressed" Color="#FFEAF0EB" />
+            <SolidColorBrush x:Key="NavigationViewItemBackgroundSelected" Color="#40315E58" />
+            <SolidColorBrush x:Key="NavigationViewItemBackgroundSelectedPointerOver" Color="#55315E58" />
+            <SolidColorBrush x:Key="NavigationViewItemBackgroundSelectedPressed" Color="#55315E58" />
+            <SolidColorBrush x:Key="NavigationViewItemBackgroundPointerOver" Color="#14FFFFFF" />
+            <SolidColorBrush x:Key="NavigationViewItemBackgroundPressed" Color="#1AFFFFFF" />
+            <SolidColorBrush x:Key="NavigationViewSelectionIndicatorForeground" Color="#FFA4CBC5" />
+        </ResourceDictionary>
+
+        <ResourceDictionary x:Key="Light">
+            <SolidColorBrush x:Key="AtlasVoidBrush" Color="#FFE7EEE9" />
+            <SolidColorBrush x:Key="AtlasGraphiteBrush" Color="#FFF5F8F5" />
+            <SolidColorBrush x:Key="AtlasPanelBrush" Color="#F7FFFFFF" />
+            <SolidColorBrush x:Key="AtlasPanel2Brush" Color="#FFEBF1EC" />
+            <SolidColorBrush x:Key="AtlasLineBrush" Color="#FFD4DDD6" />
+            <SolidColorBrush x:Key="AtlasLineStrongBrush" Color="#FFBECAC2" />
+            <SolidColorBrush x:Key="AtlasInkBrush" Color="#FF142019" />
+            <SolidColorBrush x:Key="AtlasMutedBrush" Color="#FF52635B" />
+            <SolidColorBrush x:Key="AtlasDimBrush" Color="#FF6B7A72" />
+            <SolidColorBrush x:Key="AtlasLabelBrush" Color="#FF52635B" />
+            <SolidColorBrush x:Key="AtlasCyanBrush" Color="#FF356F69" />
+            <SolidColorBrush x:Key="AtlasCyanLightBrush" Color="#FF4C837D" />
+            <SolidColorBrush x:Key="AtlasCyanDarkBrush" Color="#FF244F4A" />
+            <SolidColorBrush x:Key="AtlasCyanTintBrush" Color="#18356F69" />
+            <SolidColorBrush x:Key="AtlasAmberBrush" Color="#FF7A5B24" />
+            <SolidColorBrush x:Key="AtlasAmberTintBrush" Color="#187A5B24" />
+            <SolidColorBrush x:Key="AtlasRedBrush" Color="#FF8F3D38" />
+            <SolidColorBrush x:Key="AtlasGreenBrush" Color="#FF3F6F43" />
+            <SolidColorBrush x:Key="AtlasGreenTintBrush" Color="#183F6F43" />
+
+            <SolidColorBrush x:Key="ApplicationPageBackgroundThemeBrush" Color="#00F5F8F5" />
+            <SolidColorBrush x:Key="LayerFillColorDefaultBrush" Color="#EFFFFFFF" />
+            <SolidColorBrush x:Key="LayerFillColorAltBrush" Color="#FFEBF1EC" />
+            <SolidColorBrush x:Key="SolidBackgroundFillColorBaseBrush" Color="#FFF5F8F5" />
+            <SolidColorBrush x:Key="SolidBackgroundFillColorSecondaryBrush" Color="#FFFFFFFF" />
+            <SolidColorBrush x:Key="SolidBackgroundFillColorTertiaryBrush" Color="#FFEBF1EC" />
+            <SolidColorBrush x:Key="CardBackgroundFillColorDefaultBrush" Color="#EFFFFFFF" />
+            <SolidColorBrush x:Key="CardBackgroundFillColorSecondaryBrush" Color="#FFEBF1EC" />
+
+            <SolidColorBrush x:Key="TextFillColorPrimaryBrush" Color="#FF142019" />
+            <SolidColorBrush x:Key="TextFillColorSecondaryBrush" Color="#FF52635B" />
+            <SolidColorBrush x:Key="TextFillColorTertiaryBrush" Color="#FF6B7A72" />
+            <SolidColorBrush x:Key="TextFillColorDisabledBrush" Color="#FF97A39C" />
+            <SolidColorBrush x:Key="CardStrokeColorDefaultBrush" Color="#00D4DDD6" />
+            <SolidColorBrush x:Key="CardStrokeColorDefaultSolidBrush" Color="#FFD4DDD6" />
+            <SolidColorBrush x:Key="DividerStrokeColorDefaultBrush" Color="#FFD4DDD6" />
+            <SolidColorBrush x:Key="ControlStrokeColorDefaultBrush" Color="#FFBECAC2" />
+            <SolidColorBrush x:Key="ControlStrokeColorSecondaryBrush" Color="#FFD4DDD6" />
+            <SolidColorBrush x:Key="SurfaceStrokeColorDefaultBrush" Color="#FFBECAC2" />
+            <SolidColorBrush x:Key="ControlFillColorDefaultBrush" Color="#FFFFFFFF" />
+            <SolidColorBrush x:Key="ControlFillColorSecondaryBrush" Color="#FFF4F7F4" />
+            <SolidColorBrush x:Key="ControlFillColorTertiaryBrush" Color="#FFEBF1EC" />
+
+            <SolidColorBrush x:Key="SystemFillColorSuccessBrush" Color="#FF3F6F43" />
+            <SolidColorBrush x:Key="SystemFillColorSuccessBackgroundBrush" Color="#183F6F43" />
+            <SolidColorBrush x:Key="SystemFillColorCautionBrush" Color="#FF7A5B24" />
+            <SolidColorBrush x:Key="SystemFillColorCautionBackgroundBrush" Color="#187A5B24" />
+            <SolidColorBrush x:Key="SystemFillColorCriticalBrush" Color="#FF8F3D38" />
+            <SolidColorBrush x:Key="SystemFillColorCriticalBackgroundBrush" Color="#188F3D38" />
+            <SolidColorBrush x:Key="SystemFillColorNeutralBrush" Color="#FF52635B" />
+            <SolidColorBrush x:Key="SystemFillColorNeutralBackgroundBrush" Color="#FFEBF1EC" />
+            <SolidColorBrush x:Key="SystemFillColorAttentionBrush" Color="#FF356F69" />
+
+            <Color x:Key="SystemAccentColor">#FF356F69</Color>
+            <Color x:Key="SystemAccentColorLight1">#FF4C837D</Color>
+            <Color x:Key="SystemAccentColorLight2">#FF659A94</Color>
+            <Color x:Key="SystemAccentColorLight3">#FF82B1AB</Color>
+            <Color x:Key="SystemAccentColorDark1">#FF2F635E</Color>
+            <Color x:Key="SystemAccentColorDark2">#FF295650</Color>
+            <Color x:Key="SystemAccentColorDark3">#FF244F4A</Color>
+            <SolidColorBrush x:Key="AccentFillColorDefaultBrush" Color="#FF356F69" />
+            <SolidColorBrush x:Key="AccentFillColorSecondaryBrush" Color="#E6356F69" />
+            <SolidColorBrush x:Key="AccentFillColorTertiaryBrush" Color="#CC356F69" />
+            <SolidColorBrush x:Key="AccentFillColorDisabledBrush" Color="#FFD4DDD6" />
+            <SolidColorBrush x:Key="AccentTextFillColorPrimaryBrush" Color="#FF295650" />
+            <SolidColorBrush x:Key="AccentTextFillColorSecondaryBrush" Color="#FF356F69" />
+            <SolidColorBrush x:Key="AccentTextFillColorTertiaryBrush" Color="#FF4C837D" />
+            <SolidColorBrush x:Key="TextOnAccentFillColorPrimaryBrush" Color="#FFFFFFFF" />
+            <SolidColorBrush x:Key="TextOnAccentFillColorSecondaryBrush" Color="#E6FFFFFF" />
+
+            <SolidColorBrush x:Key="NavigationViewContentBackground" Color="#00F5F8F5" />
+            <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="#E6E7EEE9" />
+            <SolidColorBrush x:Key="NavigationViewExpandedPaneBackground" Color="#E6E7EEE9" />
+            <SolidColorBrush x:Key="NavigationViewItemForeground" Color="#FF52635B" />
+            <SolidColorBrush x:Key="NavigationViewItemForegroundPointerOver" Color="#FF142019" />
+            <SolidColorBrush x:Key="NavigationViewItemForegroundPressed" Color="#FF142019" />
+            <SolidColorBrush x:Key="NavigationViewItemForegroundSelected" Color="#FF142019" />
+            <SolidColorBrush x:Key="NavigationViewItemForegroundSelectedPointerOver" Color="#FF142019" />
+            <SolidColorBrush x:Key="NavigationViewItemForegroundSelectedPressed" Color="#FF142019" />
+            <SolidColorBrush x:Key="NavigationViewItemBackgroundSelected" Color="#24356F69" />
+            <SolidColorBrush x:Key="NavigationViewItemBackgroundSelectedPointerOver" Color="#30356F69" />
+            <SolidColorBrush x:Key="NavigationViewItemBackgroundSelectedPressed" Color="#30356F69" />
+            <SolidColorBrush x:Key="NavigationViewItemBackgroundPointerOver" Color="#0F142019" />
+            <SolidColorBrush x:Key="NavigationViewItemBackgroundPressed" Color="#18142019" />
+            <SolidColorBrush x:Key="NavigationViewSelectionIndicatorForeground" Color="#FF356F69" />
+        </ResourceDictionary>
+
+        <ResourceDictionary x:Key="HighContrast">
+            <!-- High Contrast aliases use WinUI's real SystemColor*ColorBrush keys. -->
+            <StaticResource x:Key="AtlasVoidBrush" ResourceKey="SystemColorWindowColorBrush" />
+            <StaticResource x:Key="AtlasGraphiteBrush" ResourceKey="SystemColorWindowColorBrush" />
+            <StaticResource x:Key="AtlasPanelBrush" ResourceKey="SystemColorWindowColorBrush" />
+            <StaticResource x:Key="AtlasPanel2Brush" ResourceKey="SystemColorWindowColorBrush" />
+            <StaticResource x:Key="AtlasLineBrush" ResourceKey="SystemColorWindowTextColorBrush" />
+            <StaticResource x:Key="AtlasLineStrongBrush" ResourceKey="SystemColorWindowTextColorBrush" />
+            <StaticResource x:Key="AtlasInkBrush" ResourceKey="SystemColorWindowTextColorBrush" />
+            <StaticResource x:Key="AtlasMutedBrush" ResourceKey="SystemColorWindowTextColorBrush" />
+            <StaticResource x:Key="AtlasDimBrush" ResourceKey="SystemColorWindowTextColorBrush" />
+            <StaticResource x:Key="AtlasLabelBrush" ResourceKey="SystemColorWindowTextColorBrush" />
+            <StaticResource x:Key="AtlasCyanBrush" ResourceKey="SystemColorHotlightColorBrush" />
+            <StaticResource x:Key="AtlasCyanLightBrush" ResourceKey="SystemColorHotlightColorBrush" />
+            <StaticResource x:Key="AtlasCyanDarkBrush" ResourceKey="SystemColorHotlightColorBrush" />
+            <StaticResource x:Key="AtlasCyanTintBrush" ResourceKey="SystemColorWindowColorBrush" />
+            <StaticResource x:Key="AtlasAmberBrush" ResourceKey="SystemColorWindowTextColorBrush" />
+            <StaticResource x:Key="AtlasAmberTintBrush" ResourceKey="SystemColorWindowColorBrush" />
+            <StaticResource x:Key="AtlasRedBrush" ResourceKey="SystemColorWindowTextColorBrush" />
+            <StaticResource x:Key="AtlasGreenBrush" ResourceKey="SystemColorWindowTextColorBrush" />
+            <StaticResource x:Key="AtlasGreenTintBrush" ResourceKey="SystemColorWindowColorBrush" />
+        </ResourceDictionary>
+    </ResourceDictionary.ThemeDictionaries>
+
+    <FontFamily x:Key="AtlasMonoFontFamily">Cascadia Mono, Consolas</FontFamily>
+    <FontFamily x:Key="AtlasUiFontFamily">Segoe UI Variable Text, Segoe UI</FontFamily>
+    <FontFamily x:Key="ContentControlThemeFontFamily">Segoe UI Variable Text, Segoe UI</FontFamily>
+    <CornerRadius x:Key="ControlCornerRadius">6</CornerRadius>
+    <CornerRadius x:Key="OverlayCornerRadius">8</CornerRadius>
+    <Thickness x:Key="AtlasPagePadding">24</Thickness>
+</ResourceDictionary>

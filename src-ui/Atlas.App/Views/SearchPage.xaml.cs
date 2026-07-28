@@ -29,6 +29,16 @@ public sealed partial class SearchPage : Page
         ViewModel.Stop();
     }
 
+    protected override void OnNavigatedTo(NavigationEventArgs e)
+    {
+        base.OnNavigatedTo(e);
+        if (e.Parameter is string query && !string.IsNullOrWhiteSpace(query))
+        {
+            ViewModel.Query = query.Trim();
+            _ = ViewModel.SearchAsync();
+        }
+    }
+
     private void SearchBox_QuerySubmitted(
         AutoSuggestBox sender, AutoSuggestBoxQuerySubmittedEventArgs args)
     {

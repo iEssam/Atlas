@@ -1,4 +1,5 @@
 using System;
+using Atlas.App.Models;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Windows.ApplicationModel.DataTransfer;
@@ -38,6 +39,7 @@ public sealed partial class SettingsPage : Page
         "}";
 
     private readonly string? _who;
+    private bool _initializing = true;
 
     public SettingsPage()
     {
@@ -46,6 +48,9 @@ public sealed partial class SettingsPage : Page
 
         InitializeComponent();
         ConfigBox.Text = ConfigSnippet;
+        ThemePicker.SelectedIndex = (int)App.Preferences.Current.Theme;
+        DetailLevelPicker.SelectedIndex = (int)App.Preferences.Current.DetailLevel;
+        _initializing = false;
     }
 
     private async void CreateBundle_Click(object sender, RoutedEventArgs e)
@@ -63,5 +68,51 @@ public sealed partial class SettingsPage : Page
         package.SetText(ConfigSnippet);
         Clipboard.SetContent(package);
         CopyStatus.IsOpen = true;
+    }
+
+    private async void ThemePicker_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_initializing || ThemePicker.SelectedItem is not ComboBoxItem { Tag: string tag }
+            || !Enum.TryParse<ThemePreference>(tag, out var theme))
+        {
+            return;
+        }
+
+        var preferences = App.Preferences.Current;
+        preferences.Theme = theme;
+        if (App.MainWindow is MainWindow window)
+        {
+            window.ApplyThemePreference(theme);
+        }
+        await PersistPreferencesAsync(preferences);
+    }
+
+    private async void DetailLevelPicker_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_initializing || DetailLevelPicker.SelectedItem is not ComboBoxItem { Tag: string tag }
+            || !Enum.TryParse<DetailLevel>(tag, out var detailLevel))
+        {
+            return;
+        }
+
+        var preferences = App.Preferences.Current;
+        preferences.DetailLevel = detailLevel;
+        await PersistPreferencesAsync(preferences);
+    }
+
+    private async Task PersistPreferencesAsync(UiPreferences preferences)
+    {
+        try
+        {
+            await App.Preferences.SaveAsync(preferences);
+            PreferencesStatus.IsOpen = false;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            PreferencesStatus.Severity = InfoBarSeverity.Error;
+            PreferencesStatus.Title = "Could not save preferences";
+            PreferencesStatus.Message = ex.Message;
+            PreferencesStatus.IsOpen = true;
+        }
     }
 }

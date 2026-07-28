@@ -1,10 +1,14 @@
 //! Threshold+duration incident detectors (docs/phases.md M8, PRD §9.3.7).
 //!
-//! Two detectors run over the recorded system series:
+//! The same conservative detectors run over recorded series and the normal
+//! production sampler:
 //! - **CPU saturation** — system CPU at/above [`CPU_SATURATION_PCT`] for at
 //!   least [`CPU_MIN_DURATION_MS`].
 //! - **Memory pressure** — `mem_used / mem_total` at/above [`MEM_PRESSURE_PCT`]
 //!   for at least [`MEM_MIN_DURATION_MS`].
+//! - **GPU pressure** uses measured load or reported memory-budget use.
+//! - **Thermal** uses explicit GPU throttling or valid firmware-declared ACPI
+//!   passive/critical trip points. No universal temperature is guessed.
 //!
 //! **Disk latency is deferred.** The proto defines `DISK_LATENCY` but Atlas
 //! records no disk-latency metric yet — only per-process read/write *throughput*
@@ -19,12 +23,19 @@
 
 use atlas_store::Store;
 use atlas_tsdb::{Metric, SYSTEM_SCOPE};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc::Receiver, Arc, Mutex};
+use std::time::Duration;
 
 /// Incident-kind discriminants, matching the proto `IncidentKind`.
 pub const KIND_CPU_SATURATION: i32 = 1;
 pub const KIND_MEMORY_PRESSURE: i32 = 2;
 /// Reserved (proto `DISK_LATENCY`); not detected — see module docs.
 pub const KIND_DISK_LATENCY: i32 = 3;
+pub const KIND_GPU_SATURATION: i32 = 4;
+pub const KIND_GPU_MEMORY_EXHAUSTION: i32 = 5;
+pub const KIND_GPU_THERMAL_THROTTLING: i32 = 6;
+pub const KIND_SYSTEM_THERMAL_LIMIT: i32 = 7;
 
 /// Severity discriminants, matching the proto `Severity`.
 pub const SEV_INFO: i32 = 1;
@@ -39,6 +50,218 @@ pub const CPU_MIN_DURATION_MS: i64 = 10_000;
 pub const MEM_PRESSURE_PCT: f64 = 90.0;
 /// A memory pressure must be sustained at least this long to be an incident.
 pub const MEM_MIN_DURATION_MS: i64 = 10_000;
+pub const GPU_SATURATION_PCT: f64 = 85.0;
+pub const GPU_MEMORY_PCT: f64 = 90.0;
+pub const GPU_MIN_DURATION_MS: i64 = 10_000;
+/// Explicit hardware throttle state must persist long enough to reject a
+/// one-sample provider flicker.
+pub const GPU_THROTTLE_MIN_DURATION_MS: i64 = 5_000;
+/// ACPI thermal zones are sampled slowly; two consecutive observations are
+/// required before a passive-limit incident is recorded.
+pub const THERMAL_MIN_DURATION_MS: i64 = 15_000;
+
+/// The lightweight facts copied from one production sampler tick. Sending this
+/// through a bounded channel keeps SQLite and WMI work off the 1 Hz sampler.
+#[derive(Debug, Clone)]
+pub struct LiveFrame {
+    pub ts_ms: i64,
+}
+
+#[derive(Debug, Default)]
+struct LiveRun {
+    start_ms: Option<i64>,
+    last_ms: i64,
+    peak: f64,
+    persisted: bool,
+    last_persist_ms: i64,
+    severity: i32,
+    ongoing_summary: String,
+    resolved_summary: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LiveSpec {
+    kind: i32,
+    min_duration_ms: i64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LiveObservation {
+    ts_ms: i64,
+    value: f64,
+    active: bool,
+    severity: i32,
+}
+
+impl LiveRun {
+    fn observe<F>(
+        &mut self,
+        store: &Store,
+        observation: LiveObservation,
+        spec: LiveSpec,
+        summary: F,
+    ) where
+        F: Fn(bool, f64) -> String,
+    {
+        if let Some(start) = self.start_ms {
+            if observation.ts_ms - self.last_ms > MAX_GAP_MS || !observation.active {
+                self.finish(store, spec.kind, start);
+                *self = Self::default();
+            }
+        }
+
+        if !observation.active {
+            return;
+        }
+        if self.start_ms.is_none() {
+            self.start_ms = Some(observation.ts_ms);
+            self.peak = observation.value;
+            self.severity = observation.severity;
+        }
+        let peak_changed = observation.value > self.peak;
+        self.last_ms = observation.ts_ms;
+        self.peak = self.peak.max(observation.value);
+        self.severity = self.severity.max(observation.severity);
+        self.ongoing_summary = summary(true, self.peak);
+        self.resolved_summary = summary(false, self.peak);
+        let start = self.start_ms.unwrap_or(observation.ts_ms);
+        if observation.ts_ms - start >= spec.min_duration_ms
+            && (!self.persisted
+                || observation.ts_ms - self.last_persist_ms >= 5_000
+                || peak_changed)
+            && store
+                .upsert_incident(
+                    spec.kind,
+                    start,
+                    None,
+                    self.severity,
+                    self.peak,
+                    &self.ongoing_summary,
+                )
+                .is_ok()
+        {
+            self.persisted = true;
+            self.last_persist_ms = observation.ts_ms;
+        }
+    }
+
+    fn finish(&self, store: &Store, kind: i32, start: i64) {
+        if self.persisted {
+            let _ = store.upsert_incident(
+                kind,
+                start,
+                Some(self.last_ms),
+                self.severity,
+                self.peak,
+                &self.resolved_summary,
+            );
+        }
+    }
+
+    fn close(&mut self, store: &Store, kind: i32) {
+        if let Some(start) = self.start_ms {
+            self.finish(store, kind, start);
+        }
+        *self = Self::default();
+    }
+}
+
+/// Runs automatic incident capture for the normal service lifetime. It records
+/// only sustained measured conditions and closes every ongoing incident during
+/// orderly shutdown. ACPI polling is isolated here because WMI can block.
+#[cfg(windows)]
+pub fn run_live_capture(
+    rx: Receiver<LiveFrame>,
+    stop: Arc<AtomicBool>,
+    shared_store: Arc<Mutex<Store>>,
+) {
+    let mut thermal = LiveRun::default();
+    let mut next_thermal_probe_ms = 0;
+
+    while !stop.load(Ordering::SeqCst) {
+        let Ok(frame) = rx.recv_timeout(Duration::from_millis(500)) else {
+            continue;
+        };
+        let thermal_reading = if frame.ts_ms >= next_thermal_probe_ms {
+            next_thermal_probe_ms = frame.ts_ms + THERMAL_MIN_DURATION_MS;
+            Some(atlas_collectors::thermal_status())
+        } else {
+            None
+        };
+        let Some(reading) = thermal_reading else {
+            continue;
+        };
+        // Provider unavailability is unknown, not evidence of recovery.
+        if !reading.available {
+            continue;
+        }
+        let Ok(store) = shared_store.lock() else {
+            continue;
+        };
+        let breached = reading
+            .sensors
+            .iter()
+            .filter_map(|sensor| {
+                let critical = sensor
+                    .critical_trip_celsius
+                    .filter(|trip| sensor.celsius >= *trip);
+                let passive = sensor
+                    .passive_trip_celsius
+                    .filter(|trip| sensor.celsius >= *trip);
+                critical
+                    .or(passive)
+                    .map(|trip| (sensor, trip, critical.is_some()))
+            })
+            .max_by(|(a, _, _), (b, _, _)| a.celsius.total_cmp(&b.celsius));
+        if let Some((sensor, trip, critical)) = breached {
+            let label = sensor.name.clone();
+            let severity = if critical { SEV_CRITICAL } else { SEV_WARNING };
+            thermal.observe(
+                    &store,
+                    LiveObservation {
+                        ts_ms: frame.ts_ms,
+                        value: sensor.celsius,
+                        active: true,
+                        severity,
+                    },
+                    LiveSpec {
+                        kind: KIND_SYSTEM_THERMAL_LIMIT,
+                        min_duration_ms: if critical { 0 } else { THERMAL_MIN_DURATION_MS },
+                    },
+                    move |ongoing, peak| format!(
+                        "System thermal limit {}: firmware zone '{}' reached its {:.1} C {} trip point (peak {:.1} C).",
+                        if ongoing { "is active" } else { "resolved" }, label, trip,
+                        if critical { "critical" } else { "passive-cooling" }, peak
+                    ),
+                );
+        } else {
+            thermal.observe(
+                &store,
+                LiveObservation {
+                    ts_ms: frame.ts_ms,
+                    value: 0.0,
+                    active: false,
+                    severity: SEV_WARNING,
+                },
+                LiveSpec {
+                    kind: KIND_SYSTEM_THERMAL_LIMIT,
+                    min_duration_ms: THERMAL_MIN_DURATION_MS,
+                },
+                |ongoing, peak| {
+                    format!(
+                        "System thermal limit {} (peak {:.1} C).",
+                        if ongoing { "is active" } else { "resolved" },
+                        peak
+                    )
+                },
+            );
+        }
+    }
+
+    if let Ok(store) = shared_store.lock() {
+        thermal.close(&store, KIND_SYSTEM_THERMAL_LIMIT);
+    }
+}
 
 /// Samples more than this far apart never belong to the same incident: a gap
 /// this large is missing data (a writer stall / monitoring off), and merging
@@ -161,6 +384,51 @@ pub fn run_detection_pass(
             )?;
             count += 1;
         }
+    }
+
+    let gpu = load_series(store, Metric::SysGpuPermille, from_ms, to_ms, 0.1)?;
+    for run in detect(&gpu, GPU_SATURATION_PCT, GPU_MIN_DURATION_MS, MAX_GAP_MS) {
+        store.upsert_incident(
+            KIND_GPU_SATURATION, run.start_ms, end_opt(run.end_ms),
+            cpu_severity(run.peak), run.peak,
+            &format!("GPU saturation ({}): the busiest graphics engine held at or above {:.0}% (peak {:.0}%).",
+                if run.end_ms == 0 { "ongoing" } else { "resolved" }, GPU_SATURATION_PCT, run.peak),
+        )?;
+        count += 1;
+    }
+
+    let used = load_series(store, Metric::SysGpuMemoryUsed, from_ms, to_ms, 1.0)?;
+    let budgets: std::collections::HashMap<i64, f64> =
+        load_series(store, Metric::SysGpuMemoryBudget, from_ms, to_ms, 1.0)?
+            .into_iter()
+            .collect();
+    let memory_pct: Vec<_> = used
+        .into_iter()
+        .filter_map(|(ts, value)| {
+            let budget = budgets.get(&ts).copied().unwrap_or(0.0);
+            (budget > 0.0).then_some((ts, value / budget * 100.0))
+        })
+        .collect();
+    for run in detect(&memory_pct, GPU_MEMORY_PCT, GPU_MIN_DURATION_MS, MAX_GAP_MS) {
+        store.upsert_incident(
+            KIND_GPU_MEMORY_EXHAUSTION, run.start_ms, end_opt(run.end_ms),
+            mem_severity(run.peak), run.peak,
+            &format!("GPU memory pressure ({}): measured graphics memory held at or above {:.0}% of the reported budget (peak {:.0}%).",
+                if run.end_ms == 0 { "ongoing" } else { "resolved" }, GPU_MEMORY_PCT, run.peak),
+        )?;
+        count += 1;
+    }
+
+    // This series exists only when a vendor provider explicitly reports a
+    // throttle state; no temperature threshold is guessed.
+    let throttling = load_series(store, Metric::SysGpuThrottling, from_ms, to_ms, 1.0)?;
+    for run in detect(&throttling, 0.5, GPU_THROTTLE_MIN_DURATION_MS, MAX_GAP_MS) {
+        store.upsert_incident(
+            KIND_GPU_THERMAL_THROTTLING, run.start_ms, end_opt(run.end_ms), SEV_WARNING, 1.0,
+            &format!("GPU thermal throttling {}: a hardware sensor provider reported an active throttle state.",
+                if run.end_ms == 0 { "is ongoing" } else { "was reported" }),
+        )?;
+        count += 1;
     }
     Ok(count)
 }
@@ -393,5 +661,72 @@ mod tests {
         assert_eq!(mem_severity(91.0), SEV_INFO);
         assert_eq!(mem_severity(95.0), SEV_WARNING);
         assert_eq!(mem_severity(98.0), SEV_CRITICAL);
+    }
+
+    #[test]
+    fn live_run_persists_after_duration_and_closes_with_peak_severity() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "atlas-live-detector-{}-{stamp}.db",
+            std::process::id()
+        ));
+        let store = Store::open(&path).unwrap();
+        let mut run = LiveRun::default();
+        let summary = |ongoing, peak| {
+            format!(
+                "test {} peak {peak}",
+                if ongoing { "ongoing" } else { "resolved" }
+            )
+        };
+        let spec = LiveSpec {
+            kind: 99,
+            min_duration_ms: 10_000,
+        };
+        let observation = |ts_ms, value, active, severity| LiveObservation {
+            ts_ms,
+            value,
+            active,
+            severity,
+        };
+        run.observe(
+            &store,
+            observation(1_000, 86.0, true, SEV_INFO),
+            spec,
+            summary,
+        );
+        run.observe(
+            &store,
+            observation(6_000, 96.0, true, SEV_CRITICAL),
+            spec,
+            summary,
+        );
+        assert!(store.list_incidents(0, 20_000, 10).unwrap().0.is_empty());
+        run.observe(
+            &store,
+            observation(11_000, 92.0, true, SEV_WARNING),
+            spec,
+            summary,
+        );
+        run.observe(
+            &store,
+            observation(12_000, 20.0, false, SEV_INFO),
+            spec,
+            summary,
+        );
+
+        let rows = store.list_incidents(0, 20_000, 10).unwrap().0;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].start_ms, 1_000);
+        assert_eq!(rows[0].end_ms, Some(11_000));
+        assert_eq!(rows[0].peak_value, 96.0);
+        assert_eq!(rows[0].severity, SEV_CRITICAL);
+        assert!(rows[0].summary.contains("resolved"));
+        drop(store);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{}", path.display(), suffix));
+        }
     }
 }

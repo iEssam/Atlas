@@ -5,6 +5,19 @@ References: [project.md](../project.md) (PRD), [tech-stack.md](../tech-stack.md)
 
 Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 
+> **Status semantics:** these checkboxes track implementation coverage, not approval to ship. “Landed” means the named code path exists and has the validation recorded beside it. It does not mean the containing phase is complete or the product is production-ready while child items or release gates remain open.
+
+## Release readiness
+
+- [x] First x64 release candidate published for evaluation
+- [x] Elevated RC validation and MSI install/upgrade/removal lifecycle recorded in the [v0.3.0-rc.1 release notes](releases/v0.3.0-rc.1.md)
+- [ ] Production code signing for the MSI and shipped binaries
+- [ ] Staged update channel and signed release manifests
+- [ ] Full 72-hour soak on representative hardware
+- [ ] Stable-release review of every remaining `[~]` and `[ ]` item below, either completed or explicitly removed from the release scope
+
+Until those gates close, System Atlas is a release candidate for evaluation, not a production-ready release.
+
 ---
 
 ## Phase 0 — Foundation ✅ (completed 2026-07-13)
@@ -13,7 +26,9 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 - [x] git repository, `.gitignore` / `.gitattributes`
 - [x] Cargo workspace per tech-stack §9.1 (crates: collectors, store, tsdb, service)
 - [x] Phase tracker (this file), README
-- [x] CI workflow: `cargo fmt --check`, `clippy -D warnings`, `cargo test` (`.github/workflows/ci.yml`)
+- [x] CI workflow: Rust format/Clippy/workspace tests plus .NET restore, x64 WinUI build, UI Automation launch/navigation smoke, IPC-client tests, and UI contract tests (`.github/workflows/ci.yml`)
+- [x] Active supply-chain CI: RustSec, `cargo-deny`, fail-closed transitive NuGet audit with committed locks, weekly Dependabot updates, and CycloneDX attachment for future published releases
+- [~] GitHub Code Security coverage: Rust+C# CodeQL and pull-request dependency review are configured but entitlement-gated while this repository remains private and personal
 - [x] IPC contract sketch ([proto/atlas.proto](../proto/atlas.proto)) — codegen deferred to M4
 
 **Exit criteria:** repo builds and tests green locally. ✅
@@ -58,7 +73,7 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 
 ### M5 — UI shell (WinUI 3) `[~]`
 
-- [x] .NET 10.0.301 SDK installed; `src-ui/Atlas.sln` — Atlas.IpcClient (gRPC-over-pipe via ConnectCallback, proto codegen, 15 tests), Atlas.DevCli (console interop proof), Atlas.App (WinUI 3, Windows App SDK 1.6, unpackaged; builds with PackageReferences only — no VS workloads needed)
+- [x] .NET 10 SDK installed; `src-ui/Atlas.sln` — Atlas.IpcClient (gRPC-over-pipe via ConnectCallback and proto codegen), Atlas.DevCli (console interop proof), Atlas.App (WinUI 3, Windows App SDK 1.6, unpackaged), and dedicated IPC/UI contract test projects; builds with PackageReferences only
 - [x] Live Activity page: NavigationView + Mica shell, virtualized process table updated in place at ~1 Hz from StreamSnapshots; verified running against `serve` at ~181 MB WS (budget < 200 MB)
 - [x] C# `MetricsRing` seqlock reader over the shared-mem ring (layout offsets pinned by tests against shm.rs); Live Activity + Overview prefer the ring, fall back to the gRPC stream, re-probe every ~15 s. Ring rows carry no thread/handle counts (layout v1) — those columns are stream-only
 - [x] Overview page v0 (gauge cards + top-5 consumers, measured values only)
@@ -84,21 +99,21 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 
 ### M8 — Incidents, detectors, reports `[~]`
 
-- [x] Threshold+duration detectors (`detectors.rs`, pure tested core): CPU saturation (≥85% ≥10s), memory pressure (≥90% ≥10s); data gaps never merge runs; ongoing = end 0; schema v7 `incident` table, idempotent upsert. Live-verified with a real CPU incident. Disk latency deferred — no latency metric exists yet; reserved, never faked
+- [x] Always-on threshold+duration incident capture (`detectors.rs`): CPU saturation (≥85% ≥10s), memory pressure (≥90% ≥10s), GPU saturation (≥85% ≥10s), GPU-memory pressure (≥90% of reported budget ≥10s), explicit GPU thermal throttling (≥5s), and ACPI thermal-zone crossings against firmware-declared passive/critical trip points. The production recording pipeline owns CPU/GPU incidents; a bounded query-side worker isolates slower WMI thermal probes so they never block live publication. Gaps never merge runs and orderly shutdown closes ongoing rows. Incident rows themselves pin retained windows, so no duplicate bookmark is needed. Unsupported GPU/thermal sensors stay unknown. Disk latency remains deferred because no latency metric exists.
 - [x] Diagnostics engine (`diagnostics.rs`, evidence-only, no LLM): ranks factors by attribution share, maps to the PRD confidence ladder (insufficient/low/medium/high; crash-in-window ⇒ confirmed; temporal-overlap-only ⇒ low), emits alternatives + hedged recommendation/risk/reversibility/verification, returns available=false with a reason on thin evidence. Output explicitly labels factors "correlation, not proof" (PRD §3.2)
 - [x] Report export (`report.rs`): text/json/csv/html (self-contained, no external refs); single redactor pass before formatting so every format redacts identically (paths/command-lines/user/host). UI: Diagnostics page (calm confidence badges, first-class insufficient-evidence state) + report dialog with redaction toggles
-- [ ] Automatic incident recording windows / bookmark-on-detect and richer detectors (disk latency once a latency metric lands, GPU, thermal) — future
+- [x] Automatic incident windows and GPU/thermal detectors. Incident persistence is idempotent by `(kind,start_ms)` and automatically provides the retention pin. Disk latency remains the only reserved detector until a real latency metric lands.
 
 ### M9 — Hardening & packaging `[~]`
 
-- [x] Windows service host (`service_ctl.rs`, hand-written advapi32 FFI, no crate): `service install/uninstall/run/status`; pure unit-tested state machine; crash-restart failure actions (restart ×3, 5 s, 1-day reset). record/serve refactored into stop-flag cores the service reuses. **Needs one elevated run** to validate live install/start/stop/crash-restart
+- [x] Windows service host (`service_ctl.rs`, hand-written advapi32 FFI, no crate): `service install/uninstall/run/status`; pure unit-tested state machine; crash-restart failure actions (restart ×3, 5 s, 1-day reset). record/serve refactored into stop-flag cores the service reuses. Elevated install/start/crash-restart/uninstall validation passed for v0.3.0-rc.1
 - [x] Perf gate: `overhead --json` (stable machine-readable line) + `.github/workflows/perf.yml` — hard working-set gate (<100 MB), idle-CPU advisory (hosted CI is noisy; hard gate belongs on self-hosted bare metal), soak on every run
 - [x] Soak harness (`soak.rs`): runs the real pipeline watching its own RSS slope (least-squares, warmup-excluded, materiality floor) + handle growth; PASS/FAIL verdict; short in CI, 72 h manual
 - [x] WiX v5 MSI installer (`installer/`): ServiceInstall/Control (SystemAtlas), harvested WinUI payload, %ProgramData%\SystemAtlas ACL, MajorUpgrade, ProductCore/DesktopApp features; compiles to a valid MSI here. Binary/installer identity reconciled (name, args, data path) and verified
 - [ ] Code signing (EV/Azure Trusted Signing) + staged-update channel wiring — documented stubs in `installer/README.md`; needs a cert + a policy-exempt build machine
-- [ ] Elevated live validation: `service install` + start + crash-restart; live ETW; a real long soak. All gated on an admin terminal / App Control exemption
+- [~] Elevated live validation: the 14-check RC suite passed in an admin, WDAC-exempt session, including service lifecycle, live ETW, incident/report, and plugin enforcement paths. A full 72-hour soak on representative hardware remains open
 
-**Phase 1 exit criteria:** PRD §20 items 1–6, 9–11, 13–17 demonstrable end-to-end — **functionally complete**; the remaining gaps are elevated-run validation and code-signing, both environment/infra rather than code.
+**Phase 1 status:** the core PRD §20 items 1–6, 9–11, 13–17 have demonstrable end-to-end implementations. The phase remains **in progress** because M5–M9 retain open items, including release engineering and validation work. This is an implementation assessment, not a shipping-readiness determination.
 
 ---
 
@@ -109,14 +124,16 @@ Deep inspector (handles/modules/threads on-demand snapshots) · Restart-Manager 
 ### R2 progress
 
 - [x] **Deep process inspector (PRD §9.4)** — `GetProcessDetail` (full identity + `limited` coverage flag), `ListHandles` (system-wide handle table, name resolution on a killable worker thread with a 100 ms timeout so blocking pipe handles can't hang the RPC, `names_limited` flag), `ListModules`, `ListThreads` (from the snapshot syscall's trailing thread array). All hand-written FFI, layouts offset-locked. Reachable from Live Activity via a tabbed Inspector; coverage limits surfaced honestly. Live-verified on a real process
-- [x] **Resource ownership / file locks (PRD §9.5)** — `FindResourceOwners` via Restart Manager; "Find what is using this file" UI page with picker. Live-verified (found the holder of a locked temp file). *Explorer context-menu (sparse MSIX) entry still to come*
+- [x] **Resource ownership / file locks (PRD §9.5)** — `FindResourceOwners` via Restart Manager; "Find what is using this file" UI page with picker. Explorer integration now includes a native, architecture-matched `IExplorerCommand`, sparse external-location identity package, strict `--find-using` activation, automatic lookup, and a classic registry fallback. The DLL and unsigned sparse package build cleanly in CI; production still requires code signing, sparse-package provisioning, and an Explorer restart. The underlying lookup was live-verified against a locked temp file
 - [x] **Catalog + embedded signature detection** — file-based `WinVerifyTrust` falls back to `CryptCATAdmin` hash-membership enumeration and `WTD_CHOICE_CATALOG`; catalog-signed system binaries (including Windows PowerShell 5.1) now report Signed. Inspector publisher identity comes from the verified signing certificate subject (organization/display name), with version-resource CompanyName only as a fallback. Covered by catalog-signed, embedded-signed, and tampered-file tests
 - [x] **Rules engine + profiles + simulation (PRD §9.7)** — `AtlasRules` service: rule/profile CRUD, `SimulateRule` (dry-run using the same resolver as the applier, so preview can't diverge), `ListInterventions`. Actions = the safe reversible subset (priority class, affinity + P/E-core steering via CPU sets, EcoQoS); no REALTIME. Applier runs on the serve sampler tick, applies only deltas, and keeps a **reversal ledger of originals** — restored on rule disable/delete, trigger-stop, no-longer-targeted, and clean shutdown. Protected-critical processes never touched (shared `broker::is_protected_process`), marked `blocked` in simulation. Every apply/restore audited (`actor=rules`). Store schema v8. UI: Rules page (simulation-preview centerpiece + active-interventions transparency) + Profiles. **Live-verified apply-then-revert** on a throwaway notepad (Normal→BelowNormal→Normal). Dynamic responsiveness protection (§9.7.3) is R3
 - [x] **Monitors (PRD §9.12/§9.9.2/§9.8.4/§9.6.6/§9.6.7)** — Network inspector (`GetExtendedTcpTable`/UDP v4+v6 with per-process attribution + cache-only DNS resolution), Scheduled Tasks (Task Scheduler 2.0 COM, live props + XML-parsed definition), Boot analysis (Diagnostics-Performance event 100; needs elevation, degrades honestly), Battery + Thermal (SetupDi/IOCTL + MSAcpi WMI). All hand-written FFI; capability flags gated on runtime probe (absent hardware → honest `available=false`). UI: Network, Scheduled Tasks, Sensors pages. Live-verified (191 connections, 181 tasks; "no battery/no sensors" on this desktop)
 - [x] **Read-only MCP server (`atlas-mcp`)** — the plan-pivot flagship (see the 2026-07-13 MCP decision note + tech-stack §4.7). Standalone binary, JSON-RPC 2.0 over stdio (hand-rolled on serde_json, no deps), 11 grounded tools mapping 1:1 onto read-only `AtlasQuery` RPCs. Read-only by construction (only AtlasQueryClient is built; a test asserts no tool maps to a mutating RPC and no tool name carries a mutating verb). Every result carries a `grounding` block + the RPC's honesty markers; MCP-strict redaction default-ON (paths/users/host/domains/command-lines/app-names, each `--no-redact-*`). **Live-verified end-to-end**: a `top_consumers` tools/call returned real data through the boundary with `image_name` redacted to `<APP>` and grounding present. Honest limitation documented: citation-ready evidence, not a guarantee the client's answer is cited
 - [x] **Advanced privacy alerts (PRD §9.10.3)** — the deferred M7 ConsentStore change-watcher (`RegNotifyChangeKeyValue` subtree notify → re-enumerate → pure `diff_transitions`; foreground + session-locked hints), finally populating the `privacy_event` history. Alert-rule engine (any-use / background / while-locked / unknown-app / longer-than) with FACTUAL, never-accusatory detail. Store schema v9; 5 AtlasQuery RPCs + `CAP_PRIVACY_ALERTS`; watcher+evaluator in serve. UI: privacy-alert CRUD + recent-alerts + the MCP settings/boundary page. CRUD + evaluator→store path verified; live mic/cam hardware trigger needs an interactive capture session
 
-**Phase 2 (R2) exit:** deep inspector · file locks · rules engine + profiles · network/tasks/boot/battery/thermal monitors · MCP server · advanced privacy alerts — **all landed**. Deferred to a later pass: Explorer sparse-MSIX context menu, before/after experiments (§9.15.3), catalog-signed detection done in-session, dynamic responsiveness protection (R3).
+**Phase 2 (R2) status:** the named R2 source feature slice landed: deep inspector · file locks with Explorer integration · rules engine + profiles · network/tasks/boot/battery/thermal monitors · MCP server · advanced privacy alerts · before/after experiments. This is not a shipping-readiness claim: signing, sparse-package provisioning in the production installer, Explorer restart validation, and the broader release gates remain open. Dynamic responsiveness protection moved to R3 and landed there.
+
+- [x] **Before-and-after experiments (§9.3.5/§9.15.3)** - persisted experiment definitions (store schema v16), pure tested comparison engine, and `CreateExperiment`/`ListExperiments`/`CompareExperiment` RPCs. Compares weighted average, peak, conservative time-above-threshold, process-start set changes, crashes, and system changes across two retained windows. A 5% noise band and explicit insufficient/truncated-data states prevent false wins. The WinUI Investigate surface uses native date/time inputs, a responsive list-detail layout, Timeline entry point, and text export. Results state that the comparison is observational and does not prove causation.
 
 **R2 — MCP integration (deliverable detail).** `atlas-mcp` is a separate opt-in Rust process: MCP (JSON-RPC 2.0 / stdio) to the client, **read-only** `AtlasQuery` RPCs to the service (no `AtlasControl` — a tool call can never suspend/kill or change config). Tools: `query_timeline`, `top_consumers`, `find_events`, `diff_periods`, `explain_process`, `get_incident`, `get_playbook_result`, `list_system_changes`, `find_crashes`. Every result is self-describing (evidence IDs, time range, process identities, metrics/events, confidence, missing-data + retention/sensor markers). Privacy: disabled by default, explicit enable, redaction default-ON and stricter than local views, size/time caps, per-tool audit of the exact returned payload, instant revoke, clear "data leaves Atlas's boundary" warning. Honest limitation: Atlas guarantees *citation-ready evidence*, not that the client's final answer is fully cited (Atlas controls tool results, not the conversation). See tech-stack §4.7. The in-app deterministic "ask a question" box (template/playbook matching, fully local, no model) stays and is unaffected.
 
@@ -136,7 +153,7 @@ Dynamic responsiveness protection · extended retention tiers + optional Parquet
 - [x] **Expert security metadata (PRD §9.4.1/§9.4.6)** — `GetSecurityMetadata` deepens the inspector: file SHA-256 (CNG BCrypt, streamed), the signing **certificate chain** leaf→root (subject/issuer/thumbprint/validity, walked from the live WinTrust provider state), token **privileges** (name + enabled) / groups / app-container capabilities / integrity / elevation, and process **mitigation policies** (DEP/ASLR+high-entropy/CFG/dynamic-code/image-load/child-process). Cross-user/protected degrade via limited / available+reason. All hand-written FFI, clippy-clean. UI: Inspector Security tab, factual framing (unsigned = caution, held privilege = information). **Live-verified** on explorer.exe: real hash + full Microsoft 3-cert chain + SeChangeNotifyPrivilege + DEP/ASLR/CFG
 - [x] **Kernel-driver decision gate** — resolved as [ADR-0001](adr/0001-kernel-driver-decision-gate.md): ship **no** first-party kernel driver; the no-driver mode is the permanent default; honest sensor labeling (PRD §9.6.7) covers the narrow CPU-package-temp/fan gap; a sandboxed *existing* signed driver (PawnIO-model) is the only pre-approved path if the gate is ever reopened, behind hard guardrails (read-only, HVCI-signed, opt-in, security-reviewed). Rationale: BYOVD attack-surface + BSOD blast radius outweigh a minority sensor feature.
 
-**Phase 3 (R3) exit — all landed:** system changes · crash correlation · CLI + PowerShell · dynamic responsiveness protection · extended retention tiers · remote support bundle · signed plugin framework · expert security metadata · kernel-driver decision gate (ADR). **All three PRD phases (MVP / R2 / R3) are complete.**
+**Phase 3 (R3) status:** the listed R3 feature slice landed: system changes · crash correlation · CLI + PowerShell · dynamic responsiveness protection · extended retention tiers · remote support bundle · signed plugin framework · expert security metadata · kernel-driver decision gate (ADR). This does **not** close the open items elsewhere in the tracker or the release-readiness gates above.
 
 ---
 

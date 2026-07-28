@@ -209,12 +209,21 @@ The authoring is arch-agnostic; `build.ps1 -Platform arm64` maps to the
 
 Ship both MSIs side by side; winget/manifest select by `Architecture`.
 
-## Shell extension (tech-stack.md §4.8) - not in this MSI
+## Shell extension (tech-stack.md §4.8)
 
-The File Explorer "Find what is using this file" `IExplorerCommand` handler
-requires **package identity** (a sparse MSIX), which an MSI cannot grant. It
-ships as a separate signed `.msix` registered post-install (out of scope until
-the shell-ext binary exists; noted here so it is not forgotten).
+The app payload now contains `SystemAtlas.ShellExtension.dll` and
+`SystemAtlas.Desktop.msix`. The MSI registers a classic `*\shell` verb so the
+feature works on Windows 10 and under Windows 11 **Show more options** without
+package identity. The Windows 11 primary menu uses the native
+`IExplorerCommand` registered by the sparse package.
+
+`installer/build.ps1` builds both shell artifacts. With no additional option it
+embeds an **unsigned** identity package for CI/package-shape validation only. A
+production build must sign that package first, then pass it as
+`-SignedShellPackage <path>` so the exact signed artifact is embedded. Register
+or provision it with the installed app directory as `ExternalLocation`; see
+[`shell-ext/README.md`](../shell-ext/README.md). The current MSI deliberately
+does not run an unsigned package or restart Explorer.
 
 ## Do NOT install on a dev machine
 

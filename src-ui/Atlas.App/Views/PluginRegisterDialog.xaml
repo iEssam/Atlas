@@ -13,6 +13,9 @@
     <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="640">
         <StackPanel Spacing="14" MinWidth="460" MaxWidth="540" Margin="0,4,0,0">
 
+            <TextBlock Text="PLUGIN REGISTRATION / READ ONLY"
+                       Style="{StaticResource AtlasSectionLabelStyle}" />
+
             <!-- What a plugin is (the framing, up front) -->
             <TextBlock TextWrapping="Wrap"
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
@@ -21,7 +24,8 @@
             <!-- Executable picker -->
             <StackPanel Spacing="4">
                 <TextBlock Text="Plugin executable" Style="{StaticResource CaptionTextBlockStyle}"
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                           FontFamily="{ThemeResource AtlasMonoFontFamily}" />
                 <Grid ColumnSpacing="8">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
@@ -33,6 +37,7 @@
                              IsReadOnly="True" />
                     <Button x:Name="BrowseButton" Grid.Column="1"
                             AutomationProperties.Name="Choose plugin executable"
+                            Style="{StaticResource AtlasGhostButtonStyle}"
                             Content="Choose…"
                             Click="OnBrowseClick" />
                 </Grid>
@@ -44,7 +49,7 @@
                 <TextBlock TextWrapping="Wrap"
                            Style="{StaticResource CaptionTextBlockStyle}"
                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                           Text="Each is a read-only slice — the plugin gets only what you tick, and can read nothing else. Grant as little as it needs." />
+                           Text="Each is a read-only slice - the plugin gets only what you tick, and can read nothing else. Grant as little as it needs." />
                 <ItemsControl x:Name="CapabilityList"
                               AutomationProperties.Name="Capabilities to grant">
                     <ItemsControl.ItemTemplate>
@@ -72,7 +77,7 @@
             <!-- Unsigned opt-in (off, gated behind a clear caution) -->
             <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                    BorderThickness="1" CornerRadius="8" Padding="12,10">
+                    BorderThickness="1" CornerRadius="2" Padding="12,10">
                 <StackPanel Spacing="8">
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <FontIcon Glyph="&#xE7BA;" FontSize="15" VerticalAlignment="Center"
@@ -82,7 +87,7 @@
                     </StackPanel>
                     <TextBlock TextWrapping="Wrap"
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                               Text="Atlas verifies a plugin's signature before it can be registered. An unsigned program can't have its publisher confirmed — allow one only if you trust where it came from. It's still read-only and still off until you enable it." />
+                               Text="Atlas verifies a plugin's signature before it can be registered. An unsigned program can't have its publisher confirmed - allow one only if you trust where it came from. It's still read-only and still off until you enable it." />
                     <CheckBox x:Name="AllowUnsignedCheck"
                               AutomationProperties.Name="Allow an unsigned plugin"
                               Content="Allow an unsigned plugin (only if you trust the source)" />

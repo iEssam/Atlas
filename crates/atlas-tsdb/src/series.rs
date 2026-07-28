@@ -27,6 +27,12 @@ pub enum Metric {
     ReadBps = 3,
     /// Per-process disk write rate, bytes/s.
     WriteBps = 4,
+    /// Per-process busiest GPU engine, permille.
+    GpuPermille = 5,
+    /// Per-process dedicated GPU memory, bytes.
+    GpuDedicatedBytes = 6,
+    /// Per-process shared GPU memory, bytes.
+    GpuSharedBytes = 7,
 
     /// System CPU, permille.
     SysCpuPermille = 100,
@@ -40,6 +46,27 @@ pub enum Metric {
     SysThreadCount = 104,
     /// System handle count.
     SysHandleCount = 105,
+    SysGpuPermille = 106,
+    SysGpuDedicatedUsed = 107,
+    SysGpuSharedUsed = 108,
+    SysGpuMemoryUsed = 109,
+    SysGpuMemoryBudget = 110,
+    SysGpuThrottling = 111,
+
+    // Per-adapter series; scope is the gpu_adapter row id.
+    GpuAdapterPermille = 200,
+    GpuAdapterDedicatedUsed = 201,
+    GpuAdapterSharedUsed = 202,
+    GpuAdapterTemperatureC = 203,
+    GpuAdapterPowerW = 204,
+    GpuAdapterCoreClockMhz = 205,
+    GpuAdapterMemoryClockMhz = 206,
+    GpuAdapterFanRpm = 207,
+    GpuAdapterThrottling = 208,
+    GpuAdapterPowerPercent = 209,
+    GpuAdapterFanPercent = 210,
+    GpuAdapterMemoryTemperatureC = 211,
+    GpuAdapterHotspotTemperatureC = 212,
 }
 
 impl Metric {
@@ -56,12 +83,34 @@ impl Metric {
             2 => Metric::PrivateBytes,
             3 => Metric::ReadBps,
             4 => Metric::WriteBps,
+            5 => Metric::GpuPermille,
+            6 => Metric::GpuDedicatedBytes,
+            7 => Metric::GpuSharedBytes,
             100 => Metric::SysCpuPermille,
             101 => Metric::SysMemUsed,
             102 => Metric::SysCommitUsed,
             103 => Metric::SysProcessCount,
             104 => Metric::SysThreadCount,
             105 => Metric::SysHandleCount,
+            106 => Metric::SysGpuPermille,
+            107 => Metric::SysGpuDedicatedUsed,
+            108 => Metric::SysGpuSharedUsed,
+            109 => Metric::SysGpuMemoryUsed,
+            110 => Metric::SysGpuMemoryBudget,
+            111 => Metric::SysGpuThrottling,
+            200 => Metric::GpuAdapterPermille,
+            201 => Metric::GpuAdapterDedicatedUsed,
+            202 => Metric::GpuAdapterSharedUsed,
+            203 => Metric::GpuAdapterTemperatureC,
+            204 => Metric::GpuAdapterPowerW,
+            205 => Metric::GpuAdapterCoreClockMhz,
+            206 => Metric::GpuAdapterMemoryClockMhz,
+            207 => Metric::GpuAdapterFanRpm,
+            208 => Metric::GpuAdapterThrottling,
+            209 => Metric::GpuAdapterPowerPercent,
+            210 => Metric::GpuAdapterFanPercent,
+            211 => Metric::GpuAdapterMemoryTemperatureC,
+            212 => Metric::GpuAdapterHotspotTemperatureC,
             _ => return None,
         })
     }
@@ -227,10 +276,18 @@ mod tests {
             Metric::SysProcessCount,
             Metric::SysThreadCount,
             Metric::SysHandleCount,
+            Metric::GpuAdapterPowerPercent,
+            Metric::GpuAdapterFanPercent,
+            Metric::GpuAdapterMemoryTemperatureC,
+            Metric::GpuAdapterHotspotTemperatureC,
         ] {
             assert_eq!(Metric::from_u16(m.as_u16()), Some(m));
         }
         assert_eq!(Metric::from_u16(9999), None);
+        assert_eq!(Metric::GpuAdapterPowerPercent.as_u16(), 209);
+        assert_eq!(Metric::GpuAdapterFanPercent.as_u16(), 210);
+        assert_eq!(Metric::GpuAdapterMemoryTemperatureC.as_u16(), 211);
+        assert_eq!(Metric::GpuAdapterHotspotTemperatureC.as_u16(), 212);
     }
 
     #[test]

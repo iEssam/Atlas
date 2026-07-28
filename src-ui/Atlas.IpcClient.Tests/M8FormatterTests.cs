@@ -12,6 +12,10 @@ public class M8FormatterTests
     [InlineData(IncidentKind.CpuSaturation, "CPU saturation")]
     [InlineData(IncidentKind.MemoryPressure, "Memory pressure")]
     [InlineData(IncidentKind.DiskLatency, "Disk latency")]
+    [InlineData(IncidentKind.GpuSaturation, "GPU saturation")]
+    [InlineData(IncidentKind.GpuMemoryExhaustion, "GPU memory pressure")]
+    [InlineData(IncidentKind.GpuThermalThrottling, "GPU thermal throttling")]
+    [InlineData(IncidentKind.SystemThermalLimit, "System thermal limit")]
     [InlineData(IncidentKind.Unspecified, "Incident")]
     public void IncidentKindLabel_MapsKinds(IncidentKind kind, string expected)
     {
@@ -24,6 +28,7 @@ public class M8FormatterTests
         Assert.False(string.IsNullOrEmpty(M8Formatter.IncidentKindGlyph(IncidentKind.CpuSaturation)));
         Assert.False(string.IsNullOrEmpty(M8Formatter.IncidentKindGlyph(IncidentKind.MemoryPressure)));
         Assert.False(string.IsNullOrEmpty(M8Formatter.IncidentKindGlyph(IncidentKind.DiskLatency)));
+        Assert.False(string.IsNullOrEmpty(M8Formatter.IncidentKindGlyph(IncidentKind.SystemThermalLimit)));
         Assert.False(string.IsNullOrEmpty(M8Formatter.IncidentKindGlyph(IncidentKind.Unspecified)));
     }
 
@@ -31,6 +36,7 @@ public class M8FormatterTests
     [InlineData(IncidentKind.CpuSaturation, "CPU")]
     [InlineData(IncidentKind.MemoryPressure, "memory")]
     [InlineData(IncidentKind.DiskLatency, "disk")]
+    [InlineData(IncidentKind.SystemThermalLimit, "system thermal state")]
     public void ResourceNoun_MapsKinds(IncidentKind kind, string expected)
     {
         Assert.Equal(expected, M8Formatter.ResourceNoun(kind));
@@ -42,6 +48,7 @@ public class M8FormatterTests
         Assert.Equal("Peaked at 97.3% CPU", M8Formatter.PeakValueText(IncidentKind.CpuSaturation, 973));
         Assert.Equal("Peaked at 88% memory", M8Formatter.PeakValueText(IncidentKind.MemoryPressure, 880));
         Assert.Equal("Peaked at 42.5 ms latency", M8Formatter.PeakValueText(IncidentKind.DiskLatency, 42.5));
+        Assert.Equal("Peaked at 91.5 °C", M8Formatter.PeakValueText(IncidentKind.SystemThermalLimit, 91.5));
         Assert.Equal(string.Empty, M8Formatter.PeakValueText(IncidentKind.Unspecified, 5));
     }
 

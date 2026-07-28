@@ -20,7 +20,8 @@ use serde_json::{json, Map, Value};
 use tonic::transport::Channel;
 
 use atlas_ipc::{
-    AtlasQueryClient, Confidence, DiagnoseRequest, IncidentKind, L4Protocol,
+    AtlasQueryClient, Confidence, DiagnoseRequest, GpuAvailabilityReason, GpuSensorKind,
+    GpuTelemetrySource, GpuTemperatureKind, GpuThrottleReason, IncidentKind, L4Protocol,
     ListConnectionsRequest, ListEventsRequest, ListIncidentsRequest, ListScheduledTasksRequest,
     ListServicesRequest, ListStartupRequest, MetricKind, ProcessDetailRequest, ProcessRole,
     QueryRangeRequest, SearchRequest, ServiceStartType, ServiceState, Severity, SnapshotRequest,
@@ -47,7 +48,7 @@ pub struct ToolDef {
 pub const CATALOG: &[ToolDef] = &[
     ToolDef {
         name: "top_consumers",
-        description: "Top processes by CPU right now, with a system gauges summary. Maps to AtlasQuery.GetSnapshot.",
+        description: "Top processes by CPU right now, with system gauges and attributed GPU adapter, sensor, memory, provider-health, and fallback evidence. Maps to AtlasQuery.GetSnapshot.",
         source_rpc: "AtlasQuery.GetSnapshot",
         input_schema: schema_top_consumers,
     },
@@ -358,6 +359,11 @@ fn top_consumers(conn: &mut Connection, red: &Redactor, args: &Value) -> Result<
             "process_count": s.process_count,
             "thread_count": s.thread_count,
             "handle_count": s.handle_count,
+            "gpu_percent": s.gpu_permille as f64 / 10.0,
+            "gpu_dedicated_used_bytes": s.gpu_dedicated_used,
+            "gpu_dedicated_budget_bytes": s.gpu_dedicated_budget,
+            "gpu_shared_used_bytes": s.gpu_shared_used,
+            "gpu_shared_budget_bytes": s.gpu_shared_budget,
         })
     });
 
@@ -378,12 +384,48 @@ fn top_consumers(conn: &mut Connection, red: &Redactor, args: &Value) -> Result<
                 "write_bps": p.write_bps,
                 "thread_count": p.thread_count,
                 "handle_count": p.handle_count,
+                "gpu_percent": p.gpu_permille as f64 / 10.0,
+                "gpu_dedicated_bytes": p.gpu_dedicated_bytes,
+                "gpu_shared_bytes": p.gpu_shared_bytes,
             })
         })
         .collect();
 
+    let gpu_adapters: Vec<Value> = reply.gpu_adapters.iter().map(|a| json!({
+        "adapter_key": a.adapter_key,
+        "name": a.name,
+        "driver_version": a.driver_version,
+        "driver_date": a.driver_date,
+        "physical_adapter_index": a.physical_adapter_index,
+        "pci": a.pci_identity_available.then(|| format!("{:04X}:{:02X}:{:02X}.{}", a.pci_domain, a.pci_bus, a.pci_device, a.pci_function)),
+        "utilization_percent": a.utilization_permille as f64 / 10.0,
+        "temperature_c": a.temperature_c,
+        "power_w": a.power_w,
+        "power_percent": a.power_percent,
+        "core_clock_mhz": a.core_clock_mhz,
+        "memory_clock_mhz": a.memory_clock_mhz,
+        "fan_rpm": a.fan_rpm,
+        "fan_percent": a.fan_percent,
+        "temperatures": a.temperatures.iter().map(|t| json!({
+            "kind": GpuTemperatureKind::try_from(t.kind).map(|v| v.as_str_name()).unwrap_or("UNKNOWN"),
+            "celsius": t.celsius,
+            "source": GpuTelemetrySource::try_from(t.source).map(|v| v.as_str_name()).unwrap_or("UNKNOWN"),
+            "label": t.label,
+        })).collect::<Vec<_>>(),
+        "throttle_reasons": a.throttle_reasons.iter().map(|v| GpuThrottleReason::try_from(*v).map(|v| v.as_str_name()).unwrap_or("UNKNOWN")).collect::<Vec<_>>(),
+        "sensor_availability": a.sensor_availability.iter().map(|v| json!({
+            "metric": GpuSensorKind::try_from(v.kind).map(|v| v.as_str_name()).unwrap_or("UNKNOWN"),
+            "available": v.available,
+            "source": GpuTelemetrySource::try_from(v.source).map(|v| v.as_str_name()).unwrap_or("UNKNOWN"),
+            "reason": GpuAvailabilityReason::try_from(v.reason).map(|v| v.as_str_name()).unwrap_or("UNKNOWN"),
+            "detail": v.detail,
+        })).collect::<Vec<_>>(),
+    })).collect();
+
     Ok(json!({
         "system": system,
+        "gpu_adapters": gpu_adapters,
+        "gpu_unavailable_reason": reply.gpu_unavailable_reason,
         "processes": processes,
         "returned": processes.len(),
         "grounding": grounding(

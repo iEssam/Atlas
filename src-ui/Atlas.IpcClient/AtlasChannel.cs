@@ -20,6 +20,8 @@ public sealed class AtlasChannel : IDisposable
     private readonly AtlasControl.AtlasControlClient _control;
     private readonly AtlasRules.AtlasRulesClient _rules;
     private readonly AtlasPlugins.AtlasPluginsClient _plugins;
+    private readonly AtlasGamingQuery.AtlasGamingQueryClient _gamingQuery;
+    private readonly AtlasGamingControl.AtlasGamingControlClient _gamingControl;
 
     private AtlasChannel(GrpcChannel channel)
     {
@@ -28,6 +30,8 @@ public sealed class AtlasChannel : IDisposable
         _control = new AtlasControl.AtlasControlClient(channel);
         _rules = new AtlasRules.AtlasRulesClient(channel);
         _plugins = new AtlasPlugins.AtlasPluginsClient(channel);
+        _gamingQuery = new AtlasGamingQuery.AtlasGamingQueryClient(channel);
+        _gamingControl = new AtlasGamingControl.AtlasGamingControlClient(channel);
     }
 
     /// <summary>
@@ -223,6 +227,30 @@ public sealed class AtlasChannel : IDisposable
             new ListBookmarksRequest { Range = new TimeRange { FromMs = fromMs, ToMs = toMs } },
             cancellationToken: cancellationToken).ResponseAsync);
 
+    /// <summary>Persists a before/after experiment definition.</summary>
+    public Task<RpcOutcome<CreateExperimentReply>> CreateExperimentAsync(
+        Experiment experiment,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _client.CreateExperimentAsync(
+            new CreateExperimentRequest { Experiment = experiment },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>Lists saved experiment definitions, newest first.</summary>
+    public Task<RpcOutcome<ListExperimentsReply>> ListExperimentsAsync(
+        uint limit = 100,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _client.ListExperimentsAsync(
+            new ListExperimentsRequest { Limit = limit },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>Recomputes one comparison from currently retained evidence.</summary>
+    public Task<RpcOutcome<CompareExperimentReply>> CompareExperimentAsync(
+        long id,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _client.CompareExperimentAsync(
+            new CompareExperimentRequest { Id = id },
+            cancellationToken: cancellationToken).ResponseAsync);
+
     // ----------------------------------------------------------------------
     // M7: privacy activity, startup inventory, services (AtlasQuery). Same
     // Unimplemented→Unsupported guard so the new pages degrade gracefully
@@ -319,6 +347,23 @@ public sealed class AtlasChannel : IDisposable
             {
                 IncidentId = incidentId,
                 Range = new TimeRange { FromMs = fromMs, ToMs = toMs },
+            },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    /// <summary>
+    /// Returns a bounded, prioritized set of deterministic insights derived by
+    /// the service. Each item includes its evidence, confidence, limitations,
+    /// and a non-destructive investigation destination when one is available.
+    /// </summary>
+    public Task<RpcOutcome<ListInsightsReply>> ListInsightsAsync(
+        bool activeOnly = false,
+        uint limit = 0,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _client.ListInsightsAsync(
+            new ListInsightsRequest
+            {
+                ActiveOnly = activeOnly,
+                Limit = limit,
             },
             cancellationToken: cancellationToken).ResponseAsync);
 
@@ -1010,6 +1055,112 @@ public sealed class AtlasChannel : IDisposable
         CancellationToken cancellationToken = default) =>
         GuardAsync(() => _plugins.RemovePluginAsync(
             new RemovePluginRequest { Id = id },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    // Gaming Intelligence is kept on separate query/control services so
+    // read-only clients never gain mutation privileges by accident.
+    public Task<RpcOutcome<ListDetectedGamesReply>> ListDetectedGamesAsync(
+        bool refresh = true,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _gamingQuery.ListDetectedGamesAsync(
+            new ListDetectedGamesRequest { Refresh = refresh },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    public Task<RpcOutcome<GetGamingReadinessReply>> GetGamingReadinessAsync(
+        string gameId,
+        GamingObjective objective,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _gamingQuery.GetGamingReadinessAsync(
+            new GetGamingReadinessRequest { GameId = gameId ?? string.Empty, Objective = objective },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    public Task<RpcOutcome<ListGameSessionsReply>> ListGameSessionsAsync(
+        string gameId,
+        uint limit = 30,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _gamingQuery.ListGameSessionsAsync(
+            new ListGameSessionsRequest { GameId = gameId ?? string.Empty, Limit = limit },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    public Task<RpcOutcome<GetGameSessionTraceReply>> GetGameSessionTraceAsync(
+        long sessionId,
+        uint maxPoints = 1_200,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _gamingQuery.GetGameSessionTraceAsync(
+            new GetGameSessionTraceRequest { SessionId = sessionId, MaxPoints = maxPoints },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    public Task<RpcOutcome<CompareGameSessionsReply>> CompareGameSessionsAsync(
+        IEnumerable<long> baselineSessionIds,
+        IEnumerable<long> followupSessionIds,
+        CancellationToken cancellationToken = default)
+    {
+        var request = new CompareGameSessionsRequest();
+        request.BaselineSessionIds.AddRange(baselineSessionIds);
+        request.FollowupSessionIds.AddRange(followupSessionIds);
+        return GuardAsync(() => _gamingQuery.CompareGameSessionsAsync(
+            request, cancellationToken: cancellationToken).ResponseAsync);
+    }
+
+    public Task<RpcOutcome<PreviewGamingPlanReply>> PreviewGamingPlanAsync(
+        string gameId,
+        GamingObjective objective,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _gamingQuery.PreviewGamingPlanAsync(
+            new PreviewGamingPlanRequest { GameId = gameId ?? string.Empty, Objective = objective },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    public Task<RpcOutcome<PrepareGamingPlanReply>> PrepareGamingPlanAsync(
+        string gameId,
+        GamingObjective objective,
+        IEnumerable<string> selectedStepIds,
+        CancellationToken cancellationToken = default)
+    {
+        var request = new PrepareGamingPlanRequest { GameId = gameId ?? string.Empty, Objective = objective };
+        request.SelectedStepIds.AddRange(selectedStepIds);
+        return GuardAsync(() => _gamingControl.PrepareGamingPlanAsync(
+            request, cancellationToken: cancellationToken).ResponseAsync);
+    }
+
+    public Task<RpcOutcome<ExecuteGamingPlanReply>> ExecuteGamingPlanAsync(
+        string consentToken,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _gamingControl.ExecuteGamingPlanAsync(
+            new ExecuteGamingPlanRequest { ConsentToken = consentToken ?? string.Empty },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    public Task<RpcOutcome<RollbackGamingPlanReply>> RollbackGamingPlanAsync(
+        long planId,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _gamingControl.RollbackGamingPlanAsync(
+            new RollbackGamingPlanRequest { PlanId = planId },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    public Task<RpcOutcome<KeepGamingPlanReply>> KeepGamingPlanAsync(
+        long planId,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _gamingControl.KeepGamingPlanAsync(
+            new KeepGamingPlanRequest { PlanId = planId },
+            cancellationToken: cancellationToken).ResponseAsync);
+
+    public Task<RpcOutcome<StartGamingSessionReply>> StartGamingSessionAsync(
+        string gameId,
+        GamingObjective objective,
+        long appliedPlanId = 0,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _gamingControl.StartGamingSessionAsync(
+            new StartGamingSessionRequest
+            {
+                GameId = gameId ?? string.Empty,
+                Objective = objective,
+                AppliedPlanId = appliedPlanId,
+            }, cancellationToken: cancellationToken).ResponseAsync);
+
+    public Task<RpcOutcome<StopGamingSessionReply>> StopGamingSessionAsync(
+        long sessionId,
+        CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _gamingControl.StopGamingSessionAsync(
+            new StopGamingSessionRequest { SessionId = sessionId },
             cancellationToken: cancellationToken).ResponseAsync);
 
     public void Dispose() => _channel.Dispose();

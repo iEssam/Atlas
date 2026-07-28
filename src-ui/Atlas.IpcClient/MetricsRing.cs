@@ -49,7 +49,7 @@ public sealed unsafe class MetricsRing : IDisposable
     /// a stale reader rejects an incompatible section.
     /// shm.rs: <c>pub const LAYOUT_VERSION: u32 = 1;</c>
     /// </summary>
-    public const uint LayoutVersion = 1;
+    public const uint LayoutVersion = 2;
 
     /// <summary>
     /// Fixed number of process rows in the ring.
@@ -232,10 +232,15 @@ public sealed unsafe class MetricsRing : IDisposable
         uint procCount = ReadU32(hOff + RingHeaderLayout.ProcessCountOffset);
         uint threadCount = ReadU32(hOff + RingHeaderLayout.ThreadCountOffset);
         uint handleCount = ReadU32(hOff + RingHeaderLayout.HandleCountOffset);
+        uint gpu = ReadU32(hOff + RingHeaderLayout.GpuPermilleOffset);
         ulong memUsed = ReadU64(hOff + RingHeaderLayout.MemUsedOffset);
         ulong memTotal = ReadU64(hOff + RingHeaderLayout.MemTotalOffset);
         ulong commitUsed = ReadU64(hOff + RingHeaderLayout.CommitUsedOffset);
         ulong commitLimit = ReadU64(hOff + RingHeaderLayout.CommitLimitOffset);
+        ulong gpuDedicatedUsed = ReadU64(hOff + RingHeaderLayout.GpuDedicatedUsedOffset);
+        ulong gpuDedicatedBudget = ReadU64(hOff + RingHeaderLayout.GpuDedicatedBudgetOffset);
+        ulong gpuSharedUsed = ReadU64(hOff + RingHeaderLayout.GpuSharedUsedOffset);
+        ulong gpuSharedBudget = ReadU64(hOff + RingHeaderLayout.GpuSharedBudgetOffset);
         uint rowCount = ReadU32(hOff + RingHeaderLayout.RowCountOffset);
 
         int n = (int)Math.Min(rowCount, (uint)RingRows);
@@ -245,18 +250,23 @@ public sealed unsafe class MetricsRing : IDisposable
             long rowBase = RingLayout.RowsOffset + (long)i * RingRowLayout.Size;
             uint pid = ReadU32(rowBase + RingRowLayout.PidOffset);
             uint rcpu = ReadU32(rowBase + RingRowLayout.CpuPermilleOffset);
+            uint rgpu = ReadU32(rowBase + RingRowLayout.GpuPermilleOffset);
             ulong ws = ReadU64(rowBase + RingRowLayout.WorkingSetOffset);
             ulong priv = ReadU64(rowBase + RingRowLayout.PrivateBytesOffset);
             ulong readBps = ReadU64(rowBase + RingRowLayout.ReadBpsOffset);
             ulong writeBps = ReadU64(rowBase + RingRowLayout.WriteBpsOffset);
+            ulong gpuDedicated = ReadU64(rowBase + RingRowLayout.GpuDedicatedBytesOffset);
+            ulong gpuShared = ReadU64(rowBase + RingRowLayout.GpuSharedBytesOffset);
             string name = ReadName(rowBase + RingRowLayout.NameOffset);
 
-            rows.Add(new RingRowSnapshot(pid, rcpu, ws, priv, readBps, writeBps, name));
+            rows.Add(new RingRowSnapshot(pid, rcpu, rgpu, ws, priv, readBps, writeBps,
+                gpuDedicated, gpuShared, name));
         }
 
         return new RingSnapshot(
-            tsMs, cpu, procCount, threadCount, handleCount,
-            memUsed, memTotal, commitUsed, commitLimit, rows);
+            tsMs, cpu, gpu, procCount, threadCount, handleCount,
+            memUsed, memTotal, commitUsed, commitLimit,
+            gpuDedicatedUsed, gpuDedicatedBudget, gpuSharedUsed, gpuSharedBudget, rows);
     }
 
     /// <summary>

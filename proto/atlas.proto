@@ -35,6 +35,10 @@ message ProcessRow {
   // parent chain). Empty = ungrouped.
   string app_group = 13;
   ProcessRole role = 14;
+  // GPU usage is the busiest engine for this process, not a sum of engines.
+  uint32 gpu_permille = 15;
+  uint64 gpu_dedicated_bytes = 16;
+  uint64 gpu_shared_bytes = 17;
 }
 
 enum ProcessRole {
@@ -57,6 +61,133 @@ message SystemGauges {
   uint32 process_count = 7;
   uint32 thread_count = 8;
   uint32 handle_count = 9;
+  uint32 gpu_permille = 10;
+  uint64 gpu_dedicated_used = 11;
+  uint64 gpu_dedicated_budget = 12;
+  uint64 gpu_shared_used = 13;
+  uint64 gpu_shared_budget = 14;
+}
+
+enum GpuEngineClass {
+  GPU_ENGINE_OTHER = 0;
+  GPU_ENGINE_3D = 1;
+  GPU_ENGINE_COMPUTE = 2;
+  GPU_ENGINE_COPY = 3;
+  GPU_ENGINE_VIDEO_ENCODE = 4;
+  GPU_ENGINE_VIDEO_DECODE = 5;
+}
+
+message GpuEngineTelemetry {
+  GpuEngineClass engine_class = 1;
+  uint32 utilization_permille = 2;
+}
+
+enum GpuTelemetrySource {
+  GPU_SOURCE_UNSPECIFIED = 0;
+  GPU_SOURCE_WINDOWS_WDDM = 1;
+  GPU_SOURCE_NVIDIA_NVML = 2;
+}
+
+enum GpuSensorKind {
+  GPU_SENSOR_UNSPECIFIED = 0;
+  GPU_SENSOR_CORE_TEMPERATURE = 1;
+  GPU_SENSOR_MEMORY_TEMPERATURE = 2;
+  GPU_SENSOR_HOTSPOT_TEMPERATURE = 3;
+  GPU_SENSOR_BOARD_TEMPERATURE = 4;
+  GPU_SENSOR_POWER_WATTS = 5;
+  GPU_SENSOR_POWER_PERCENT = 6;
+  GPU_SENSOR_CORE_CLOCK = 7;
+  GPU_SENSOR_MEMORY_CLOCK = 8;
+  GPU_SENSOR_FAN_RPM = 9;
+  GPU_SENSOR_FAN_PERCENT = 10;
+  GPU_SENSOR_THROTTLE_REASONS = 11;
+}
+
+enum GpuAvailabilityReason {
+  GPU_AVAILABILITY_NONE = 0;
+  GPU_AVAILABILITY_PROVIDER_MISSING = 1;
+  GPU_AVAILABILITY_HELPER_START_FAILURE = 2;
+  GPU_AVAILABILITY_HELPER_TIMEOUT = 3;
+  GPU_AVAILABILITY_HELPER_BACKOFF = 4;
+  GPU_AVAILABILITY_STALE_SAMPLE = 5;
+  GPU_AVAILABILITY_UNSUPPORTED_METRIC = 6;
+  GPU_AVAILABILITY_IDENTITY_UNMATCHED = 7;
+  GPU_AVAILABILITY_DEVICE_LOST = 8;
+  GPU_AVAILABILITY_DRIVER_ERROR = 9;
+}
+
+enum GpuTemperatureKind {
+  GPU_TEMPERATURE_CORE = 0;
+  GPU_TEMPERATURE_MEMORY = 1;
+  GPU_TEMPERATURE_HOTSPOT = 2;
+  GPU_TEMPERATURE_BOARD = 3;
+  GPU_TEMPERATURE_OTHER = 4;
+}
+
+enum GpuThrottleReason {
+  GPU_THROTTLE_UNSPECIFIED = 0;
+  GPU_THROTTLE_SOFTWARE_THERMAL = 1;
+  GPU_THROTTLE_HARDWARE_THERMAL = 2;
+  GPU_THROTTLE_SOFTWARE_POWER_CAP = 3;
+  GPU_THROTTLE_HARDWARE_SLOWDOWN = 4;
+  GPU_THROTTLE_HARDWARE_POWER_BRAKE = 5;
+  GPU_THROTTLE_OTHER = 6;
+  GPU_THROTTLE_IDLE = 7;
+  GPU_THROTTLE_APPLICATION_CLOCKS = 8;
+  GPU_THROTTLE_SYNC_BOOST = 9;
+  GPU_THROTTLE_DISPLAY_CLOCK_SETTING = 10;
+}
+
+message GpuTemperatureTelemetry {
+  GpuTemperatureKind kind = 1;
+  double celsius = 2;
+  GpuTelemetrySource source = 3;
+  string label = 4;
+}
+
+message GpuSensorAvailability {
+  GpuSensorKind kind = 1;
+  bool available = 2;
+  GpuTelemetrySource source = 3;
+  GpuAvailabilityReason reason = 4;
+  string detail = 5;
+}
+
+message GpuAdapterTelemetry {
+  string adapter_key = 1;
+  string name = 2;
+  string driver_version = 3;
+  bool active_display = 4;
+  uint32 utilization_permille = 5;
+  uint64 dedicated_used = 6;
+  uint64 dedicated_budget = 7;
+  uint64 shared_used = 8;
+  uint64 shared_budget = 9;
+  repeated GpuEngineTelemetry engines = 10;
+  optional double temperature_c = 11;
+  optional double power_w = 12;
+  optional uint32 core_clock_mhz = 13;
+  optional uint32 memory_clock_mhz = 14;
+  optional uint32 fan_rpm = 15;
+  optional bool thermal_throttling = 16;
+  string sensor_source = 17;
+  string sensor_unavailable_reason = 18;
+  uint32 vendor_id = 19;
+  uint32 device_id = 20;
+  uint32 physical_adapter_index = 21;
+  uint32 pci_domain = 22;
+  uint32 pci_bus = 23;
+  uint32 pci_device = 24;
+  uint32 pci_function = 25;
+  string driver_date = 26;
+  optional double power_percent = 27;
+  optional double fan_percent = 28;
+  optional double temperature_warning_c = 29;
+  optional double temperature_max_c = 30;
+  repeated GpuTemperatureTelemetry temperatures = 31;
+  repeated GpuThrottleReason throttle_reasons = 32;
+  repeated GpuSensorAvailability sensor_availability = 33;
+  bool pci_identity_available = 34;
 }
 
 message SnapshotRequest {
@@ -67,6 +198,8 @@ message SnapshotRequest {
 message SnapshotReply {
   SystemGauges system = 1;
   repeated ProcessRow processes = 2;
+  repeated GpuAdapterTelemetry gpu_adapters = 3;
+  string gpu_unavailable_reason = 4;
 }
 
 // ---------------------------------------------------------------------------
@@ -89,10 +222,31 @@ enum MetricKind {
   PRIVATE_BYTES = 3;
   READ_BPS = 4;
   WRITE_BPS = 5;
+  GPU_PERMILLE = 6;
+  GPU_DEDICATED_BYTES = 7;
+  GPU_SHARED_BYTES = 8;
   SYS_CPU_PERMILLE = 20;
   SYS_MEM_USED = 21;
   SYS_COMMIT_USED = 22;
   SYS_PROCESS_COUNT = 23;
+  SYS_GPU_PERMILLE = 24;
+  SYS_GPU_DEDICATED_USED = 25;
+  SYS_GPU_SHARED_USED = 26;
+  SYS_GPU_MEMORY_USED = 27;
+  SYS_GPU_MEMORY_BUDGET = 28;
+  GPU_ADAPTER_PERMILLE = 40;
+  GPU_ADAPTER_DEDICATED_USED = 41;
+  GPU_ADAPTER_SHARED_USED = 42;
+  GPU_ADAPTER_TEMPERATURE_C = 43;
+  GPU_ADAPTER_POWER_W = 44;
+  GPU_ADAPTER_CORE_CLOCK_MHZ = 45;
+  GPU_ADAPTER_MEMORY_CLOCK_MHZ = 46;
+  GPU_ADAPTER_FAN_RPM = 47;
+  GPU_ADAPTER_THROTTLING = 48;
+  GPU_ADAPTER_POWER_PERCENT = 49;
+  GPU_ADAPTER_FAN_PERCENT = 50;
+  GPU_ADAPTER_MEMORY_TEMPERATURE_C = 51;
+  GPU_ADAPTER_HOTSPOT_TEMPERATURE_C = 52;
 }
 
 message QueryRangeRequest {
@@ -192,6 +346,58 @@ message Bookmark {
 
 message ListBookmarksReply {
   repeated Bookmark bookmarks = 1;
+}
+
+// A persisted comparison definition. The named change is context supplied by
+// the user; Atlas reports correlation only and never claims the change caused
+// the measured result.
+message Experiment {
+  int64 id = 1;
+  string name = 2;
+  string change_description = 3;
+  MetricKind metric = 4;
+  double threshold = 5;
+  TimeRange baseline = 6;
+  TimeRange followup = 7;
+  int64 created_ms = 8;
+}
+
+message CreateExperimentRequest { Experiment experiment = 1; }
+message CreateExperimentReply { Experiment experiment = 1; }
+message ListExperimentsRequest { uint32 limit = 1; }
+message ListExperimentsReply { repeated Experiment experiments = 1; }
+message CompareExperimentRequest { int64 id = 1; }
+
+message ExperimentPeriodSummary {
+  double average = 1;
+  double peak = 2;
+  uint64 duration_above_threshold_ms = 3;
+  uint64 samples = 4;
+  uint32 populated_buckets = 5;
+  uint32 crashes = 6;
+  uint32 system_changes = 7;
+}
+
+enum ExperimentVerdict {
+  EXPERIMENT_VERDICT_UNSPECIFIED = 0;
+  EXPERIMENT_INSUFFICIENT_DATA = 1;
+  EXPERIMENT_IMPROVED = 2;
+  EXPERIMENT_REGRESSED = 3;
+  EXPERIMENT_NO_CLEAR_CHANGE = 4;
+}
+
+message CompareExperimentReply {
+  Experiment experiment = 1;
+  ExperimentVerdict verdict = 2;
+  string summary = 3;
+  ExperimentPeriodSummary baseline = 4;
+  ExperimentPeriodSummary followup = 5;
+  double average_delta_percent = 6;
+  repeated string new_processes = 7;
+  repeated string removed_processes = 8;
+  bool incomplete = 9;
+  string data_quality = 10;
+  string caveat = 11;
 }
 
 // ---------------------------------------------------------------------------
@@ -331,6 +537,12 @@ enum IncidentKind {
   CPU_SATURATION = 1;
   MEMORY_PRESSURE = 2;
   DISK_LATENCY = 3;
+  GPU_SATURATION = 4;
+  GPU_MEMORY_EXHAUSTION = 5;
+  GPU_THERMAL_THROTTLING = 6;
+  // A firmware thermal zone reached its own passive/critical trip point.
+  // Atlas never applies a universal guessed temperature threshold.
+  SYSTEM_THERMAL_LIMIT = 7;
 }
 
 enum Severity {
@@ -424,6 +636,72 @@ message DiagnoseReply {
   Diagnosis diagnosis = 3;
 }
 
+// ---------------------------------------------------------------------------
+// Evidence-backed insights. These are deterministic interpretations assembled
+// from measured snapshots and recorded incidents. They never execute actions;
+// destinations only deep-link the first-party UI into an existing safe flow.
+// ---------------------------------------------------------------------------
+
+enum InsightKind {
+  INSIGHT_KIND_UNSPECIFIED = 0;
+  INSIGHT_KIND_CPU_PRESSURE = 1;
+  INSIGHT_KIND_MEMORY_PRESSURE = 2;
+  INSIGHT_KIND_GPU_MEMORY_PRESSURE = 3;
+  INSIGHT_KIND_GPU_THERMAL_LIMIT = 4;
+  INSIGHT_KIND_RESOURCE_STATE_CLEAR = 5;
+}
+
+enum InsightStatus {
+  INSIGHT_STATUS_UNSPECIFIED = 0;
+  INSIGHT_STATUS_EMERGING = 1;
+  INSIGHT_STATUS_ACTIVE = 2;
+  INSIGHT_STATUS_RESOLVED = 3;
+  INSIGHT_STATUS_CLEAR = 4;
+  INSIGHT_STATUS_LIMITED = 5;
+}
+
+message InsightRecommendation {
+  string text = 1;
+  string risk = 2;
+  string reversibility = 3;
+  string verification_plan = 4;
+  // First-party route hint such as "process:4242:1337000" or "graphics".
+  // It is descriptive only and never authorizes a mutation.
+  string destination = 5;
+}
+
+message Insight {
+  // Stable deduplication identity derived from kind + affected entity.
+  string fingerprint = 1;
+  InsightKind kind = 2;
+  InsightStatus status = 3;
+  Severity severity = 4;
+  Confidence confidence = 5;
+  string title = 6;
+  string observation = 7;
+  string significance = 8;
+  TimeRange range = 9;
+  repeated EvidenceItem evidence = 10;
+  repeated ContributingFactor factors = 11;
+  repeated string alternatives = 12;
+  repeated string limitations = 13;
+  InsightRecommendation recommendation = 14;
+  int64 updated_ms = 15;
+}
+
+message ListInsightsRequest {
+  bool active_only = 1;
+  // 0 = service default (10).
+  uint32 limit = 2;
+}
+
+message ListInsightsReply {
+  repeated Insight insights = 1;
+  bool truncated = 2;
+  // Human-readable scope of the currently implemented playbooks.
+  string coverage_summary = 3;
+}
+
 enum ReportFormat {
   REPORT_FORMAT_UNSPECIFIED = 0;
   REPORT_HTML = 1;
@@ -461,12 +739,16 @@ service AtlasQuery {
   rpc Search(SearchRequest) returns (SearchReply);
   rpc CreateBookmark(CreateBookmarkRequest) returns (CreateBookmarkReply);
   rpc ListBookmarks(ListBookmarksRequest) returns (ListBookmarksReply);
+  rpc CreateExperiment(CreateExperimentRequest) returns (CreateExperimentReply);
+  rpc ListExperiments(ListExperimentsRequest) returns (ListExperimentsReply);
+  rpc CompareExperiment(CompareExperimentRequest) returns (CompareExperimentReply);
   rpc ListPrivacyUsage(ListPrivacyUsageRequest) returns (ListPrivacyUsageReply);
   rpc ListPrivacyEvents(ListPrivacyEventsRequest) returns (ListPrivacyEventsReply);
   rpc ListStartup(ListStartupRequest) returns (ListStartupReply);
   rpc ListServices(ListServicesRequest) returns (ListServicesReply);
   rpc ListIncidents(ListIncidentsRequest) returns (ListIncidentsReply);
   rpc Diagnose(DiagnoseRequest) returns (DiagnoseReply);
+  rpc ListInsights(ListInsightsRequest) returns (ListInsightsReply);
   rpc GenerateReport(GenerateReportRequest) returns (GenerateReportReply);
   rpc GetProcessDetail(ProcessDetailRequest) returns (ProcessDetailReply);
   rpc ListHandles(ListHandlesRequest) returns (ListHandlesReply);
@@ -651,6 +933,7 @@ enum CrashKind {
   BUGCHECK = 3;
   SERVICE_FAILURE = 4;
   UNEXPECTED_SHUTDOWN = 5;
+  GPU_DRIVER_RESET = 6;
 }
 
 message CrashRecord {
@@ -891,6 +1174,9 @@ message ThermalSensor {
   double celsius = 2;
   // Where the reading came from (ACPI thermal zone, OEM WMI, ...).
   string source = 3;
+  // Firmware-declared ACPI trip points. Zero means not exposed/invalid.
+  double passive_trip_celsius = 4;
+  double critical_trip_celsius = 5;
 }
 
 message GetThermalRequest {}
@@ -1115,6 +1401,10 @@ enum RuleTrigger {
   ON_DC_POWER = 3;
   // ...only while a matching process is the foreground/fullscreen app.
   ON_FULLSCREEN = 4;
+  // Matching process sustained the configured GPU load.
+  ON_GPU_LOAD = 5;
+  // The adapter used by the matching process reports hardware throttling.
+  ON_GPU_THERMAL_THROTTLE = 6;
 }
 
 enum PriorityClass {
@@ -1158,6 +1448,9 @@ message Rule {
   // Higher precedence wins when rules conflict on the same process.
   int32 precedence = 7;
   int64 created_ms = 8;
+  // Used by ON_GPU_LOAD. UI defaults: 800 permille for 5 seconds.
+  uint32 gpu_threshold_permille = 9;
+  uint32 gpu_duration_seconds = 10;
 }
 
 message ListRulesRequest {}
@@ -1406,4 +1699,408 @@ service AtlasPlugins {
   rpc GrantPluginCapabilities(GrantPluginCapabilitiesRequest) returns (GrantPluginCapabilitiesReply);
   rpc RemovePlugin(RemovePluginRequest) returns (RemovePluginReply);
   rpc OpenPluginSession(OpenPluginSessionRequest) returns (OpenPluginSessionReply);
+}
+
+// ---------------------------------------------------------------------------
+// Gaming Intelligence. Separate services preserve the additive atlas.v0
+// contract and keep the plugin/MCP boundary read-only. Every recommendation is
+// deterministic, capability-labelled, and tied to measured or observed facts.
+// ---------------------------------------------------------------------------
+
+enum GamePlatform {
+  GAME_PLATFORM_UNSPECIFIED = 0;
+  GAME_PLATFORM_STEAM = 1;
+  GAME_PLATFORM_RIOT = 2;
+  GAME_PLATFORM_EPIC = 3;
+  GAME_PLATFORM_EA = 4;
+  GAME_PLATFORM_BATTLENET = 5;
+  GAME_PLATFORM_XBOX = 6;
+  GAME_PLATFORM_STANDALONE = 7;
+}
+
+enum GameSupportLevel {
+  GAME_SUPPORT_LEVEL_UNSPECIFIED = 0;
+  GAME_SUPPORT_LEVEL_UNIVERSAL = 1;
+  GAME_SUPPORT_LEVEL_PILOT_READ_ONLY = 2;
+  GAME_SUPPORT_LEVEL_PILOT_VERSION_GATED = 3;
+}
+
+enum GamingObjective {
+  GAMING_OBJECTIVE_UNSPECIFIED = 0;
+  GAMING_OBJECTIVE_COMPETITIVE_LATENCY = 1;
+  GAMING_OBJECTIVE_SMOOTH_COMPETITIVE = 2;
+}
+
+enum GamingCapabilityState {
+  GAMING_CAPABILITY_STATE_UNSPECIFIED = 0;
+  GAMING_CAPABILITY_STATE_AVAILABLE = 1;
+  GAMING_CAPABILITY_STATE_LIMITED = 2;
+  GAMING_CAPABILITY_STATE_UNAVAILABLE = 3;
+  GAMING_CAPABILITY_STATE_VALIDATION_REQUIRED = 4;
+}
+
+enum GamingFindingSeverity {
+  GAMING_FINDING_SEVERITY_UNSPECIFIED = 0;
+  GAMING_FINDING_SEVERITY_INFORMATION = 1;
+  GAMING_FINDING_SEVERITY_OPPORTUNITY = 2;
+  GAMING_FINDING_SEVERITY_WARNING = 3;
+  GAMING_FINDING_SEVERITY_BLOCKED = 4;
+}
+
+enum GamingEvidenceClass {
+  GAMING_EVIDENCE_CLASS_UNSPECIFIED = 0;
+  GAMING_EVIDENCE_CLASS_OBSERVED = 1;
+  GAMING_EVIDENCE_CLASS_MEASURED = 2;
+  GAMING_EVIDENCE_CLASS_OFFICIAL_GUIDANCE = 3;
+  GAMING_EVIDENCE_CLASS_CONTROLLED_EXPERIMENT = 4;
+}
+
+enum GamingRiskLane {
+  GAMING_RISK_LANE_UNSPECIFIED = 0;
+  GAMING_RISK_LANE_AUTOMATIC_REVERSIBLE = 1;
+  GAMING_RISK_LANE_ADVANCED_EXPERIMENT = 2;
+  GAMING_RISK_LANE_GUIDED_MANUAL = 3;
+  GAMING_RISK_LANE_BLOCKED = 4;
+}
+
+enum GamingPlanStatus {
+  GAMING_PLAN_STATUS_UNSPECIFIED = 0;
+  GAMING_PLAN_STATUS_PREVIEW = 1;
+  GAMING_PLAN_STATUS_PREPARED = 2;
+  GAMING_PLAN_STATUS_APPLYING = 3;
+  GAMING_PLAN_STATUS_APPLIED = 4;
+  GAMING_PLAN_STATUS_VERIFIED = 5;
+  GAMING_PLAN_STATUS_ROLLING_BACK = 6;
+  GAMING_PLAN_STATUS_ROLLED_BACK = 7;
+  GAMING_PLAN_STATUS_FAILED = 8;
+  GAMING_PLAN_STATUS_KEPT = 9;
+}
+
+enum GamingStepKind {
+  GAMING_STEP_KIND_UNSPECIFIED = 0;
+  GAMING_STEP_KIND_DISPLAY_REFRESH = 1;
+  GAMING_STEP_KIND_POWER_OVERLAY = 2;
+  GAMING_STEP_KIND_GAME_CONFIGURATION = 3;
+  GAMING_STEP_KIND_BACKGROUND_PROCESS_CONTROL = 4;
+  GAMING_STEP_KIND_PROCESS_PRIORITY = 5;
+  GAMING_STEP_KIND_CPU_SETS = 6;
+  GAMING_STEP_KIND_GUIDED_CHANGE = 7;
+  GAMING_STEP_KIND_BLOCKED_TWEAK = 8;
+}
+
+enum GamingCaptureQuality {
+  GAMING_CAPTURE_QUALITY_UNSPECIFIED = 0;
+  GAMING_CAPTURE_QUALITY_SYSTEM_ONLY = 1;
+  GAMING_CAPTURE_QUALITY_FRAME_TIME_VALIDATED = 2;
+  GAMING_CAPTURE_QUALITY_PARTIAL = 3;
+  GAMING_CAPTURE_QUALITY_REJECTED = 4;
+}
+
+enum GamingComparisonVerdict {
+  GAMING_COMPARISON_VERDICT_UNSPECIFIED = 0;
+  GAMING_COMPARISON_VERDICT_PROVISIONAL_BETTER = 1;
+  GAMING_COMPARISON_VERDICT_PROVISIONAL_WORSE = 2;
+  GAMING_COMPARISON_VERDICT_WITHIN_NOISE = 3;
+  GAMING_COMPARISON_VERDICT_VERIFIED_BETTER = 4;
+  GAMING_COMPARISON_VERDICT_VERIFIED_WORSE = 5;
+  GAMING_COMPARISON_VERDICT_INSUFFICIENT_EVIDENCE = 6;
+}
+
+message GamingCapability {
+  string id = 1;
+  string name = 2;
+  GamingCapabilityState state = 3;
+  string explanation = 4;
+  repeated string limitations = 5;
+}
+
+message GameInstall {
+  string id = 1;
+  string catalog_id = 2;
+  string display_name = 3;
+  GamePlatform platform = 4;
+  string executable_path = 5;
+  string executable_identity = 6;
+  string install_path = 7;
+  string version = 8;
+  GameSupportLevel support_level = 9;
+  int64 last_seen_ms = 10;
+  string adapter_version = 11;
+  bool running = 12;
+  repeated string limitations = 13;
+}
+
+message GamingFact {
+  string id = 1;
+  string label = 2;
+  string value = 3;
+  string explanation = 4;
+  GamingCapabilityState state = 5;
+}
+
+message GamingSourceReference {
+  string title = 1;
+  string uri = 2;
+  string publisher = 3;
+  string reviewed_date = 4;
+}
+
+message GamingFinding {
+  string id = 1;
+  GamingFindingSeverity severity = 2;
+  string title = 3;
+  string observed = 4;
+  string why_it_matters = 5;
+  string evidence = 6;
+  string confidence = 7;
+  string expected_benefit = 8;
+  string tradeoff = 9;
+  bool temporary = 10;
+  string restart_requirement = 11;
+  string rollback = 12;
+  string verification = 13;
+  repeated string limitations = 14;
+  GamingEvidenceClass evidence_class = 15;
+  GamingRiskLane risk_lane = 16;
+  repeated GamingSourceReference sources = 17;
+  string action_key = 18;
+}
+
+message GamingReadiness {
+  GameInstall game = 1;
+  GamingObjective objective = 2;
+  int64 captured_ms = 3;
+  repeated GamingCapability capabilities = 4;
+  repeated GamingFact facts = 5;
+  repeated GamingFinding findings = 6;
+  repeated string limitations = 7;
+  string knowledge_pack_version = 8;
+  string summary = 9;
+}
+
+message GamingTraceBucket {
+  int64 ts_ms = 1;
+  double frame_time_ms = 2;
+  double cpu_percent = 3;
+  double gpu_percent = 4;
+  uint64 vram_used_bytes = 5;
+  uint64 ram_used_bytes = 6;
+  double temperature_c = 7;
+  uint64 disk_bytes_per_sec = 8;
+  uint32 background_processes = 9;
+  bool incident = 10;
+  bool data_gap = 11;
+  string event_label = 12;
+}
+
+message GameSessionSummary {
+  double average_fps = 1;
+  double one_percent_low_fps = 2;
+  double point_one_percent_low_fps = 3;
+  double frame_time_p50_ms = 4;
+  double frame_time_p95_ms = 5;
+  double frame_time_p99_ms = 6;
+  double missed_budget_percent = 7;
+  uint32 long_frame_count = 8;
+  double cpu_average_percent = 9;
+  double gpu_average_percent = 10;
+  uint64 vram_peak_bytes = 11;
+  uint64 ram_peak_bytes = 12;
+  double temperature_peak_c = 13;
+  repeated string contention = 14;
+  repeated string incidents = 15;
+  repeated string limitations = 16;
+}
+
+message GameSession {
+  int64 id = 1;
+  string game_id = 2;
+  string game_name = 3;
+  GamingObjective objective = 4;
+  uint32 process_id = 5;
+  int64 process_create_time_100ns = 6;
+  int64 start_ms = 7;
+  int64 end_ms = 8;
+  GamingCaptureQuality capture_quality = 9;
+  string configuration_snapshot_hash = 10;
+  int64 applied_plan_id = 11;
+  GameSessionSummary summary = 12;
+  repeated string limitations = 13;
+  bool comparable = 14;
+}
+
+message GamingPlanStep {
+  string id = 1;
+  uint32 order = 2;
+  GamingStepKind kind = 3;
+  string title = 4;
+  string explanation = 5;
+  string before_value = 6;
+  string after_value = 7;
+  GamingRiskLane risk_lane = 8;
+  bool selected = 9;
+  bool temporary = 10;
+  string scope = 11;
+  string restart_requirement = 12;
+  string rollback = 13;
+  string verification = 14;
+  repeated string preconditions = 15;
+  bool executable = 16;
+  string action_key = 17;
+}
+
+message GamingPlan {
+  int64 id = 1;
+  string plan_hash = 2;
+  string configuration_snapshot_hash = 3;
+  string game_id = 4;
+  string game_name = 5;
+  GamingObjective objective = 6;
+  GamingPlanStatus status = 7;
+  int64 created_ms = 8;
+  int64 expires_ms = 9;
+  repeated string source_finding_ids = 10;
+  repeated GamingPlanStep steps = 11;
+  string checkpoint = 12;
+  repeated string limitations = 13;
+}
+
+message GamingComparison {
+  repeated int64 baseline_session_ids = 1;
+  repeated int64 followup_session_ids = 2;
+  double baseline_median_frame_time_ms = 3;
+  double followup_median_frame_time_ms = 4;
+  double baseline_median_one_percent_low_fps = 5;
+  double followup_median_one_percent_low_fps = 6;
+  double effect_percent = 7;
+  double noise_band_percent = 8;
+  GamingCaptureQuality data_quality = 9;
+  GamingComparisonVerdict verdict = 10;
+  string explanation = 11;
+  repeated string caveats = 12;
+}
+
+message ListDetectedGamesRequest { bool refresh = 1; }
+message ListDetectedGamesReply {
+  repeated GameInstall games = 1;
+  repeated GamingCapability capabilities = 2;
+  repeated string limitations = 3;
+  int64 scanned_ms = 4;
+}
+
+message GetGamingReadinessRequest {
+  string game_id = 1;
+  GamingObjective objective = 2;
+}
+message GetGamingReadinessReply {
+  bool available = 1;
+  string unavailable_reason = 2;
+  GamingReadiness readiness = 3;
+}
+
+message ListGameSessionsRequest {
+  string game_id = 1;
+  uint32 limit = 2;
+}
+message ListGameSessionsReply { repeated GameSession sessions = 1; }
+
+message GetGameSessionTraceRequest {
+  int64 session_id = 1;
+  uint32 max_points = 2;
+}
+message GetGameSessionTraceReply {
+  bool found = 1;
+  GameSession session = 2;
+  repeated GamingTraceBucket buckets = 3;
+  repeated string limitations = 4;
+}
+
+message CompareGameSessionsRequest {
+  repeated int64 baseline_session_ids = 1;
+  repeated int64 followup_session_ids = 2;
+}
+message CompareGameSessionsReply {
+  bool available = 1;
+  string unavailable_reason = 2;
+  GamingComparison comparison = 3;
+}
+
+message PreviewGamingPlanRequest {
+  string game_id = 1;
+  GamingObjective objective = 2;
+}
+message PreviewGamingPlanReply {
+  bool available = 1;
+  string unavailable_reason = 2;
+  GamingPlan plan = 3;
+}
+
+message PrepareGamingPlanRequest {
+  string game_id = 1;
+  GamingObjective objective = 2;
+  repeated string selected_step_ids = 3;
+}
+message PrepareGamingPlanReply {
+  bool allowed = 1;
+  string denial_reason = 2;
+  GamingPlan plan = 3;
+  string consent_token = 4;
+  int64 token_expires_ms = 5;
+}
+
+message ExecuteGamingPlanRequest { string consent_token = 1; }
+message ExecuteGamingPlanReply {
+  bool success = 1;
+  string message = 2;
+  GamingPlan plan = 3;
+}
+
+message RollbackGamingPlanRequest { int64 plan_id = 1; }
+message RollbackGamingPlanReply {
+  bool success = 1;
+  string message = 2;
+  GamingPlan plan = 3;
+}
+
+message KeepGamingPlanRequest { int64 plan_id = 1; }
+message KeepGamingPlanReply {
+  bool success = 1;
+  string message = 2;
+  GamingPlan plan = 3;
+}
+
+message StartGamingSessionRequest {
+  string game_id = 1;
+  GamingObjective objective = 2;
+  int64 applied_plan_id = 3;
+}
+message StartGamingSessionReply {
+  bool started = 1;
+  string message = 2;
+  GameSession session = 3;
+}
+
+message StopGamingSessionRequest { int64 session_id = 1; }
+message StopGamingSessionReply {
+  bool stopped = 1;
+  string message = 2;
+  GameSession session = 3;
+}
+
+service AtlasGamingQuery {
+  rpc ListDetectedGames(ListDetectedGamesRequest) returns (ListDetectedGamesReply);
+  rpc GetGamingReadiness(GetGamingReadinessRequest) returns (GetGamingReadinessReply);
+  rpc ListGameSessions(ListGameSessionsRequest) returns (ListGameSessionsReply);
+  rpc GetGameSessionTrace(GetGameSessionTraceRequest) returns (GetGameSessionTraceReply);
+  rpc CompareGameSessions(CompareGameSessionsRequest) returns (CompareGameSessionsReply);
+  rpc PreviewGamingPlan(PreviewGamingPlanRequest) returns (PreviewGamingPlanReply);
+}
+
+service AtlasGamingControl {
+  rpc PrepareGamingPlan(PrepareGamingPlanRequest) returns (PrepareGamingPlanReply);
+  rpc ExecuteGamingPlan(ExecuteGamingPlanRequest) returns (ExecuteGamingPlanReply);
+  rpc KeepGamingPlan(KeepGamingPlanRequest) returns (KeepGamingPlanReply);
+  rpc RollbackGamingPlan(RollbackGamingPlanRequest) returns (RollbackGamingPlanReply);
+  rpc StartGamingSession(StartGamingSessionRequest) returns (StartGamingSessionReply);
+  rpc StopGamingSession(StopGamingSessionRequest) returns (StopGamingSessionReply);
 }

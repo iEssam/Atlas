@@ -1,0 +1,58 @@
+name: Feature request
+description: Propose an improvement grounded in a real System Atlas use case
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the user problem first. Substantial features may require an
+        issue-level design agreement before implementation.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Who encounters this problem, and what can they not do today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe observable behavior rather than only an implementation.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed approach
+      description: Optional technical or interaction design details
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Safety and operating impact
+      description: |
+        Consider privileges, reversibility, privacy, performance, hardware
+        support, compatibility, and failure behavior.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Confirmation
+      options:
+        - label: I searched existing issues and documentation.
+          required: true
+        - label: I agree to follow the Code of Conduct.
+          required: true

@@ -8,6 +8,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use anyhow::Result;
 
 use crate::gauges::{cpu_times, memory_status, processor_count, CpuTimes};
+use crate::gpu::{GpuCollector, GpuSnapshot};
 use crate::snapshot::snapshot_processes;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -31,6 +32,9 @@ pub struct ProcSample {
     pub write_bps: u64,
     pub handle_count: u32,
     pub thread_count: u32,
+    pub gpu_permille: u32,
+    pub gpu_dedicated_bytes: u64,
+    pub gpu_shared_bytes: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -43,6 +47,11 @@ pub struct SystemSample {
     pub process_count: u32,
     pub thread_count: u32,
     pub handle_count: u32,
+    pub gpu_permille: u32,
+    pub gpu_dedicated_used: u64,
+    pub gpu_dedicated_budget: u64,
+    pub gpu_shared_used: u64,
+    pub gpu_shared_budget: u64,
 }
 
 #[derive(Debug)]
@@ -50,6 +59,7 @@ pub struct SampleSet {
     pub ts_ms: i64,
     pub system: SystemSample,
     pub processes: Vec<ProcSample>,
+    pub gpu: GpuSnapshot,
     /// Processes seen now that were absent from the previous tick. Empty on
     /// the first sample (there is no previous tick to diff against).
     pub started: Vec<ProcKey>,
@@ -68,6 +78,7 @@ pub struct Sampler {
     prev: HashMap<ProcKey, PrevProc>,
     prev_cpu: CpuTimes,
     prev_tick: Instant,
+    gpu: GpuCollector,
 }
 
 impl Sampler {
@@ -77,6 +88,7 @@ impl Sampler {
             prev: HashMap::new(),
             prev_cpu: cpu_times()?,
             prev_tick: Instant::now(),
+            gpu: GpuCollector::new(),
         })
     }
 
@@ -94,6 +106,8 @@ impl Sampler {
         let wall_s = now.duration_since(self.prev_tick).as_secs_f64().max(1e-3);
         let capacity_100ns = wall_s * 1e7 * self.ncpu as f64;
 
+        let gpu = self.gpu.sample();
+        let gpu_by_pid: HashMap<u32, _> = gpu.processes.iter().map(|p| (p.pid, p)).collect();
         let mut next_prev = HashMap::with_capacity(procs.len());
         let mut out = Vec::with_capacity(procs.len());
         let mut thread_total = 0u32;
@@ -136,6 +150,7 @@ impl Sampler {
                 continue;
             }
 
+            let gp = gpu_by_pid.get(&p.pid);
             out.push(ProcSample {
                 key,
                 parent_pid: p.parent_pid,
@@ -149,6 +164,9 @@ impl Sampler {
                 write_bps,
                 handle_count: p.handle_count,
                 thread_count: p.thread_count,
+                gpu_permille: gp.map(|v| v.utilization_permille).unwrap_or(0),
+                gpu_dedicated_bytes: gp.map(|v| v.dedicated_bytes).unwrap_or(0),
+                gpu_shared_bytes: gp.map(|v| v.shared_bytes).unwrap_or(0),
             });
         }
 
@@ -191,6 +209,11 @@ impl Sampler {
             process_count: out.len() as u32,
             thread_count: thread_total,
             handle_count: handle_total,
+            gpu_permille: gpu.system_utilization_permille,
+            gpu_dedicated_used: gpu.dedicated_used,
+            gpu_dedicated_budget: gpu.dedicated_budget,
+            gpu_shared_used: gpu.shared_used,
+            gpu_shared_budget: gpu.shared_budget,
         };
 
         self.prev = next_prev;
@@ -206,6 +229,7 @@ impl Sampler {
             ts_ms,
             system,
             processes: out,
+            gpu,
             started,
             exited,
         })
