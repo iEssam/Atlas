@@ -2,7 +2,7 @@
 
 ## Unified Windows System Manager, Performance Controller, Historical Monitor, and Diagnostic Assistant
 
-**Working title:** System Atlas
+**Working title:** Atlas
 **Document status:** Initial full product definition
 **Platform:** Windows 11 first, with architecture designed for future Windows versions
 **Product category:** System monitoring, process management, performance optimization, diagnostics, privacy visibility, startup management, service management, and troubleshooting
@@ -14,7 +14,7 @@
 
 # 1. Product Summary
 
-System Atlas is a modern replacement for Windows Task Manager, Process Explorer, System Informer, Process Lasso, Task Manager DeLuxe, Resource Monitor, Startup Apps, Reliability Monitor, selected Event Viewer workflows, and historical monitoring tools such as AppControl.
+Atlas is a modern replacement for Windows Task Manager, Process Explorer, System Informer, Process Lasso, Task Manager DeLuxe, Resource Monitor, Startup Apps, Reliability Monitor, selected Event Viewer workflows, and historical monitoring tools such as AppControl.
 
 The product combines:
 
@@ -1881,7 +1881,7 @@ The product should avoid declaring success based on insufficient data.
 
 # 9.16 Natural-Language Analysis and MCP Integration
 
-> **Direction (2026-07-13):** System Atlas does **not** host an artificial-intelligence model or generate conversational answers. It collects, analyzes, and exposes system *evidence*. Natural-language reasoning is provided two ways: (1) an in-app deterministic assistant that answers a fixed repertoire of questions from templates and playbooks, with no model; and (2) an optional, read-only **Model Context Protocol (MCP) server** that exposes grounded query tools to the user's own MCP-compatible client (such as Claude or ChatGPT), which supplies the model and the conversation. Atlas is the trusted evidence provider; the user chooses the AI client.
+> **Direction (2026-07-13):** Atlas does **not** host an artificial-intelligence model or generate conversational answers. It collects, analyzes, and exposes system *evidence*. Natural-language reasoning is provided two ways: (1) an in-app deterministic assistant that answers a fixed repertoire of questions from templates and playbooks, with no model; and (2) an optional, read-only **Model Context Protocol (MCP) server** that exposes grounded query tools to the user's own MCP-compatible client (such as Claude or ChatGPT), which supplies the model and the conversation. Atlas is the trusted evidence provider; the user chooses the AI client.
 
 Users should be able to ask questions such as:
 
@@ -2761,7 +2761,7 @@ Onboarding should clearly explain:
 
 ## 17.1 Frozen application
 
-1. User opens System Atlas.
+1. User opens Atlas.
 2. The application identifies an unresponsive application.
 3. It shows how long the application has been unresponsive.
 4. It shows processor, disk, and wait-state information.
@@ -2787,7 +2787,7 @@ Onboarding should clearly explain:
 
 1. User right-clicks a file in File Explorer.
 2. User selects Find what is using this file.
-3. System Atlas identifies the owning process and open handle.
+3. Atlas identifies the owning process and open handle.
 4. It explains the process.
 5. It offers to close the application normally.
 6. If needed, it offers a force-release option with risk explanation.
@@ -2796,7 +2796,7 @@ Onboarding should clearly explain:
 ## 17.4 High memory use
 
 1. User sees 84% memory utilization.
-2. System Atlas separates active application memory, cache, compression, and page-file pressure.
+2. Atlas separates active application memory, cache, compression, and page-file pressure.
 3. It explains whether the system is actually under memory stress.
 4. It shows the largest applications and recent growth.
 5. It identifies a browser tab, extension, or process group where possible.
@@ -3046,7 +3046,7 @@ Mitigation:
 
 ## Against Windows Task Manager
 
-System Atlas should provide:
+Atlas should provide:
 
 * Better application grouping.
 * Historical data.
@@ -3062,7 +3062,7 @@ System Atlas should provide:
 
 ## Against Process Explorer
 
-System Atlas should provide:
+Atlas should provide:
 
 * Equivalent common investigation capabilities.
 * Better design.
@@ -3075,7 +3075,7 @@ System Atlas should provide:
 
 ## Against System Informer
 
-System Atlas should provide:
+Atlas should provide:
 
 * Comparable deep inspection for common workflows.
 * Better progressive disclosure.
@@ -3087,7 +3087,7 @@ System Atlas should provide:
 
 ## Against Process Lasso
 
-System Atlas should provide:
+Atlas should provide:
 
 * Persistent priority and affinity rules.
 * Dynamic responsiveness management.
@@ -3099,7 +3099,7 @@ System Atlas should provide:
 
 ## Against Task Manager DeLuxe
 
-System Atlas should provide:
+Atlas should provide:
 
 * Similar breadth.
 * Better visual hierarchy.
@@ -3112,7 +3112,7 @@ System Atlas should provide:
 
 ## Against AppControl
 
-System Atlas should provide:
+Atlas should provide:
 
 * Historical timeline.
 * Privacy activity.
@@ -3147,13 +3147,13 @@ Process Lasso acts through persistent rules.
 
 AppControl records and partially explains.
 
-System Atlas should connect the entire workflow in one coherent product.
+Atlas should connect the entire workflow in one coherent product.
 
 ---
 
 # 24. Final Product Definition
 
-System Atlas is a Windows system intelligence and control application designed to replace fragmented process, performance, privacy, startup, service, and diagnostic utilities.
+Atlas is a Windows system intelligence and control application designed to replace fragmented process, performance, privacy, startup, service, and diagnostic utilities.
 
 It should provide:
 

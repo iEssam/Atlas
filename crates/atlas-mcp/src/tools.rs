@@ -430,7 +430,7 @@ fn top_consumers(conn: &mut Connection, red: &Redactor, args: &Value) -> Result<
         "returned": processes.len(),
         "grounding": grounding(
             "AtlasQuery.GetSnapshot",
-            format!("System Atlas snapshot: top {top_n} processes by CPU, captured {}ms epoch", now_ms()),
+            format!("Atlas snapshot: top {top_n} processes by CPU, captured {}ms epoch", now_ms()),
         ),
     }))
 }
@@ -478,7 +478,7 @@ fn query_timeline(conn: &mut Connection, _red: &Redactor, args: &Value) -> Resul
         },
         "grounding": grounding(
             "AtlasQuery.QueryRange",
-            format!("System Atlas timeline of {} (scope {scope}) over [{from_ms}, {to_ms})", metric.as_str_name()),
+            format!("Atlas timeline of {} (scope {scope}) over [{from_ms}, {to_ms})", metric.as_str_name()),
         ),
     }))
 }
@@ -513,7 +513,7 @@ fn find_events(conn: &mut Connection, red: &Redactor, args: &Value) -> Result<Va
         "range": range_json(Some(&range_saved)),
         "grounding": grounding(
             "AtlasQuery.ListEvents",
-            format!("System Atlas process start/stop events over [{}, {})", range_saved.from_ms, range_saved.to_ms),
+            format!("Atlas process start/stop events over [{}, {})", range_saved.from_ms, range_saved.to_ms),
         ),
     }))
 }
@@ -575,7 +575,7 @@ fn search(conn: &mut Connection, red: &Redactor, args: &Value) -> Result<Value> 
         "returned": hits.len(),
         "grounding": grounding(
             "AtlasQuery.Search",
-            format!("System Atlas search hits for query (redacted), {} results", hits.len()),
+            format!("Atlas search hits for query (redacted), {} results", hits.len()),
         ),
     }))
 }
@@ -615,7 +615,7 @@ fn list_incidents(conn: &mut Connection, red: &Redactor, args: &Value) -> Result
         "range": range_json(Some(&range_saved)),
         "grounding": grounding(
             "AtlasQuery.ListIncidents",
-            format!("System Atlas detected incidents over [{}, {})", range_saved.from_ms, range_saved.to_ms),
+            format!("Atlas detected incidents over [{}, {})", range_saved.from_ms, range_saved.to_ms),
         ),
     }))
 }
@@ -638,7 +638,7 @@ fn explain_incident(conn: &mut Connection, red: &Redactor, args: &Value) -> Resu
             "incident_id": incident_id,
             "grounding": grounding(
                 "AtlasQuery.Diagnose",
-                format!("System Atlas diagnosis unavailable for incident {incident_id}: {}", reply.unavailable_reason),
+                format!("Atlas diagnosis unavailable for incident {incident_id}: {}", reply.unavailable_reason),
             ),
         }));
     }
@@ -685,7 +685,7 @@ fn explain_incident(conn: &mut Connection, red: &Redactor, args: &Value) -> Resu
         "verification_plan": red.scrub(&d.verification_plan),
         "grounding": grounding(
             "AtlasQuery.Diagnose",
-            format!("System Atlas evidence-based diagnosis (confidence {}) for incident {incident_id}", confidence_name(d.overall_confidence)),
+            format!("Atlas evidence-based diagnosis (confidence {}) for incident {incident_id}", confidence_name(d.overall_confidence)),
         ),
     }))
 }
@@ -707,7 +707,7 @@ fn explain_process(conn: &mut Connection, red: &Redactor, args: &Value) -> Resul
             "pid": pid,
             "grounding": grounding(
                 "AtlasQuery.GetProcessDetail",
-                format!("System Atlas process detail unavailable for pid {pid}: {}", reply.unavailable_reason),
+                format!("Atlas process detail unavailable for pid {pid}: {}", reply.unavailable_reason),
             ),
         }));
     }
@@ -739,7 +739,7 @@ fn explain_process(conn: &mut Connection, red: &Redactor, args: &Value) -> Resul
         "package_identity": red.app_name(&d.package_identity),
         "grounding": grounding(
             "AtlasQuery.GetProcessDetail",
-            format!("System Atlas process detail for pid {pid} (signature: {})", d.signature_status),
+            format!("Atlas process detail for pid {pid} (signature: {})", d.signature_status),
         ),
     }))
 }
@@ -772,7 +772,7 @@ fn list_services(conn: &mut Connection, red: &Redactor, args: &Value) -> Result<
         "returned": services.len(),
         "grounding": grounding(
             "AtlasQuery.ListServices",
-            format!("System Atlas services inventory, {} entries", services.len()),
+            format!("Atlas services inventory, {} entries", services.len()),
         ),
     }))
 }
@@ -800,7 +800,7 @@ fn list_startup(conn: &mut Connection, red: &Redactor, _args: &Value) -> Result<
         "returned": entries.len(),
         "grounding": grounding(
             "AtlasQuery.ListStartup",
-            format!("System Atlas startup inventory, {} entries", entries.len()),
+            format!("Atlas startup inventory, {} entries", entries.len()),
         ),
     }))
 }
@@ -835,7 +835,7 @@ fn list_connections(conn: &mut Connection, red: &Redactor, args: &Value) -> Resu
         "include_listening": include_listening,
         "grounding": grounding(
             "AtlasQuery.ListConnections",
-            format!("System Atlas network connections, {} entries", connections.len()),
+            format!("Atlas network connections, {} entries", connections.len()),
         ),
     }))
 }
@@ -872,7 +872,7 @@ fn list_scheduled_tasks(conn: &mut Connection, red: &Redactor, args: &Value) -> 
         "returned": tasks.len(),
         "grounding": grounding(
             "AtlasQuery.ListScheduledTasks",
-            format!("System Atlas scheduled tasks, {} entries", tasks.len()),
+            format!("Atlas scheduled tasks, {} entries", tasks.len()),
         ),
     }))
 }

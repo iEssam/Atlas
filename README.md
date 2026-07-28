@@ -1,4 +1,4 @@
-# System Atlas
+# Atlas
 
 A Windows system intelligence and control application: one coherent replacement for Task Manager, Process Explorer, Process Lasso, and historical monitors — real-time monitoring, historical timelines, evidence-backed diagnostics, and safe reversible actions.
 
@@ -132,6 +132,6 @@ the intended starting points for new contributors.
 
 ## License
 
-System Atlas is licensed under the [Apache License 2.0](LICENSE).
+Atlas is licensed under the [Apache License 2.0](LICENSE).
 Third-party components retain their own licenses; see
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

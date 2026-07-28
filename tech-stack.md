@@ -1,4 +1,4 @@
-# System Atlas — Technology Stack & Technical Design Document
+# Atlas — Technology Stack & Technical Design Document
 
 **Companion document to:** [project.md](project.md) (Product Requirements Document)
 **Document status:** Proposed target technical baseline v1.0

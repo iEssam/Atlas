@@ -1,4 +1,4 @@
-//! `atlas-mcp` — a read-only MCP server for System Atlas (tech-stack.md §4.7).
+//! `atlas-mcp` — a read-only MCP server for Atlas (tech-stack.md §4.7).
 //!
 //! This is the R2 "bring your own AI client" adapter. A user registers this
 //! binary in their MCP client (Claude Desktop, ChatGPT, any MCP host); the
@@ -37,7 +37,7 @@ use clap::Parser;
 use crate::redact::{RedactConfig, Redactor};
 use crate::tools::Connection;
 
-/// Read-only MCP server exposing grounded System Atlas query tools to your own
+/// Read-only MCP server exposing grounded Atlas query tools to your own
 /// MCP client. Speaks JSON-RPC 2.0 over stdio; connects to a running
 /// `atlas-service serve` over its named pipe. Read-only by construction — no
 /// tool can suspend, kill, or reconfigure anything.

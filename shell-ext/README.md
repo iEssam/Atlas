@@ -1,6 +1,6 @@
 # Explorer integration
 
-System Atlas exposes **Find what is using this file** for one selected filesystem file. The native `IExplorerCommand` is a thin forwarder: it validates the selection and starts `Atlas.App.exe --find-using <absolute-path>`. The app opens the existing File Locks page and performs the Restart Manager lookup through the service.
+Atlas exposes **Find what is using this file** for one selected filesystem file. The native `IExplorerCommand` is a thin forwarder: it validates the selection and starts `Atlas.App.exe --find-using <absolute-path>`. The app opens the existing File Locks page and performs the Restart Manager lookup through the service.
 
 ## Build
 
@@ -12,7 +12,7 @@ This produces `SystemAtlas.ShellExtension.dll` and an unsigned sparse identity `
 
 ## Sign and register for development
 
-Sign the `.msix` with a certificate whose subject matches its manifest publisher (`CN=System Atlas Project` by default), trust that certificate, then place the DLL beside the published `Atlas.App.exe` and run:
+Sign the `.msix` with a certificate whose subject matches its manifest publisher (`CN=Atlas Project` by default), trust that certificate, then place the DLL beside the published `Atlas.App.exe` and run:
 
 ```powershell
 ./shell-ext/register.ps1 -PackagePath <signed-msix> -ExternalLocation <published-app-directory>

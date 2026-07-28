@@ -1,6 +1,6 @@
 # Support
 
-System Atlas is an early release candidate and is not production-ready.
+Atlas is an early release candidate and is not production-ready.
 Community support is provided on a best-effort basis.
 
 ## Bug reports
@@ -13,7 +13,7 @@ them.
 
 Include:
 
-- System Atlas version or commit
+- Atlas version or commit
 - Windows edition, version, build, and architecture
 - Installation or development launch method
 - Clear reproduction steps

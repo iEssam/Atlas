@@ -1,6 +1,6 @@
-# System Atlas installer (M9)
+# Atlas installer (M9)
 
-WiX v5/v6 authoring for the per-machine System Atlas MSI. Everything a
+WiX v5/v6 authoring for the per-machine Atlas MSI. Everything a
 maintainer needs to produce, sign, and ship the installer lives here.
 
 > Scope: this directory only. It touches no proto/UI/Rust source. The service's
@@ -49,7 +49,7 @@ Output: `installer/out/SystemAtlas-<version>-<arch>.msi` (**unsigned**).
 ## What the MSI does
 
 - **Service** (`tech-stack.md` §4.1, §8): installs `atlas-service.exe` to
-  `%ProgramFiles%\System Atlas\` and registers the **`SystemAtlas`** Windows
+  `%ProgramFiles%\Atlas\` and registers the **`SystemAtlas`** Windows
   service (auto-start, LocalSystem) via `ServiceInstall` + `ServiceControl`
   (start on install, stop+remove on uninstall). Crash-restart recovery via
   `util:ServiceConfig` (restart on the first two failures, daily reset).

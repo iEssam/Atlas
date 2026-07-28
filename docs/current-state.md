@@ -44,7 +44,7 @@ Rust+C# CodeQL and pull-request dependency-review jobs are configured but entitl
 
 ## Release readiness
 
-System Atlas is still a release candidate. The stable release remains blocked by at least:
+Atlas is still a release candidate. The stable release remains blocked by at least:
 
 - production signing for the MSI and shipped binaries;
 - signed release manifests and a staged update path;

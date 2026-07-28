@@ -1,6 +1,6 @@
-# atlas — System Atlas CLI
+# atlas — Atlas CLI
 
-A scriptable, **read-only** command-line interface over the running System Atlas
+A scriptable, **read-only** command-line interface over the running Atlas
 service (PRD §18.3 / §7.5, tech-stack §4.8). It speaks the same gRPC surface as
 the app and MCP server, over the same Windows named pipe (via `atlas-ipc`), and
 runs only query RPCs.

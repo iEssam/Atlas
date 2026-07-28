@@ -1,6 +1,6 @@
 #requires -Version 5.1
 <#
-    System Atlas - elevated validation pass
+    Atlas - elevated validation pass
     ---------------------------------------
     Exercises the paths that CANNOT be verified in a standard-user, WDAC-enforced
     session (which is how the agent-driven build ran): live ETW, the Windows

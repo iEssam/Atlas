@@ -1,6 +1,6 @@
 # PresentMon runtime
 
-System Atlas pins the official x64 PresentMon 2.5.1 console application for
+Atlas pins the official x64 PresentMon 2.5.1 console application for
 process-bound ETW frame capture.
 
 - Upstream: https://github.com/GameTechDev/PresentMon

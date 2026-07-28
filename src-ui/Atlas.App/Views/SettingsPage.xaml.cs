@@ -32,7 +32,7 @@ public sealed partial class SettingsPage : Page
         "{\n" +
         "  \"mcpServers\": {\n" +
         "    \"system-atlas\": {\n" +
-        "      \"command\": \"C:\\\\Program Files\\\\System Atlas\\\\atlas-mcp.exe\",\n" +
+        "      \"command\": \"C:\\\\Program Files\\\\Atlas\\\\atlas-mcp.exe\",\n" +
         "      \"args\": []\n" +
         "    }\n" +
         "  }\n" +

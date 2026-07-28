@@ -1,6 +1,6 @@
 #requires -Version 5.1
 <#
-    System Atlas — MSI install / upgrade / removal lifecycle validation
+    Atlas — MSI install / upgrade / removal lifecycle validation
     -------------------------------------------------------------------
     Drives the FULL packaged-install lifecycle end to end against a real MSI:
 
@@ -8,7 +8,7 @@
 
     and asserts the state the WiX authoring (installer/Package.wxs) promises at
     each step: the SystemAtlas service registered/running as LocalSystem with
-    crash-restart failure actions, binaries in %ProgramFiles%\System Atlas, the
+    crash-restart failure actions, binaries in %ProgramFiles%\Atlas, the
     ACL'd %ProgramData%\SystemAtlas data dir, the all-users Start Menu shortcut,
     exactly one Add/Remove-Programs entry, a version bump with NO duplicate
     product after upgrade, data preserved across upgrade, and a clean teardown
@@ -53,14 +53,14 @@ function Check($name, [bool]$ok, $detail = '') {
     $col = if ($ok) { 'Green' } else { 'Red' }
     Write-Host ("[{0}] {1} {2}" -f $tag, $name, $detail) -ForegroundColor $col
 }
-# Registry ARP (Add/Remove Programs) rows for "System Atlas", both 64/32 views.
+# Registry ARP (Add/Remove Programs) rows for "Atlas", both 64/32 views.
 function Get-AtlasArp {
     $keys = @(
         'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
         'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
     )
     Get-ItemProperty $keys -ErrorAction SilentlyContinue |
-        Where-Object { $_.DisplayName -eq 'System Atlas' }
+        Where-Object { $_.DisplayName -eq 'Atlas' }
 }
 function Invoke-Msi($argline, $logName) {
     $log = Join-Path $env:TEMP $logName
@@ -75,7 +75,7 @@ Check 'Running elevated' $elev
 if (-not $elev) { Write-Host 'STOP: re-run from an elevated terminal (MSI install needs it).' -ForegroundColor Red; return }
 
 # Refuse to run if a copy is already installed (don't clobber a real install).
-if (Get-AtlasArp) { Write-Host 'STOP: System Atlas is already installed. Uninstall it first.' -ForegroundColor Red; return }
+if (Get-AtlasArp) { Write-Host 'STOP: Atlas is already installed. Uninstall it first.' -ForegroundColor Red; return }
 
 $baseMsi    = Join-Path $outDir "SystemAtlas-$BaseVersion-x64.msi"
 $upgradeMsi = Join-Path $outDir "SystemAtlas-$UpgradeVersion-x64.msi"
@@ -91,9 +91,9 @@ Check 'Base MSI present'    (Test-Path $baseMsi)    $baseMsi
 Check 'Upgrade MSI present' (Test-Path $upgradeMsi) $upgradeMsi
 if (-not ((Test-Path $baseMsi) -and (Test-Path $upgradeMsi))) { return }
 
-$pf   = Join-Path $env:ProgramFiles 'System Atlas'
+$pf   = Join-Path $env:ProgramFiles 'Atlas'
 $data = Join-Path $env:ProgramData  'SystemAtlas'
-$lnk  = Join-Path $env:ProgramData  'Microsoft\Windows\Start Menu\Programs\System Atlas\System Atlas.lnk'
+$lnk  = Join-Path $env:ProgramData  'Microsoft\Windows\Start Menu\Programs\Atlas\Atlas.lnk'
 
 try {
     # --- 1. Clean install --------------------------------------------------

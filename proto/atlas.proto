@@ -1,4 +1,4 @@
-// System Atlas IPC contract (tech-stack.md §5).
+// Atlas IPC contract (tech-stack.md §5).
 // Contract sketch — compiled into the service and UI clients at milestone M4.
 // Rules: additive-only changes within a major version; buf lint/breaking in CI.
 

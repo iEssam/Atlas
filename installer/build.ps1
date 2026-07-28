@@ -1,6 +1,6 @@
 <#
     ============================================================================
-    System Atlas - M9 MSI build harness
+    Atlas - M9 MSI build harness
     ============================================================================
     Builds the prerequisite binaries, then invokes WiX v5 to emit
         installer/out/SystemAtlas-<version>-<platform>.msi

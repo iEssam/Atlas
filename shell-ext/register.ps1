@@ -14,5 +14,5 @@ foreach ($required in @("Atlas.App.exe", "SystemAtlas.ShellExtension.dll")) {
 }
 
 Add-AppxPackage -Path $package -ExternalLocation $external
-Write-Host "Registered System Atlas Explorer integration for the current user."
+Write-Host "Registered Atlas Explorer integration for the current user."
 Write-Host "Restart File Explorer or sign out and back in before testing the command."

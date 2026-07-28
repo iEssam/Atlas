@@ -60,7 +60,7 @@ representative at an online or offline event.
 
 Instances of abusive, harassing, or otherwise unacceptable behavior should be
 reported privately to [hello@iessam.com](mailto:hello@iessam.com). Include
-`System Atlas conduct` in the subject. Do not report conduct incidents in a
+`Atlas conduct` in the subject. Do not report conduct incidents in a
 public issue.
 
 All complaints will be reviewed and investigated promptly and fairly. Community

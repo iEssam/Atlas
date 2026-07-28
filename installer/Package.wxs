@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   ============================================================================
-  System Atlas - M9 per-machine MSI (WiX v5 / v6 authoring)
+  Atlas - M9 per-machine MSI (WiX v5 / v6 authoring)
   ============================================================================
   Milestone: M9 (docs/phases.md), Packaging design: tech-stack.md sec 8.
 
@@ -13,7 +13,7 @@
 
   What it installs (tech-stack sec 8 "Service + Win32 app + ... in one
   per-machine install"):
-    1. atlas-service.exe  -> %ProgramFiles%\System Atlas\, registered as the
+    1. atlas-service.exe  -> %ProgramFiles%\Atlas\, registered as the
        "SystemAtlas" Windows service (auto-start, LocalSystem, crash-restart).
     2. Atlas.App.exe (+ its self-contained WinUI/WindowsAppSDK publish output)
        -> same directory, with an all-users Start Menu shortcut.
@@ -57,8 +57,8 @@
     independent products that never try to "upgrade" across arch.
   -->
   <Package
-      Name="System Atlas"
-      Manufacturer="System Atlas Project"
+      Name="Atlas"
+      Manufacturer="Atlas Project"
       Version="$(var.ProductVersion)"
       UpgradeCode="4E70F468-4F53-4E57-B67D-40A1B08D0C7A"
       Scope="perMachine"
@@ -72,9 +72,9 @@
       "per-machine install".
     -->
     <SummaryInformation
-        Description="System Atlas - Windows system intelligence and control"
-        Keywords="System Atlas, monitoring, diagnostics, Windows service"
-        Manufacturer="System Atlas Project" />
+        Description="Atlas - Windows system intelligence and control"
+        Keywords="Atlas, monitoring, diagnostics, Windows service"
+        Manufacturer="Atlas Project" />
 
     <!--
       MajorUpgrade: schedule the removal of the old version early
@@ -85,7 +85,7 @@
     <MajorUpgrade
         Schedule="afterInstallInitialize"
         AllowSameVersionUpgrades="yes"
-        DowngradeErrorMessage="A newer version of System Atlas is already installed. Setup will now exit." />
+        DowngradeErrorMessage="A newer version of Atlas is already installed. Setup will now exit." />
 
     <!-- Embed everything into a single compressed cab inside the MSI. -->
     <MediaTemplate EmbedCab="yes" />
@@ -96,18 +96,18 @@
     <!-- Minimum OS: Windows 10 1809 / Server 2019 (WindowsAppSDK floor). -->
     <Launch
         Condition="Installed OR (VersionNT &gt;= 603)"
-        Message="System Atlas requires Windows 10 version 1809 or later." />
+        Message="Atlas requires Windows 10 version 1809 or later." />
 
     <!--
       ==================================================================
       DIRECTORY LAYOUT
       ==================================================================
-      %ProgramFiles%\System Atlas\        <- binaries (INSTALLFOLDER)
+      %ProgramFiles%\Atlas\        <- binaries (INSTALLFOLDER)
       %ProgramData%\SystemAtlas\          <- data dir (DATAFOLDER, sec 7 ACL)
-      Start Menu\Programs\System Atlas\   <- shortcut folder
+      Start Menu\Programs\Atlas\   <- shortcut folder
     -->
     <StandardDirectory Id="ProgramFiles64Folder">
-      <Directory Id="INSTALLFOLDER" Name="System Atlas" />
+      <Directory Id="INSTALLFOLDER" Name="Atlas" />
     </StandardDirectory>
 
     <!--
@@ -121,7 +121,7 @@
     </StandardDirectory>
 
     <StandardDirectory Id="ProgramMenuFolder">
-      <Directory Id="AppShortcutFolder" Name="System Atlas" />
+      <Directory Id="AppShortcutFolder" Name="Atlas" />
     </StandardDirectory>
 
     <!--
@@ -164,8 +164,8 @@
       <ServiceInstall
           Id="siAtlasService"
           Name="SystemAtlas"
-          DisplayName="System Atlas Collection Service"
-          Description="Collects system telemetry (ETW, SCM, sensors), stores history, runs rules and diagnostics, and brokers privileged actions for System Atlas."
+          DisplayName="Atlas Collection Service"
+          Description="Collects system telemetry (ETW, SCM, sensors), stores history, runs rules and diagnostics, and brokers privileged actions for Atlas."
           Type="ownProcess"
           Start="auto"
           ErrorControl="normal"
@@ -258,13 +258,13 @@
     <Component Id="cmpAppShortcut" Directory="AppShortcutFolder"
                Guid="99E24F46-776F-4F04-AE50-4B68447E0624">
       <Shortcut Id="scutAtlasApp"
-                Name="System Atlas"
-                Description="Open the System Atlas dashboard"
+                Name="Atlas"
+                Description="Open the Atlas dashboard"
                 Target="[INSTALLFOLDER]Atlas.App.exe"
                 WorkingDirectory="INSTALLFOLDER" />
       <RemoveFolder Id="rmAppShortcutFolder" On="uninstall" />
       <RegistryValue Root="HKLM"
-                     Key="Software\System Atlas\Shortcuts"
+                     Key="Software\Atlas\Shortcuts"
                      Name="StartMenu"
                      Type="integer"
                      Value="1"
@@ -330,7 +330,7 @@
       </CreateFolder>
       <!-- Non-file keypath so the empty-folder component is deterministic. -->
       <RegistryValue Root="HKLM"
-                     Key="Software\System Atlas\Data"
+                     Key="Software\Atlas\Data"
                      Name="Root"
                      Type="string"
                      Value="[DATAFOLDER]"
@@ -376,7 +376,7 @@
       ADDLOCAL/REMOVE. The service + data dir are the non-optional core.
     -->
     <Feature Id="ProductCore"
-             Title="System Atlas"
+             Title="Atlas"
              Description="Core collection service and data store."
              Level="1"
              AllowAbsent="no"

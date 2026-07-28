@@ -9,9 +9,9 @@ public sealed class ExplorerActivationTests
     public void Parse_ReadsSeparateAbsolutePathArgument()
     {
         var activation = ExplorerActivation.Parse(
-            ["--find-using", @"C:\Program Files\System Atlas\sample file.txt"]);
+            ["--find-using", @"C:\Program Files\Atlas\sample file.txt"]);
 
-        Assert.Equal(@"C:\Program Files\System Atlas\sample file.txt", activation?.FilePath);
+        Assert.Equal(@"C:\Program Files\Atlas\sample file.txt", activation?.FilePath);
     }
 
     [Fact]

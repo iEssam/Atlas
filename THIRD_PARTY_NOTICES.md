@@ -1,11 +1,11 @@
 # Third-party notices
 
-System Atlas is licensed under the Apache License 2.0. Third-party components
+Atlas is licensed under the Apache License 2.0. Third-party components
 remain under their respective licenses.
 
 ## PresentMon
 
-System Atlas distributes the official x64 PresentMon 2.5.1 console application
+Atlas distributes the official x64 PresentMon 2.5.1 console application
 for process-bound ETW frame capture.
 
 - Project: [GameTechDev/PresentMon](https://github.com/GameTechDev/PresentMon)

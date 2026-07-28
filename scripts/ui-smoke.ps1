@@ -61,13 +61,13 @@ try {
         throw "Atlas.App did not expose a top-level window within $TimeoutSeconds seconds."
     }
 
-    if ($process.MainWindowTitle -ne 'System Atlas') {
-        throw "Expected the window title 'System Atlas', got '$($process.MainWindowTitle)'."
+    if ($process.MainWindowTitle -ne 'Atlas') {
+        throw "Expected the window title 'Atlas', got '$($process.MainWindowTitle)'."
     }
 
     $searchCondition = [System.Windows.Automation.PropertyCondition]::new(
         [System.Windows.Automation.AutomationElement]::NameProperty,
-        'Search System Atlas')
+        'Search Atlas')
     $expectedCondition = [System.Windows.Automation.PropertyCondition]::new(
         [System.Windows.Automation.AutomationElement]::NameProperty,
         $ExpectedElementName)

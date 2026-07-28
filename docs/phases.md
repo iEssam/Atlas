@@ -1,4 +1,4 @@
-# System Atlas — Implementation Phases & Milestone Tracker
+# Atlas — Implementation Phases & Milestone Tracker
 
 Living document. Update the checkboxes as work lands; add decision notes at the bottom.
 References: [project.md](../project.md) (PRD), [tech-stack.md](../tech-stack.md) (technical design).
@@ -16,7 +16,7 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 - [ ] Full 72-hour soak on representative hardware
 - [ ] Stable-release review of every remaining `[~]` and `[ ]` item below, either completed or explicitly removed from the release scope
 
-Until those gates close, System Atlas is a release candidate for evaluation, not a production-ready release.
+Until those gates close, Atlas is a release candidate for evaluation, not a production-ready release.
 
 ---
 
@@ -119,7 +119,7 @@ Until those gates close, System Atlas is a release candidate for evaluation, not
 
 ## Phase 2 — R2 (PRD §18.2)
 
-Deep inspector (handles/modules/threads on-demand snapshots) · Restart-Manager file locks + Explorer context-menu (sparse MSIX) · rules engine + profiles + simulation · boot analysis · scheduled tasks · full network inspector (kernel-network ETW + DNS) · battery/thermal (vendor GPU libs, SRUM) · before/after experiments · **read-only local MCP server** (`atlas-mcp`) exposing grounded System Atlas query tools to user-configured MCP clients — replaces the abandoned local-AI ladder; Atlas supplies evidence, the user's client (Claude/ChatGPT) owns the model + conversation · advanced privacy alerts.
+Deep inspector (handles/modules/threads on-demand snapshots) · Restart-Manager file locks + Explorer context-menu (sparse MSIX) · rules engine + profiles + simulation · boot analysis · scheduled tasks · full network inspector (kernel-network ETW + DNS) · battery/thermal (vendor GPU libs, SRUM) · before/after experiments · **read-only local MCP server** (`atlas-mcp`) exposing grounded Atlas query tools to user-configured MCP clients — replaces the abandoned local-AI ladder; Atlas supplies evidence, the user's client (Claude/ChatGPT) owns the model + conversation · advanced privacy alerts.
 
 ### R2 progress
 
@@ -161,7 +161,7 @@ Dynamic responsiveness protection · extended retention tiers + optional Parquet
 
 - **2026-07-13 — Interim samples in SQLite.** Per-process samples are stored as *window aggregates* (avg/max over the flush interval) in SQLite until the chunked TSDB lands (M-TSDB). Bounds row growth (~1 row/process/15 s instead of 1/s) while keeping the end-to-end path real. The `atlas-tsdb` crate holds the target API shape.
 - **2026-07-13 — Hand-written FFI in `atlas-collectors::ffi`.** The first slice needs ~5 functions with stable ABIs; owning the definitions keeps the entire unsafe surface reviewable in one file and avoids feature-name churn. Struct layouts are locked by offset tests. Migration to `windows-sys` planned when the collector set grows (M3, ETW).
-- **2026-07-13 — Dev data lives outside the repo** (`%LOCALAPPDATA%\SystemAtlas\dev`): keeps OneDrive sync and git status clean; production location will be `%ProgramData%` (service) per tech-stack §7. (Repo itself moved to `C:\Projects\System Atlas` the same day.)
+- **2026-07-13 — Dev data lives outside the repo** (`%LOCALAPPDATA%\SystemAtlas\dev`): keeps OneDrive sync and git status clean; production location will be `%ProgramData%` (service) per tech-stack §7. (Repo itself moved to `C:\Projects\Atlas` the same day.)
 - **2026-07-13 — ferrisetw 1.2.0** for ETW. Gotchas encoded in `events.rs`: use `start()` + own processing thread (the convenience `start_and_process()` can't be stopped cleanly); access-denied surfaces as HRESULT `0x80070005`, not Win32 error 5 — match both; parse the payload `ProcessID` (subject), not the ETW header pid (reporter); `raw_timestamp()` is FILETIME 100 ns units.
 - **2026-07-13 — Writer backpressure semantics**: a stalled writer drops whole flush windows (counted, then recorded as `gap_event` rows by the next landed batch) rather than blocking the sampling loop — degradation is observable, never silent (PRD §11.3).
 - **2026-07-14 — Schema-version + stub collisions when a worktree branches before a sibling round merges.** The dynamic-protection worktree branched before the forensics backend landed, so it (a) claimed schema **v10** (already taken by forensics) and (b) added placeholder `ListSystemChanges`/`ListCrashes` stubs to satisfy the frozen trait. At merge: renumber the later schema (v10→v11, stack the migration on top, bump the version-assertion tests) and **drop the stubs so the real implementations aren't shadowed** (auto-merge silently kept BOTH → duplicate-method/duplicate-reexport errors the compiler catches; but a careless "take theirs" would have replaced real data with empty stubs — always confirm which impl is real). Mitigation going forward: when two rounds both bump the schema or implement RPCs the other stubbed, sequence them (freeze + merge round N before starting round N+1), or expect this reconciliation. A full rebuild + a data-path smoke after such a merge is mandatory.

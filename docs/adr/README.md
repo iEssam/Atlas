@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-Lightweight ADRs for System Atlas (tech-stack Appendix B). Each records one
+Lightweight ADRs for Atlas (tech-stack Appendix B). Each records one
 load-bearing decision, its context, the options weighed, and the consequences —
 so a future maintainer can see *why*, not just *what*.
 

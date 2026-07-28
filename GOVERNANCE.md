@@ -1,6 +1,6 @@
 # Governance
 
-System Atlas is currently maintained by [@iEssam](https://github.com/iEssam).
+Atlas is currently maintained by [@iEssam](https://github.com/iEssam).
 The project is in an early release-candidate stage, so governance is intentionally
 lightweight and can evolve as the contributor community grows.
 

@@ -1,4 +1,4 @@
-//! System Atlas IPC layer (tech-stack.md §5, docs/phases.md M4).
+//! Atlas IPC layer (tech-stack.md §5, docs/phases.md M4).
 //!
 //! Compiles the `proto/atlas.proto` contract (package `atlas.v0`) into Rust
 //! with tonic/prost (see `build.rs`) and provides the Windows named-pipe

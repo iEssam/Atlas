@@ -1,6 +1,6 @@
 #requires -Version 5.1
 <#
-    Starts the complete System Atlas development stack in one console:
+    Starts the complete Atlas development stack in one console:
       1. builds atlas-service, its isolated GPU vendor helper, and the UI (unless -SkipBuild is supplied)
       2. starts TSDB recording (unless -NoRecord is supplied)
       3. starts the named-pipe/shared-memory backend
@@ -80,7 +80,7 @@ function Stop-StaleAtlasProcesses {
         return
     }
 
-    Write-Host 'Stopping stale System Atlas development processes...' -ForegroundColor Yellow
+    Write-Host 'Stopping stale Atlas development processes...' -ForegroundColor Yellow
     foreach ($entry in $stale) {
         try {
             Stop-Process -Id ([int]$entry.ProcessId) -Force -ErrorAction Stop
@@ -117,7 +117,7 @@ function Stop-StaleAtlasProcesses {
     } while ([DateTime]::UtcNow -lt $deadline)
 
     $ids = ($remaining | ForEach-Object { $_.ProcessId }) -join ', '
-    throw "Timed out waiting for stale System Atlas process(es) $ids to exit."
+    throw "Timed out waiting for stale Atlas process(es) $ids to exit."
 }
 
 function Test-AtlasPipe {

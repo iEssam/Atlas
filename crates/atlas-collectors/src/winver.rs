@@ -929,7 +929,7 @@ mod tests {
     }
 
     /// The .NET host is embedded-signed; catalog support must not regress the
-    /// original fast path. System Atlas's Windows UI build requires this SDK.
+    /// original fast path. Atlas's Windows UI build requires this SDK.
     #[test]
     fn embedded_signed_dll_is_still_signed() {
         let hostfxr = find_hostfxr().expect("a .NET hostfxr.dll under Program Files");

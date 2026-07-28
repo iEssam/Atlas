@@ -1,4 +1,4 @@
-# atlas-mcp — read-only MCP server for System Atlas
+# atlas-mcp — read-only MCP server for Atlas
 
 `atlas-mcp` is the R2 "bring your own AI client" adapter (tech-stack.md §4.7). You
 register this binary in your own MCP client (Claude Desktop, ChatGPT, or any MCP

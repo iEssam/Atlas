@@ -99,7 +99,7 @@ fn initialize_result() -> Value {
         "capabilities": {
             "tools": { "listChanged": false }
         },
-        "instructions": "Read-only System Atlas evidence provider. Every tool result is redacted (MCP-strict, default-on) and self-describing (see the `grounding` block). Atlas supplies citation-ready evidence; it cannot guarantee the final answer is fully cited."
+        "instructions": "Read-only Atlas evidence provider. Every tool result is redacted (MCP-strict, default-on) and self-describing (see the `grounding` block). Atlas supplies citation-ready evidence; it cannot guarantee the final answer is fully cited."
     })
 }
 

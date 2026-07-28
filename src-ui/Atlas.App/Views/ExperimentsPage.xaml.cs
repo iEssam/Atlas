@@ -41,7 +41,7 @@ public sealed partial class ExperimentsPage : Page
             var outcome = await channel.ListExperimentsAsync();
             if (!outcome.Supported)
             {
-                SetStatus("Experiments require a newer System Atlas service.", InfoBarSeverity.Warning);
+                SetStatus("Experiments require a newer Atlas service.", InfoBarSeverity.Warning);
                 return;
             }
             Experiments.Clear();
@@ -79,7 +79,7 @@ public sealed partial class ExperimentsPage : Page
             var outcome = await channel.CreateExperimentAsync(dialog.Experiment);
             if (!outcome.Supported)
             {
-                SetStatus("Experiments require a newer System Atlas service.", InfoBarSeverity.Warning);
+                SetStatus("Experiments require a newer Atlas service.", InfoBarSeverity.Warning);
                 return;
             }
             await LoadAsync(outcome.Value.Experiment.Id);
@@ -115,7 +115,7 @@ public sealed partial class ExperimentsPage : Page
             var outcome = await channel.CompareExperimentAsync(id);
             if (!outcome.Supported)
             {
-                SetStatus("Experiments require a newer System Atlas service.", InfoBarSeverity.Warning);
+                SetStatus("Experiments require a newer Atlas service.", InfoBarSeverity.Warning);
                 return;
             }
             _comparison = outcome.Value;
@@ -189,7 +189,7 @@ public sealed partial class ExperimentsPage : Page
     private static string BuildReport(CompareExperimentReply result)
     {
         var text = new StringBuilder();
-        text.AppendLine("System Atlas before-and-after experiment");
+        text.AppendLine("Atlas before-and-after experiment");
         text.AppendLine(result.Experiment.Name);
         text.AppendLine($"Change: {result.Experiment.ChangeDescription}");
         text.AppendLine($"Verdict: {VerdictTitle(result.Verdict)}");

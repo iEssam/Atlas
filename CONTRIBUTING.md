@@ -1,6 +1,6 @@
-# Contributing to System Atlas
+# Contributing to Atlas
 
-Thank you for helping improve System Atlas. Contributions to code,
+Thank you for helping improve Atlas. Contributions to code,
 documentation, tests, diagnostics, and accessibility are welcome.
 
 By participating, you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
@@ -21,7 +21,7 @@ accessibility improvements, and narrowly scoped diagnostics fixes.
 
 ## Development environment
 
-System Atlas is a Windows project. The main prerequisites are:
+Atlas is a Windows project. The main prerequisites are:
 
 - Windows 10 version 1809 or newer
 - Stable Rust with the MSVC toolchain
@@ -144,5 +144,5 @@ does not fit the product direction or cannot meet the validation requirements.
 ## License
 
 Unless you explicitly state otherwise, any contribution intentionally submitted
-for inclusion in System Atlas is licensed under the
+for inclusion in Atlas is licensed under the
 [Apache License 2.0](LICENSE), as described in section 5 of that license.

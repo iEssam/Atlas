@@ -1,6 +1,6 @@
 # Security policy
 
-System Atlas collects system telemetry and can broker privileged actions.
+Atlas collects system telemetry and can broker privileged actions.
 Security reports are taken seriously, especially reports involving privilege
 boundaries, IPC authorization, plugin verification, update or signing paths,
 support-bundle redaction, and unsafe process control.
@@ -21,7 +21,7 @@ Use GitHub's
 [private vulnerability reporting form](https://github.com/iEssam/System-Atlas/security/advisories/new).
 If the form is unavailable, email
 [hello@iessam.com](mailto:hello@iessam.com) and use
-`System Atlas security` as the subject. Do not open a public issue.
+`Atlas security` as the subject. Do not open a public issue.
 
 Include as much of the following as is safe:
 

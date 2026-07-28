@@ -1,6 +1,6 @@
 # atlas.psm1 — thin PowerShell automation wrappers over the read-only `atlas` CLI.
 #
-# Demonstrates the System Atlas automation story (PRD §7.5): each cmdlet shells
+# Demonstrates the Atlas automation story (PRD §7.5): each cmdlet shells
 # out to `atlas <command> --json` and parses the machine-readable output into
 # PowerShell objects you can pipe, filter, and format. Everything here is
 # READ-ONLY — the underlying CLI never mutates anything.

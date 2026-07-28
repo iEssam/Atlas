@@ -2,7 +2,7 @@
     x:Class="Atlas.App.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    Title="System Atlas">
+    Title="Atlas">
 
     <Grid x:Name="Root" Background="{ThemeResource AtlasGraphiteBrush}">
         <VisualStateManager.VisualStateGroups>
@@ -42,7 +42,7 @@
 
             <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="9" VerticalAlignment="Center">
                 <FontIcon Glyph="&#xE9D9;" FontSize="15" Foreground="{ThemeResource AtlasCyanBrush}" />
-                <TextBlock x:Name="BrandLabel" Text="System Atlas" VerticalAlignment="Center"
+                <TextBlock x:Name="BrandLabel" Text="Atlas" VerticalAlignment="Center"
                            Visibility="Collapsed"
                            Style="{StaticResource BodyStrongTextBlockStyle}" />
             </StackPanel>
@@ -56,7 +56,7 @@
                             HorizontalAlignment="Stretch"
                             PlaceholderText="Search processes, events, and bookmarks"
                             QueryIcon="Find"
-                            AutomationProperties.Name="Search System Atlas"
+                            AutomationProperties.Name="Search Atlas"
                             QuerySubmitted="GlobalSearchBox_QuerySubmitted" />
 
             <StackPanel x:Name="ShellStatus" Grid.Column="2" Orientation="Horizontal" Spacing="8"

@@ -2,13 +2,13 @@
 
 **Status:** Accepted (2026-07-15) · Resolves the open gate in tech-stack §4.9 · Revisit trigger below
 **Deciders:** maintainer
-**Scope:** Whether System Atlas should ship a kernel-mode driver, now or on the roadmap.
+**Scope:** Whether Atlas should ship a kernel-mode driver, now or on the roadmap.
 
 ---
 
 ## Context
 
-System Atlas ships **no kernel driver today** (tech-stack §3.1, §4.9). Everything in the collector table — ETW, `NtQuerySystemInformation`, SCM, registry/ConsentStore, Restart Manager, WUA/event-log forensics, `D3DKMT` + vendor GPU libraries, battery IOCTLs, ACPI thermal via WMI, the security-metadata cert-chain/token/mitigation reads — is user-mode. That covers essentially the entire product surface across Phases 1–3.
+Atlas ships **no kernel driver today** (tech-stack §3.1, §4.9). Everything in the collector table — ETW, `NtQuerySystemInformation`, SCM, registry/ConsentStore, Restart Manager, WUA/event-log forensics, `D3DKMT` + vendor GPU libraries, battery IOCTLs, ACPI thermal via WMI, the security-metadata cert-chain/token/mitigation reads — is user-mode. That covers essentially the entire product surface across Phases 1–3.
 
 tech-stack §4.9 deliberately left a **v2 decision gate**: run the checklist with real data if telemetry shows a capability gap. This ADR resolves that gate. The only material capability the current design cannot reach in user mode is **a slice of hardware sensor coverage** — specifically CPU **package temperature** (MSR reads), and motherboard/EC/SuperIO **fan RPM and voltages**. User mode already provides: ACPI thermal-zone temperatures (coarse, often a single zone), OEM ACPI-WMI sensors where the vendor exposes them (Dell/Lenovo/ASUS — spotty), and full GPU temp/power/clocks/fan via NVML/ADLX/IGCL. The gap is real but narrow, and the product already labels absent sensors honestly (PRD §9.6.7, the Sensors page shows "no thermal sensors exposed" rather than faking data).
 

@@ -51,7 +51,7 @@ use atlas_tsdb::{HeadBlocks, Metric, SeriesKey, SYSTEM_SCOPE};
 #[command(
     name = "atlas-service",
     version,
-    about = "System Atlas collection service (dev console mode)"
+    about = "Atlas collection service (dev console mode)"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -2975,7 +2975,7 @@ fn round3(x: f64) -> f64 {
 /// `ServiceInstall`/`ServiceControl` Name in installer/Package.wxs so the
 /// MSI-installed service and this CLI refer to the same service.
 const SERVICE_NAME: &str = "SystemAtlas";
-const SERVICE_DISPLAY_NAME: &str = "System Atlas Collection Service";
+const SERVICE_DISPLAY_NAME: &str = "Atlas Collection Service";
 
 /// Production store path for the service body: `%ProgramData%\SystemAtlas\atlas.db`
 /// (tech-stack §7 — the service runs as LocalSystem, so per-user LOCALAPPDATA is

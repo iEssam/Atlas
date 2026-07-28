@@ -1,4 +1,4 @@
-//! `atlas` — the scriptable command-line interface for System Atlas
+//! `atlas` — the scriptable command-line interface for Atlas
 //! (PRD §18.3 / §7.5, tech-stack §4.8).
 //!
 //! A thin, **read-only** clap CLI over the existing gRPC-over-named-pipe surface.
@@ -29,7 +29,7 @@ use clap::{Parser, Subcommand};
 
 use client::Connection;
 
-/// System Atlas CLI — scriptable, read-only queries over the running service.
+/// Atlas CLI — scriptable, read-only queries over the running service.
 ///
 /// Read-only: this CLI only ever runs query RPCs. Mutations (end task, applying
 /// rules, privacy-alert changes) are performed in the Atlas app, never here.
