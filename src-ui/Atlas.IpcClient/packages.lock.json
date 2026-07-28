@@ -20,9 +20,9 @@
       },
       "Grpc.Tools": {
         "type": "Direct",
-        "requested": "[2.68.1, )",
-        "resolved": "2.68.1",
-        "contentHash": "BZ96s7ijKAhJoRpIK+pqCeLaGaSwyc5/CAZFwgCcBuAnkU2naYvH0P6qnYCkl0pWDY/JBOnE2RvX9IvRX1Yc5Q=="
+        "requested": "[2.83.0, )",
+        "resolved": "2.83.0",
+        "contentHash": "vK2Go/83W0v2Nn7tTP9fGrX4IjmOa93s3M0SZeFimU1vIIr2wL9yNJlIyK21y85SGm3++JncB8IF751cjoLHuQ=="
       },
       "Grpc.Core.Api": {
         "type": "Transitive",
@@ -42,7 +42,6 @@
         "resolved": "6.0.0",
         "contentHash": "/HggWBbTwy8TgebGSX5DBZ24ndhzi93sHUBDvP1IxbZD7FDokYzdAr6+vbWGjw2XAfR2EJ1sfKUotpjHnFWPxA=="
       }
-    },
-    "net10.0/win-x64": {}
+    }
   }
 }
